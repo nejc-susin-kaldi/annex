@@ -84,3 +84,28 @@ VM: 2.3 GiB used, 1.5 GiB available, no swap used. Disk: `/` 7.6 GB used of 29 G
 
 ## D15. Wipe round trip not tested in M0.1 (14 Oct, Nejc)
 `scripts/wipe-vm.sh` → `bootstrap.sh` → `push.sh` is deferred until the VM is actually wiped. It's a demo, and the test isn't worth the effort now. The script is written but has never been run.
+
+## D16. App runtime hardening (14 Oct)
+Every app container runs as **uid 10001** (`user:` in the generated compose), with a read-only root filesystem, `/tmp` as a 64 MB tmpfs, `cap_drop: ALL`, `no-new-privileges`, 256 MiB and 0.5 CPU. The Dockerfile must still declare a non-root `USER`; the deploy inspects the built image and refuses root. A fixed uid means `/srv/annex/apps/<app>/data` can be chowned once, without knowing the image's user. The contract documents this. There's no per-app override in v0.
+
+## D17. How the CLI deploys (14 Oct)
+`annex deploy` runs these steps:
+1. Validates `annex.yaml` and checks the requested views against the live allowlist.
+2. Tars the folder in Python, skipping `.git`, `node_modules`, `.venv` and similar, and unpacks it into `/srv/annex/deploy/<app>/src`.
+3. Runs `vm/annex_vm.py provision` on the VM. This creates the DB role and database, the product-db role with grants on exactly the requested views, the JWT, and the data directory, then writes `secrets/apps/<app>/runtime.env`.
+4. Writes `compose.yaml` and builds on the VM. The image is tagged `annex-app/<app>:<timestamp>`; older tags are removed after a successful deploy, and the build cache is capped at 1.5 GB.
+5. Starts the container. For web apps it then waits for the healthcheck (probed from the Traefik container), for the route (a login redirect through Traefik on the VM) and for Docker health.
+
+Each app's compose service is named after the app and the container is `annex-app-<app>`, so names are unique on the shared networks. `ANNEX_GATEWAY_URL` is `http://gateway:3000`. Apps join `annex-edge`, and `annex-appdata` only when `storage.postgres` is set. Secret values are written single-quoted, so Compose never interpolates `$`. Values with `'` or newlines are refused in v0.
+
+## D18. Ofelia restarts on schedule changes (14 Oct)
+Ofelia 0.3.22 reads job labels only at startup; a probe showed it ignores containers started later. The CLI restarts `annex-ofelia-1` after a deploy or remove that touches an app with schedules. Jobs are `job-exec` labels on the app container (`no-overlap`). `annex run` uses `docker exec` with the same command, so manual and scheduled runs behave the same. Job-only apps idle with `sleep infinity`. 5-field cron gets a leading `0` seconds field for Ofelia.
+
+## D19. Missing secrets fail the deploy (14 Oct)
+If `annex.yaml` declares a secret that hasn't been set, the deploy stops and names the exact `annex secret set` command. That command is human-only, not exposed over MCP. `annex secret set` on a deployed app regenerates its env file and recreates the container.
+
+## D20. Authelia `GOMEMLIMIT=160MiB` (14 Oct)
+After many logins Authelia sat at 222 of 256 MiB, because Go keeps argon2 buffers. A soft Go memory limit makes it collect and return memory earlier; it settles around 157 MiB.
+
+## Resource record: M0.2 (14 Oct)
+With extras on and `client-lookup` deployed: client-lookup 41 MiB, Authelia 157 MiB, Metabase 1.32 GiB, other services as in M0.1. VM: 2.5 GiB used, 1.4 GiB available, no swap. Disk: 7.8 GB used of 29 GB.

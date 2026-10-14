@@ -1,0 +1,1 @@
+../cli/src/annex_cli/contract.md

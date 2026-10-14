@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Run the annex CLI from this repo without installing it.
+exec uv run --quiet --project "$(dirname "$0")/cli" annex "$@"

@@ -45,3 +45,13 @@ Not decided yet; nothing to do. Annex supports two shapes, chosen in `.env`:
 - **Upstream TLS:** `dronky`'s Traefik terminates HTTPS and forwards HTTP to `192.168.1.30:80`. Set `ANNEX_TLS_MODE=upstream` and `ANNEX_UPSTREAM_IP=<dronky's LAN IP>`, then `scripts/push.sh`.
 
 Either way, the undo is to remove that router and service from `dronky`'s Traefik config.
+
+## 6. `annex` on your PATH (optional)
+`./annex` in the repo needs no installation. If you want `annex` everywhere:
+```bash
+uv tool install --editable ./cli
+```
+Undo:
+```bash
+uv tool uninstall annex-cli
+```

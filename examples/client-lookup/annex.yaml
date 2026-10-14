@@ -1,0 +1,16 @@
+# Annex manifest. Full contract: `annex contract`
+name: client-lookup
+owner: sam
+description: Search clients and see their assets under management
+type: web
+port: 8080
+healthcheck: /healthz
+access: internal
+storage:
+  postgres: false
+  files: false
+data:
+  views: [client_summary, top_clients_by_aum]
+env: {}
+secrets: []
+egress: []

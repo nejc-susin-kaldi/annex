@@ -82,6 +82,8 @@ services:
     environment:
       <<: *tz
       X_AUTHELIA_CONFIG: /etc/annex/configuration.yml
+      # make Go hand argon2 memory back before the container limit is reached
+      GOMEMLIMIT: 160MiB
       ANNEX_CONFIG_HASH: ${ANNEX_CONFIG_HASH_AUTHELIA}
       AUTHELIA_SESSION_SECRET_FILE: /secrets/session_secret
       AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE: /secrets/storage_encryption_key

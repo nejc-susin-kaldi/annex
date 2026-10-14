@@ -1,0 +1,112 @@
+"""annex command line."""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+from . import ops
+from .manifest import ManifestError
+from .remote import AnnexError
+
+
+def _table(rows: list[dict], cols: list[str]) -> str:
+    if not rows:
+        return "(none)"
+    widths = {c: max(len(c), *(len(str(r.get(c) or "")) for r in rows)) for c in cols}
+    line = lambda vals: "  ".join(str(v or "").ljust(widths[c]) for c, v in zip(cols, vals))  # noqa: E731
+    return "\n".join([line([c.upper() for c in cols])] + [line([r.get(c) for c in cols]) for r in rows])
+
+
+def main(argv: list[str] | None = None) -> None:
+    p = argparse.ArgumentParser(prog="annex", description="Deploy small internal tools to Annex.")
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+    sub = p.add_subparsers(dest="cmd", required=True, metavar="command")
+
+    s = sub.add_parser("init", help="copy a template into a new folder")
+    s.add_argument("template", help="python-web, python-job, ... (see templates/)")
+    s.add_argument("name")
+    s.add_argument("--dir", type=Path, help="target folder (default ./<name>)")
+    s.add_argument("--owner", default=os.environ.get("ANNEX_OWNER"), help="builder login (default $ANNEX_OWNER)")
+    s = sub.add_parser("deploy", help="validate, provision, build, run and register an app")
+    s.add_argument("path", nargs="?", default=".", type=Path)
+    sub.add_parser("list", help="list deployed apps")
+    s = sub.add_parser("status", help="show an app's state")
+    s.add_argument("app")
+    s = sub.add_parser("logs", help="show an app's logs")
+    s.add_argument("app")
+    s.add_argument("-n", "--tail", type=int, default=100)
+    s.add_argument("-f", "--follow", action="store_true")
+    s.add_argument("--since", help="e.g. 10m, 2h")
+    s = sub.add_parser("run", help="run one of an app's jobs now")
+    s.add_argument("app")
+    s.add_argument("job")
+    s = sub.add_parser("secret", help="manage app secrets (human only)")
+    ss = s.add_subparsers(dest="secret_cmd", required=True)
+    s = ss.add_parser("set", help="store KEY=VALUE secrets for an app on the VM")
+    s.add_argument("app")
+    s.add_argument("pairs", nargs="+", metavar="KEY=VALUE")
+    s = sub.add_parser("remove", help="remove an app (human only)")
+    s.add_argument("app")
+    s.add_argument("--keep-data", action="store_true", help="keep its database, files and secrets")
+    s.add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    sub.add_parser("contract", help="print the app contract (for agents)")
+
+    a = p.parse_args(argv)
+    emit = (lambda obj: print(json.dumps(obj, indent=2, default=str))) if a.json else None
+    progress = (lambda msg: print(f"==> {msg}", file=sys.stderr))
+    try:
+        if a.cmd == "contract":
+            print(ops.contract())
+        elif a.cmd == "init":
+            dest = ops.init(a.template, a.name, a.dir, a.owner)
+            emit({"path": str(dest)}) if emit else print(
+                f"Created {dest} from {a.template}. Edit the code, then: annex deploy {dest}")
+        elif a.cmd == "deploy":
+            res = ops.deploy(a.path, progress)
+            emit(res) if emit else print(
+                f"{res['name']} is live" + (f" at {res['url']}" if res["url"] else " (no web page)")
+                + f"\nimage {res['image']}\ninjected env: {', '.join(res['injected_env'])}")
+        elif a.cmd == "list":
+            apps = ops.list_apps()
+            emit(apps) if emit else print(_table(apps, ["name", "owner", "type", "state", "health", "url"]))
+        elif a.cmd == "status":
+            st = ops.status(a.app)
+            if emit:
+                emit(st)
+            else:
+                logs = st.pop("recent_logs")
+                for k, v in st.items():
+                    print(f"{k:12} {', '.join(j['name'] + ' (' + j['cron'] + ')' for j in v) if k == 'schedule' else v}")
+                print("recent logs:\n  " + "\n  ".join(logs))
+        elif a.cmd == "logs":
+            if a.follow:
+                sys.exit(ops.follow_logs(a.app, a.tail))
+            print(ops.logs(a.app, a.tail, a.since), end="")
+        elif a.cmd == "run":
+            res = ops.run_job(a.app, a.job)
+            emit(res) if emit else print(f"{res['output']}--\n{a.app}/{a.job} exited {res['exit_code']} in {res['seconds']} s")
+            sys.exit(0 if res["exit_code"] == 0 else 1)
+        elif a.cmd == "secret":
+            res = ops.secret_set(a.app, a.pairs)
+            emit(res) if emit else print(f"set {', '.join(res['set'])} for {a.app}: {res['applied']}"
+                                         + (f"\nwarning: {res['warning']}" if res.get("warning") else ""))
+        elif a.cmd == "remove":
+            if not a.yes:
+                what = "container and image" if a.keep_data else "container, image, database, files and secrets"
+                if input(f"Remove {a.app} ({what})? Type the app name to confirm: ") != a.app:
+                    sys.exit("Aborted.")
+            res = ops.remove(a.app, a.keep_data)
+            emit(res) if emit else print(f"removed {a.app}: {', '.join(res['removed'])}")
+    except ManifestError as e:
+        sys.exit(f"error: {e}")
+    except AnnexError as e:
+        sys.exit(f"error: {e}")
+    except KeyboardInterrupt:
+        sys.exit(130)
+
+
+if __name__ == "__main__":
+    main()

@@ -10,7 +10,15 @@ scripts/push.sh --extras      # sync and start the platform, incl. Metabase and 
 scripts/test-platform.sh      # M0.1 checks through an SSH tunnel
 scripts/show-users.sh         # demo user passwords
 ```
-For browser access, see [docs/setup.md](docs/setup.md) §3.
+For browser access, see [docs/setup.md](docs/setup.md) §3. Day-to-day commands are in [docs/operations.md](docs/operations.md).
+
+## Deploying apps
+```bash
+./annex init python-web my-tool --owner sam   # copy a template
+./annex deploy my-tool                         # validate, provision, build, run, register
+./annex list
+```
+The app contract is in [docs/app-contract.md](docs/app-contract.md), or run `./annex contract`. The example app is `examples/client-lookup`.
 
 ## What runs
 | Service | Host | Who |
