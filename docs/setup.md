@@ -36,8 +36,31 @@ scripts/tunnel.sh up
 ```
 Added on 14 Oct. Open https://home.annex.home.arpa:8443 and sign in with a demo user. `scripts/show-users.sh` prints the passwords. Stop the tunnel with `scripts/tunnel.sh down`.
 
-## 4. MCP server in Claude Code (M0.4)
-To be added in M0.4.
+## 4. Annex in Claude Code: MCP server and skill (M0.4)
+Both are user-scoped, so Claude Code can use Annex from any folder, including an empty one.
+
+**MCP server** (stdio, runs from this repo through uv):
+```bash
+claude mcp add --scope user annex -- uv run --quiet --project /Users/nejcsusin/git/annex/mcp annex-mcp
+```
+Check (it should say "Connected"):
+```bash
+claude mcp list
+```
+Undo:
+```bash
+claude mcp remove --scope user annex
+```
+
+**Skill** (a symlink, so edits in the repo apply right away):
+```bash
+mkdir -p ~/.claude/skills && ln -s /Users/nejcsusin/git/annex/skills/annex ~/.claude/skills/annex
+```
+Undo:
+```bash
+rm ~/.claude/skills/annex
+```
+The MCP server exposes `annex_contract`, `annex_init`, `annex_deploy`, `annex_list`, `annex_status`, `annex_logs` and `annex_run`. `remove` and `secret set` aren't exposed; they stay CLI-only.
 
 ## 5. Route through Traefik on `dronky` (open question)
 Not decided yet; nothing to do. Annex supports two shapes, chosen in `.env`:

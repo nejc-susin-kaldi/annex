@@ -124,3 +124,15 @@ Besides `monthly` (`0 6 1 * *`), the example has `refresh` (`*/10 * * * *`), so 
 
 ## Resource record: M0.3 (14 Oct)
 Two apps deployed (41 MiB each), extras on. VM: 2.5 GiB used, 1.4 GiB available, no swap. Disk: 7.9 GB of 29 GB. Backups: 772 KiB for three archives.
+
+## D24. MCP server on the 2.x SDK (14 Oct)
+`mcp==2.3.0`, where FastMCP is now `MCPServer`. The server (`mcp/`) is a thin layer over `annex_cli.ops`, so CLI and MCP behave identically. Blocking calls run in a worker thread. Known failures are raised as `ToolError`; the SDK hides the message of any other exception ("Error executing tool"), and agents need the message to fix things. `annex_deploy` returns the deploy steps with the result. `remove` and `secret set` aren't exposed. Registration is user-scoped (setup.md §4), so it works from an empty folder.
+
+## D25. `static` template has a tiny server with two endpoints (14 Oct)
+A purely static site can't read identity headers or call the gateway, and the token must not reach the browser. The template's `server.py` (stdlib, `python:3.13.16-slim-trixie`) serves `public/` plus two endpoints: `api/me` (identity) and `api/data/<view>` (gateway proxy with the app's token; filters pass through, and the gateway still enforces the app's views). So a dashboard is plain HTML/JS with same-origin `fetch`. There's no build step on the server: build locally and commit the output to `public/`.
+
+## D26. `node-web` template (14 Oct)
+`node:24.21.0-alpine3.24` and Express 5.3.0, pinned exactly in `package.json`. There's no lockfile in the template, so `npm install` resolves transitive dependencies at build time. That's acceptable for the prototype. Same helpers as python-web (`annex_runtime.js`), same healthcheck pattern.
+
+## D27. The skill lives in the repo, symlinked (14 Oct)
+`skills/annex/SKILL.md` covers when to use it, the tool table, template choice, the workflow, the rules and a homelab note about `/etc/hosts`. It's symlinked into `~/.claude/skills/annex` by Nejc (setup.md §4), so repo edits apply without reinstalling.

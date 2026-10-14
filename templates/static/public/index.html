@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>__APP_NAME__</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; color: #1f2933; }
+    td.n { text-align: right; font-variant-numeric: tabular-nums; }
+    table { border-collapse: collapse; } td, th { padding: .3rem .6rem; border-bottom: 1px solid #e4e7eb; text-align: left; }
+  </style>
+</head>
+<body>
+  <h1 id="hello">Hello</h1>
+  <h2>Top clients</h2>
+  <table id="clients"><tr><th>#</th><th>Client</th><th>AUM (EUR)</th></tr></table>
+  <script>
+    // Identity and data come from this app's own server (same origin), never from the browser directly.
+    fetch("api/me").then(r => r.json()).then(me => {
+      document.getElementById("hello").textContent = `Hello, ${me.name}`;
+    });
+    fetch("api/data/top_clients_by_aum?limit=10").then(r => r.json()).then(rows => {
+      const t = document.getElementById("clients");
+      for (const r of rows) {
+        const tr = t.insertRow();
+        tr.insertCell().textContent = r.rank;
+        tr.insertCell().textContent = r.client_name;
+        const c = tr.insertCell(); c.className = "n"; c.textContent = Math.round(r.aum_eur).toLocaleString();
+      }
+    });
+  </script>
+</body>
+</html>

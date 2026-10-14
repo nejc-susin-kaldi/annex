@@ -33,7 +33,17 @@ virsh -c qemu:///system undefine annex --snapshots-metadata --remove-all-storage
     ```bash
     sudo sed -i '' '/# annex$/d' /etc/hosts
     ```
-  - MCP server: unregister it from Claude Code (command added in M0.4).
+  - MCP server and skill:
+    ```bash
+    claude mcp remove --scope user annex
+    ```
+    ```bash
+    rm ~/.claude/skills/annex
+    ```
+  - *(build)* `annex` on PATH, if installed (setup.md §6):
+    ```bash
+    uv tool uninstall annex-cli
+    ```
   - mkcert: **don't uninstall** the CA. It was trusted before Annex (see setup.md §2). The Annex certificate exists only on the VM.
 
 ## 3. Clean up the homelab

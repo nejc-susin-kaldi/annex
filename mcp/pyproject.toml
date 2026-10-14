@@ -1,0 +1,19 @@
+[project]
+name = "annex-mcp"
+version = "0.1.0"
+description = "MCP server (stdio) that lets coding agents deploy tools to Kaldi Annex"
+requires-python = ">=3.12"
+dependencies = ["mcp==2.3.0", "annex-cli"]
+
+[project.scripts]
+annex-mcp = "annex_mcp.server:main"
+
+[tool.uv.sources]
+annex-cli = { path = "../cli", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/annex_mcp"]

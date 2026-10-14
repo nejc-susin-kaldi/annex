@@ -1,0 +1,1 @@
+"""Kaldi Annex MCP server."""

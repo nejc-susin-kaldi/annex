@@ -1,0 +1,16 @@
+# Annex manifest. Full contract: `annex contract`
+name: __APP_NAME__
+owner: __OWNER__
+description: A static web page with live data
+type: web
+port: 8080
+healthcheck: /healthz
+access: internal
+storage:
+  postgres: false
+  files: false
+data:
+  views: [top_clients_by_aum]
+env: {}
+secrets: []
+egress: []
