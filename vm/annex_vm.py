@@ -19,6 +19,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 from pathlib import Path
 
@@ -26,6 +27,8 @@ DATA = Path(os.environ.get("ANNEX_DATA_DIR", "/srv/annex"))
 SECRETS = DATA / "secrets"
 PRODUCT_DB = "annex-product-db-1"
 APPDATA_DB = "annex-appdata-db-1"
+BACKUP = "annex-backup-1"
+BACKUPS = DATA / "backups"
 APP_UID = 10001
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}[a-z0-9]$")
 KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
@@ -258,6 +261,76 @@ def cmd_deprovision(a: argparse.Namespace) -> None:
     out({"ok": True, "removed": removed, "kept_data": a.keep_data})
 
 
+def cmd_backup_now(_: argparse.Namespace) -> None:
+    """Run the nightly backup now (dump hook + archive + retention)."""
+    before = set(BACKUPS.glob("annex-*.tar.gz"))
+    r = subprocess.run(["docker", "exec", BACKUP, "backup"], capture_output=True, text=True)
+    new = sorted(set(BACKUPS.glob("annex-*.tar.gz")) - before)
+    if r.returncode != 0 or not new:
+        raise Fail(f"backup failed: {(r.stderr or r.stdout).strip()[-800:]}")
+    out({"ok": True, "archive": new[-1].name, "size_bytes": new[-1].stat().st_size,
+         "archives": sorted(p.name for p in BACKUPS.glob("annex-*.tar.gz"))})
+
+
+def cmd_restore(a: argparse.Namespace) -> None:
+    """Restore one app's database and /data from a backup archive (default: newest)."""
+    app = a.app
+    record_path = DATA / "deploy" / app / "deploy.json"
+    if not record_path.exists():
+        raise Fail(f"{app} is not deployed. Deploy it first (annex deploy), then restore its data")
+    record = json.loads(record_path.read_text())
+    archives = sorted(BACKUPS.glob("annex-*.tar.gz"), key=lambda p: p.stat().st_mtime)
+    if a.archive:
+        archive = BACKUPS / a.archive
+        if archive not in archives:
+            raise Fail(f"no archive {a.archive}; available: {', '.join(p.name for p in archives) or 'none'}")
+    elif archives:
+        archive = archives[-1]
+    else:
+        raise Fail("no backups yet; run scripts/backup.sh first")
+
+    role = role_name(app)
+    files_prefix = f"backup/apps/{app}/data"
+    dump_name = f"backup/dumps/current/{role}.dump"
+    staging = DATA / "restore" / app
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    n_files = 0
+    have_dump = False
+    with tarfile.open(archive) as tar:
+        for m in tar.getmembers():
+            name = m.name.lstrip("/")
+            if name == dump_name or name == files_prefix or name.startswith(files_prefix + "/"):
+                m.name = name
+                tar.extract(m, staging, filter="data")
+                n_files += m.isfile() and name != dump_name
+                have_dump |= name == dump_name
+    if record.get("postgres") and not have_dump:
+        raise Fail(f"{archive.name} has no database dump for {app}")
+
+    subprocess.run(["docker", "stop", f"annex-app-{app}"], capture_output=True)
+    try:
+        if have_dump:
+            psql(APPDATA_DB, "postgres", f"DROP DATABASE IF EXISTS {role} WITH (FORCE);")
+            ensure_database(app)
+            with open(staging / dump_name, "rb") as f:
+                r = subprocess.run(["docker", "exec", "-i", APPDATA_DB, "pg_restore", "-U", "postgres", "-d", role,
+                                    "--exit-on-error"], stdin=f, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise Fail(f"pg_restore failed: {r.stderr.strip()[-800:]}")
+        if (staging / files_prefix).exists():
+            appdir = DATA / "apps" / app
+            appdir.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["docker", "run", "--rm", "--network", "none", "--entrypoint", "sh",
+                            "-v", f"{appdir}:/app", "-v", f"{staging}:/staging:ro", helper_image(), "-c",
+                            f"rm -rf /app/data && cp -a /staging/{files_prefix} /app/data && "
+                            f"chown -R {APP_UID}:{APP_UID} /app/data"], check=True, capture_output=True)
+    finally:
+        subprocess.run(["docker", "start", f"annex-app-{app}"], capture_output=True)
+        shutil.rmtree(staging, ignore_errors=True)
+    out({"ok": True, "app": app, "archive": archive.name, "database": have_dump, "files": n_files})
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="annex_vm")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -279,6 +352,11 @@ def main() -> None:
     s.add_argument("app")
     s.add_argument("--keep-data", action="store_true")
     s.set_defaults(fn=cmd_deprovision)
+    sub.add_parser("backup-now").set_defaults(fn=cmd_backup_now)
+    s = sub.add_parser("restore")
+    s.add_argument("app")
+    s.add_argument("--archive")
+    s.set_defaults(fn=cmd_restore)
     a = p.parse_args()
     if hasattr(a, "app") and not NAME_RE.match(a.app):
         out({"ok": False, "error": f"invalid app name {a.app!r}"})

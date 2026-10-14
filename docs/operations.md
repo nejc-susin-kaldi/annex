@@ -12,7 +12,9 @@
 | Run a job now | `./annex run <app> <job>` |
 | Set a secret | `./annex secret set <app> KEY=VALUE` |
 | Remove an app | `./annex remove <app> [--keep-data]` |
-| Checks | `scripts/test-platform.sh` (M0.1), `scripts/test-apps.sh` (M0.2) |
+| Back up now | `scripts/backup.sh` (nightly at 02:00 anyway; 7 days kept) |
+| Restore one app | `scripts/restore.sh <app> [archive]` (replaces its DB and `/data`) |
+| Checks | `scripts/test-platform.sh` (M0.1), `scripts/test-apps.sh` (M0.2), `scripts/test-jobs.sh` + `scripts/restore-test.sh` (M0.3) |
 | Add a gateway view | edit `db/product/api_views.sql`, run `scripts/push.sh`, and add it to the table in `cli/src/annex_cli/contract.md` |
 
 `./annex` runs the CLI from the repo through uv. To put `annex` on your PATH, see `docs/setup.md` §6.
@@ -32,3 +34,8 @@
 - Apps: `./annex logs <app>`, or Dozzle at `logs.` (admins).
 - Gateway access per app: `ssh annex docker logs annex-product-db-1 2>&1 | grep annex-gateway`.
 - Front door: `ssh annex docker logs annex-traefik-1` (JSON access log), `annex-authelia-1` (login decisions).
+
+## Jobs
+- Ofelia runs each `schedule` entry inside the app's container as uid 10001. See runs with `ssh annex docker logs annex-ofelia-1`, which shows start, stdout and duration.
+- `./annex run <app> <job>` runs the same command now and prints its output and exit code.
+- Ofelia reads job labels only at startup; the CLI restarts it after deploys that change schedules (D18).

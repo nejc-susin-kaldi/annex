@@ -109,3 +109,18 @@ After many logins Authelia sat at 222 of 256 MiB, because Go keeps argon2 buffer
 
 ## Resource record: M0.2 (14 Oct)
 With extras on and `client-lookup` deployed: client-lookup 41 MiB, Authelia 157 MiB, Metabase 1.32 GiB, other services as in M0.1. VM: 2.5 GiB used, 1.4 GiB available, no swap. Disk: 7.8 GB used of 29 GB.
+
+## D21. Jobs run as the app user (14 Oct)
+Ofelia's `job-exec` defaults to **root**. A root job in a container with `cap_drop: ALL` couldn't write to `/data`, which is owned by 10001, and would leave root-owned files otherwise. The CLI sets `ofelia.job-exec.<job>.user=10001`. Ofelia logs each scheduled run, with its stdout and duration.
+
+## D22. `monthly-report` has a demo schedule (14 Oct)
+Besides `monthly` (`0 6 1 * *`), the example has `refresh` (`*/10 * * * *`), so the scheduler can be seen working during a demo. Both run the same `report.py`. A rerun for the same month overwrites that month's CSV and adds a history row. Remove `refresh` from `examples/monthly-report/annex.yaml` for a realistic setup.
+
+## D23. Backups and restore (14 Oct)
+- **Nightly backup:** offen runs at 02:00 Europe/Ljubljana. Before archiving, its `archive-pre` hook runs `dump-all.sh` inside appdata-db: `pg_dump -Fc` of every database (apps and Metabase) plus globals. The archive `annex-<timestamp>.tar.gz` holds `/backup/apps/<app>/data/…` and `/backup/dumps/current/*.dump`. Retention is 7 days (`BACKUP_RETENTION_DAYS`), and offen logs each prune. `scripts/backup.sh` runs the same thing now.
+- **Restore:** `scripts/restore.sh <app> [archive]` calls `annex_vm.py restore`. It extracts only that app's dump and files, stops the container, drops and recreates the app database, runs `pg_restore`, replaces `/srv/annex/apps/<app>/data` (chowned to 10001), then starts the container again. The app must be deployed, because restore brings back data, not code or config.
+- **Proof:** `scripts/restore-test.sh` passes 12/12 on `monthly-report`.
+- **Not covered:** product-db (seed data, re-created from `db/product`) and platform state (Authelia's sqlite, regenerable). Backups stay on the VM's own disk, so they don't survive losing the VM. Production goes to S3.
+
+## Resource record: M0.3 (14 Oct)
+Two apps deployed (41 MiB each), extras on. VM: 2.5 GiB used, 1.4 GiB available, no swap. Disk: 7.9 GB of 29 GB. Backups: 772 KiB for three archives.

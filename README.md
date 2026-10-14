@@ -18,7 +18,7 @@ For browser access, see [docs/setup.md](docs/setup.md) §3. Day-to-day commands 
 ./annex deploy my-tool                         # validate, provision, build, run, register
 ./annex list
 ```
-The app contract is in [docs/app-contract.md](docs/app-contract.md), or run `./annex contract`. The example app is `examples/client-lookup`.
+The app contract is in [docs/app-contract.md](docs/app-contract.md), or run `./annex contract`. Example apps: `examples/client-lookup` (web, gateway) and `examples/monthly-report` (web+job, Postgres, files). Templates: `python-web`, `python-job`.
 
 ## What runs
 | Service | Host | Who |
@@ -39,5 +39,8 @@ Plus product-db and appdata-db (Postgres 16), Ofelia (jobs), offen backup (night
 | `scripts/extras.sh on\|off` | Metabase and Dozzle on or off |
 | `scripts/tunnel.sh up\|down` | SSH tunnel `127.0.0.1:8443 → annex:443` |
 | `scripts/test-platform.sh` | M0.1 acceptance checks |
+| `scripts/backup.sh` | run the nightly backup now |
+| `scripts/restore.sh <app> [archive]` | restore one app's database and files |
+| `scripts/test-apps.sh`, `test-jobs.sh`, `restore-test.sh` | M0.2/M0.3 checks |
 | `scripts/wipe-vm.sh` | removes everything Annex from the VM (asks first) |
 | `scripts/show-users.sh` | prints demo user passwords |

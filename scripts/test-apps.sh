@@ -51,7 +51,7 @@ has "client-lookup is listed" '"name":"client-lookup"' "$services"
 has "with its owner" 'owner: sam' "$services"
 
 echo "CLI"
-has "annex list shows it healthy" "client-lookup  sam    web   running  healthy" "$("$ANNEX" list)"
+has "annex list shows it healthy" "sam web running healthy" "$("$ANNEX" list | awk '$1 == "client-lookup" {print $2, $3, $4, $5}')"
 has "annex status shows views" "client_summary" "$("$ANNEX" status client-lookup)"
 has "annex logs shows requests" "GET / HTTP" "$("$ANNEX" logs client-lookup -n 20)"
 

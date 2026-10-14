@@ -1,0 +1,1 @@
+# pin exact versions, e.g. psycopg[binary]==3.3.6

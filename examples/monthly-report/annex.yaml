@@ -1,0 +1,24 @@
+# Annex manifest. Full contract: `annex contract`
+name: monthly-report
+owner: sam
+description: Monthly positions per client as CSV, with run history
+type: web+job
+port: 8080
+healthcheck: /healthz
+access: internal
+storage:
+  postgres: true       # run history
+  files: true          # CSV reports in /data/reports
+data:
+  views: [monthly_positions]
+schedule:
+  - name: monthly
+    cron: "0 6 1 * *"            # 06:00 on the 1st, Europe/Ljubljana
+    command: ["python", "report.py"]
+  - name: refresh
+    cron: "*/10 * * * *"         # demo: every 10 minutes, so the scheduler is visibly working
+    command: ["python", "report.py"]
+env:
+  REPORT_TITLE: Monthly positions
+secrets: []
+egress: []

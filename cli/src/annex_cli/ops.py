@@ -149,6 +149,7 @@ def compose_for(m: mf.Manifest, r: Remote, image: str) -> dict:
             labels[f"{key}.schedule"] = mf.ofelia_schedule(j.cron)
             labels[f"{key}.command"] = shlex.join(j.command)
             labels[f"{key}.no-overlap"] = "true"
+            labels[f"{key}.user"] = str(APP_UID)  # Ofelia's job-exec defaults to root
     svc["networks"] = networks
     return {
         "name": project(m.name),
