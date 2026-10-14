@@ -1,0 +1,30 @@
+# Platform services and add-on placeholders. Deployed apps appear in "Tools"
+# through Docker labels written by the annex CLI.
+- Platform:
+    - Metabase:
+        href: "{{ANNEX_URL_METABASE}}"
+        description: Analytics on curated product data
+        icon: metabase.png
+        server: annex
+        container: annex-metabase-1
+    - Logs:
+        href: "{{ANNEX_URL_LOGS}}"
+        description: Container logs (admins only)
+        icon: dozzle.png
+        server: annex
+        container: annex-dozzle-1
+    - Data gateway:
+        href: "{{ANNEX_URL_GATEWAY}}"
+        description: Read-only API over curated product views (admins only)
+        icon: mdi-api
+        server: annex
+        container: annex-gateway-1
+- Add-ons:
+    - Goat Mailer:
+        href: "{{ANNEX_URL_HOME}}/#goat-mailer"
+        description: Email templating (optional add-on, not installed)
+        icon: mdi-email-edit-outline
+    - Bekafon:
+        href: "{{ANNEX_URL_HOME}}/#bekafon"
+        description: AI website helper with voice chat (optional add-on, not installed)
+        icon: mdi-account-voice

@@ -1,0 +1,40 @@
+# Static config, ANNEX_TLS_MODE=upstream: the upstream proxy terminates HTTPS and
+# forwards plain HTTP to :80. X-Forwarded-* is trusted only from {{ANNEX_UPSTREAM_IP}}.
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+log:
+  level: INFO
+accessLog:
+  format: json
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        Remote-User: keep
+ping:
+  entryPoint: ping
+entryPoints:
+  ping:
+    address: ":8082"
+  web:
+    address: ":80"
+    asDefault: true
+    forwardedHeaders:
+      trustedIPs:
+        - "{{ANNEX_UPSTREAM_IP}}/32"
+    http:
+      # drop Remote_User / Remote.User aliases that WSGI-style backends read as Remote-User
+      aliasHeadersStrategy: delete
+      middlewares:
+        - strip-identity@file
+        - authelia@file
+providers:
+  docker:
+    endpoint: tcp://socket-ro:2375
+    exposedByDefault: false
+    network: annex-edge
+    constraints: Label(`com.kaldi.annex`, `true`)
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true

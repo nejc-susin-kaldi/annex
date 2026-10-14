@@ -1,0 +1,7 @@
+# Only present in ANNEX_TLS_MODE=local (render.py drops it otherwise).
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/wildcard.pem
+        keyFile: /certs/wildcard-key.pem

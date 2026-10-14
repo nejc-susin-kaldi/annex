@@ -1,0 +1,23 @@
+http:
+  middlewares:
+    # Clients must never be able to set identity headers themselves. An empty
+    # value removes the header before forward-auth runs.
+    strip-identity:
+      headers:
+        customRequestHeaders:
+          Remote-User: ""
+          Remote-Name: ""
+          Remote-Email: ""
+          Remote-Groups: ""
+          Remote-Filter: ""
+          Remote-Roles: ""
+    authelia:
+      forwardAuth:
+        address: http://authelia:9091/api/authz/forward-auth
+        trustForwardHeader: true
+        maxResponseBodySize: 1048576
+        authResponseHeaders:
+          - Remote-User
+          - Remote-Name
+          - Remote-Email
+          - Remote-Groups

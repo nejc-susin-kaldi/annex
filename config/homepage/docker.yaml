@@ -1,0 +1,3 @@
+annex:
+  host: socket-ro
+  port: 2375

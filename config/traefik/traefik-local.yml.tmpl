@@ -1,0 +1,47 @@
+# Static config, ANNEX_TLS_MODE=local: HTTPS on 443 with the mkcert wildcard cert.
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+log:
+  level: INFO
+accessLog:
+  format: json
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        Remote-User: keep
+ping:
+  entryPoint: ping
+entryPoints:
+  ping:
+    address: ":8082"
+  web:
+    address: ":80"
+    http:
+      # drop Remote_User / Remote.User aliases that WSGI-style backends read as Remote-User
+      aliasHeadersStrategy: delete
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: false
+  websecure:
+    address: ":443"
+    asDefault: true
+    http:
+      aliasHeadersStrategy: delete
+      tls: {}
+      # every router: drop client-sent identity headers, then forward-auth
+      middlewares:
+        - strip-identity@file
+        - authelia@file
+providers:
+  docker:
+    endpoint: tcp://socket-ro:2375
+    exposedByDefault: false
+    network: annex-edge
+    constraints: Label(`com.kaldi.annex`, `true`)
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true

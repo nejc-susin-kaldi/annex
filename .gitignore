@@ -1,0 +1,12 @@
+# local config and generated output
+.env
+.env.*
+!.env.example
+.build/
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+# never commit keys or certificates
+*.pem
+*.key

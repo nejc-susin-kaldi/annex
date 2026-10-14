@@ -1,0 +1,356 @@
+# Annex platform. Runs on the VM from /srv/annex/platform (synced by scripts/push.sh).
+# Settings come from the generated .env next to this file; secrets from
+# ${ANNEX_DATA_DIR}/secrets. Metabase and Dozzle are in the "extras" profile.
+name: annex
+
+x-base: &base
+  restart: unless-stopped
+  labels:
+    com.kaldi.annex: "true"
+  security_opt:
+    - no-new-privileges:true
+
+x-tz: &tz
+  TZ: ${TZ}
+
+services:
+  # --- Docker API access, one proxy per permission level -----------------
+  socket-ro:
+    <<: *base
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    environment:
+      CONTAINERS: 1
+      NETWORKS: 1
+      INFO: 1
+      EVENTS: 1
+      PING: 1
+      VERSION: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [socket-ro]
+    mem_limit: 48m
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2375/_ping"]
+      interval: 30s
+      timeout: 3s
+
+  socket-exec:
+    <<: *base
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    environment:
+      CONTAINERS: 1
+      EXEC: 1
+      POST: 1
+      INFO: 1
+      EVENTS: 1
+      PING: 1
+      VERSION: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [socket-exec]
+    mem_limit: 48m
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2375/_ping"]
+      interval: 30s
+      timeout: 3s
+
+  # --- Front door ---------------------------------------------------------
+  traefik:
+    <<: *base
+    image: traefik:v3.7.14
+    command: ["traefik", "--configFile=/etc/traefik/traefik.yml"]
+    ports:
+      - "80:80"
+    environment:
+      <<: *tz
+      ANNEX_CONFIG_HASH: ${ANNEX_CONFIG_HASH_TRAEFIK}
+    volumes:
+      - ./config/traefik:/etc/traefik:ro
+    networks: [edge, platform, socket-ro]
+    depends_on:
+      socket-ro: {condition: service_healthy}
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping", "--configFile=/etc/traefik/traefik.yml"]
+      interval: 15s
+      timeout: 3s
+
+  authelia:
+    <<: *base
+    image: authelia/authelia:4.39.28
+    environment:
+      <<: *tz
+      X_AUTHELIA_CONFIG: /etc/annex/configuration.yml
+      ANNEX_CONFIG_HASH: ${ANNEX_CONFIG_HASH_AUTHELIA}
+      AUTHELIA_SESSION_SECRET_FILE: /secrets/session_secret
+      AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE: /secrets/storage_encryption_key
+      AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE: /secrets/reset_password_jwt_secret
+    volumes:
+      - ./config/authelia:/etc/annex:ro
+      - ${ANNEX_DATA_DIR}/secrets/authelia:/secrets:ro
+      - ${ANNEX_DATA_DIR}/state/authelia:/data
+    networks: [platform]
+    # argon2 verification needs ~64 MB per concurrent login
+    mem_limit: 256m
+    labels:
+      com.kaldi.annex: "true"
+      traefik.enable: "true"
+      traefik.docker.network: annex-platform
+      traefik.http.routers.auth.rule: Host(`${ANNEX_HOST_AUTH}`)
+      traefik.http.services.auth.loadbalancer.server.port: "9091"
+
+  homepage:
+    <<: *base
+    image: gethomepage/homepage:v2.5.0
+    environment:
+      <<: *tz
+      HOMEPAGE_ALLOWED_HOSTS: ${ANNEX_HOST_HOME}${ANNEX_PORT_SUFFIX}
+      LOG_TARGETS: stdout
+      ANNEX_CONFIG_HASH: ${ANNEX_CONFIG_HASH_HOMEPAGE}
+    volumes:
+      - ./config/homepage:/app/config
+    networks: [platform, socket-ro]
+    mem_limit: 256m
+    labels:
+      com.kaldi.annex: "true"
+      traefik.enable: "true"
+      traefik.docker.network: annex-platform
+      traefik.http.routers.home.rule: Host(`${ANNEX_HOST_HOME}`)
+      traefik.http.services.home.loadbalancer.server.port: "3000"
+
+  # --- Data ---------------------------------------------------------------
+  product-db:
+    <<: *base
+    image: postgres:16.15-alpine3.24
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=40
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - effective_cache_size=256MB
+      - -c
+      - "log_line_prefix=%m [%p] %u@%d "
+    env_file: ${ANNEX_DATA_DIR}/secrets/product-db.env
+    environment:
+      <<: *tz
+      POSTGRES_DB: product
+    volumes:
+      - ${ANNEX_DATA_DIR}/state/product-db:/var/lib/postgresql/data
+      - ./db/product:/docker-entrypoint-initdb.d:ro
+    networks: [product]
+    shm_size: 128m
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d product"]
+      interval: 10s
+      timeout: 3s
+      start_period: 60s
+
+  gateway:
+    <<: *base
+    image: postgrest/postgrest:v16.4
+    env_file: ${ANNEX_DATA_DIR}/secrets/gateway.env
+    environment:
+      PGRST_DB_SCHEMAS: annex_api
+      PGRST_DB_PRE_REQUEST: annex_gateway.log_request
+      PGRST_SERVER_HOST: 0.0.0.0
+      PGRST_SERVER_PORT: "3000"
+      PGRST_ADMIN_SERVER_PORT: "3001"
+      PGRST_LOG_LEVEL: info
+      PGRST_OPENAPI_MODE: follow-privileges
+    networks: [edge, product]
+    depends_on:
+      product-db: {condition: service_healthy}
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "postgrest", "--ready"]
+      interval: 15s
+      timeout: 3s
+    labels:
+      com.kaldi.annex: "true"
+      traefik.enable: "true"
+      traefik.http.routers.gateway.rule: Host(`${ANNEX_HOST_GATEWAY}`)
+      traefik.http.services.gateway.loadbalancer.server.port: "3000"
+
+  appdata-db:
+    <<: *base
+    image: postgres:16.15-alpine3.24
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=60
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - effective_cache_size=256MB
+    env_file: ${ANNEX_DATA_DIR}/secrets/appdata-db.env
+    environment:
+      <<: *tz
+    volumes:
+      - ${ANNEX_DATA_DIR}/state/appdata-db:/var/lib/postgresql/data
+      - ./db/appdata/init:/docker-entrypoint-initdb.d:ro
+      - ./db/appdata/hooks:/annex:ro
+      - ${ANNEX_DATA_DIR}/dumps:/dumps
+    networks: [appdata]
+    shm_size: 128m
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 3s
+      start_period: 60s
+    labels:
+      com.kaldi.annex: "true"
+      # nightly backup: dump every database before the archive is taken
+      docker-volume-backup.archive-pre: /bin/sh /annex/dump-all.sh
+      docker-volume-backup.exec-label: annex
+
+  # --- Jobs and backups ---------------------------------------------------
+  ofelia:
+    <<: *base
+    image: mcuadros/ofelia:0.3.22
+    command: ["daemon", "--docker", "-f", "label=com.kaldi.annex=true"]
+    environment:
+      <<: *tz
+      DOCKER_HOST: tcp://socket-exec:2375
+    networks: [socket-exec]
+    depends_on:
+      socket-exec: {condition: service_healthy}
+    mem_limit: 64m
+    healthcheck:
+      test: ["CMD", "pgrep", "ofelia"]
+      interval: 30s
+      timeout: 3s
+    labels:
+      com.kaldi.annex: "true"
+      ofelia.enabled: "true"
+      # keeps the scheduler non-empty before any app registers a job
+      ofelia.job-local.heartbeat.schedule: "@every 1h"
+      ofelia.job-local.heartbeat.command: "true"
+
+  backup:
+    <<: *base
+    image: offen/docker-volume-backup:v2.49.1
+    environment:
+      <<: *tz
+      DOCKER_HOST: tcp://socket-exec:2375
+      BACKUP_CRON_EXPRESSION: "0 2 * * *"
+      BACKUP_FILENAME: annex-%Y-%m-%dT%H-%M-%S.tar.gz
+      BACKUP_PRUNING_PREFIX: annex-
+      BACKUP_RETENTION_DAYS: "7"
+      BACKUP_ARCHIVE: /archive
+      EXEC_LABEL: annex
+    volumes:
+      - ${ANNEX_DATA_DIR}/apps:/backup/apps:ro
+      - ${ANNEX_DATA_DIR}/dumps:/backup/dumps:ro
+      - ${ANNEX_DATA_DIR}/backups:/archive
+    networks: [socket-exec]
+    depends_on:
+      socket-exec: {condition: service_healthy}
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "pgrep", "backup"]
+      interval: 30s
+      timeout: 3s
+
+  # --- Extras (profile off by default) ------------------------------------
+  metabase:
+    <<: *base
+    image: metabase/metabase:v0.64.2.2
+    profiles: [extras]
+    env_file: ${ANNEX_DATA_DIR}/secrets/metabase.env
+    environment:
+      <<: *tz
+      JAVA_OPTS: -Xmx1g
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: appdata-db
+      MB_DB_PORT: "5432"
+      MB_DB_DBNAME: metabase
+      MB_DB_USER: metabase
+      MB_SITE_URL: ${ANNEX_URL_METABASE}
+      MB_CHECK_FOR_UPDATES: "false"
+      MB_ANON_TRACKING_ENABLED: "false"
+      MB_LOAD_SAMPLE_CONTENT: "false"
+    networks: [platform, product, appdata]
+    depends_on:
+      appdata-db: {condition: service_healthy}
+      product-db: {condition: service_healthy}
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 20s
+      timeout: 5s
+      start_period: 240s
+    labels:
+      com.kaldi.annex: "true"
+      traefik.enable: "true"
+      traefik.docker.network: annex-platform
+      traefik.http.routers.metabase.rule: Host(`${ANNEX_HOST_METABASE}`)
+      traefik.http.services.metabase.loadbalancer.server.port: "3000"
+
+  dozzle:
+    <<: *base
+    image: amir20/dozzle:v11.3.2
+    profiles: [extras]
+    environment:
+      <<: *tz
+      DOCKER_HOST: tcp://socket-ro:2375
+      DOZZLE_AUTH_PROVIDER: forward-proxy
+      DOZZLE_FILTER: label=com.kaldi.annex=true
+      DOZZLE_NO_ANALYTICS: "true"
+      DOZZLE_RELEASE_CHECK_MODE: manual
+      DOZZLE_IMAGE_CHECK_MODE: "off"
+    networks: [platform, socket-ro]
+    depends_on:
+      socket-ro: {condition: service_healthy}
+    mem_limit: 64m
+    healthcheck:
+      test: ["CMD", "/dozzle", "healthcheck"]
+      interval: 30s
+      timeout: 3s
+    labels:
+      com.kaldi.annex: "true"
+      traefik.enable: "true"
+      traefik.docker.network: annex-platform
+      traefik.http.routers.logs.rule: Host(`${ANNEX_HOST_LOGS}`)
+      traefik.http.services.logs.loadbalancer.server.port: "8080"
+
+networks:
+  # traefik, apps and the gateway; the only network with outbound access
+  edge:
+    name: annex-edge
+    labels: {com.kaldi.annex: "true"}
+  # traefik and platform UIs; apps are never on it
+  platform:
+    name: annex-platform
+    internal: true
+    labels: {com.kaldi.annex: "true"}
+  # product-db, gateway, metabase; apps are never on it
+  product:
+    name: annex-product
+    internal: true
+    labels: {com.kaldi.annex: "true"}
+  # appdata-db, apps, metabase
+  appdata:
+    name: annex-appdata
+    internal: true
+    labels: {com.kaldi.annex: "true"}
+  socket-ro:
+    name: annex-socket-ro
+    internal: true
+    labels: {com.kaldi.annex: "true"}
+  socket-exec:
+    name: annex-socket-exec
+    internal: true
+    labels: {com.kaldi.annex: "true"}

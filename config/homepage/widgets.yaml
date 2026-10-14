@@ -1,0 +1,7 @@
+- greeting:
+    text_size: xl
+    text: Annex
+- datetime:
+    text_size: md
+    format:
+      dateStyle: long

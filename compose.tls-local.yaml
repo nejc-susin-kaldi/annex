@@ -1,0 +1,8 @@
+# Added to COMPOSE_FILE when ANNEX_TLS_MODE=local: Traefik terminates HTTPS
+# with the mkcert wildcard certificate in ${ANNEX_DATA_DIR}/certs.
+services:
+  traefik:
+    ports:
+      - "443:443"
+    volumes:
+      - ${ANNEX_DATA_DIR}/certs:/certs:ro

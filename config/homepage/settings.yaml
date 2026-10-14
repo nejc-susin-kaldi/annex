@@ -1,0 +1,16 @@
+title: Annex
+description: Internal tools for this client
+headerStyle: clean
+statusStyle: dot
+hideVersion: true
+disableUpdateCheck: true
+layout:
+  Tools:
+    style: row
+    columns: 3
+  Platform:
+    style: row
+    columns: 3
+  Add-ons:
+    style: row
+    columns: 3
