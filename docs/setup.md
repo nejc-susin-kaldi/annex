@@ -34,7 +34,7 @@ Then, with no system change:
 ```bash
 scripts/tunnel.sh up
 ```
-Open https://home.annex.home.arpa:8443 and sign in with a demo user. `scripts/show-users.sh` prints the passwords. Stop the tunnel with `scripts/tunnel.sh down`.
+Added on 14 Oct. Open https://home.annex.home.arpa:8443 and sign in with a demo user. `scripts/show-users.sh` prints the passwords. Stop the tunnel with `scripts/tunnel.sh down`.
 
 ## 4. MCP server in Claude Code (M0.4)
 To be added in M0.4.

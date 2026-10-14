@@ -81,3 +81,6 @@ Idle, a minute after a push, with the extras profile **on**:
 | **total** | **about 1.85 GiB; core without extras about 465 MiB** |
 
 VM: 2.3 GiB used, 1.5 GiB available, no swap used. Disk: `/` 7.6 GB used of 29 GB (images 3.5 GB).
+
+## D15. Wipe round trip not tested in M0.1 (14 Oct, Nejc)
+`scripts/wipe-vm.sh` → `bootstrap.sh` → `push.sh` is deferred until the VM is actually wiped. It's a demo, and the test isn't worth the effort now. The script is written but has never been run.
