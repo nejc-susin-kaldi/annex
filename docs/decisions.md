@@ -136,3 +136,20 @@ A purely static site can't read identity headers or call the gateway, and the to
 
 ## D27. The skill lives in the repo, symlinked (14 Oct)
 `skills/annex/SKILL.md` covers when to use it, the tool table, template choice, the workflow, the rules and a homelab note about `/etc/hosts`. It's symlinked into `~/.claude/skills/annex` by Nejc (setup.md §4), so repo edits apply without reinstalling.
+
+## D28. Demo reset (15 Oct)
+`scripts/reset-demo.sh` brings the VM to a known demo state:
+- platform with extras;
+- `client-lookup` redeployed;
+- `monthly-report` removed and redeployed with empty history, then run once;
+- every other app removed with its data, unless `--keep <app>`;
+- tunnel up, `test-platform.sh` and `test-apps.sh` run.
+
+It shows the plan and asks before changing anything. It doesn't touch secrets, passwords, backups or the platform's data. **It was written but not run (Nejc's call, to avoid disturbing the current setup).** It only chains commands that were each tested in M0.1–M0.3 (`push.sh --extras`, `annex remove --yes`, `annex deploy`, `annex run`, `tunnel.sh up`, the test suites). Its own bash syntax was checked.
+`vibe-dashboard` is built live during the demo by Claude Code in a fresh empty folder, so the default reset removes it. A pre-built copy can be kept as a fallback with `--keep`.
+
+## D29. M0.4 proof run is part of the demo (15 Oct)
+The M0.4 acceptance (Claude Code builds and deploys `vibe-dashboard` from an empty folder through the MCP and skill, with no human code edits) hasn't been recorded by the build agent. The demo's live-build step is that proof. As of 15 Oct an app `vibe-leads` (owner sam, python-web with Postgres, deployed 15 Oct 09:30) is also on the VM; it wasn't deployed by the build agent. Keep it with `scripts/reset-demo.sh --keep vibe-leads` if it's wanted.
+
+## Resource record: M0.5 (15 Oct)
+Three apps (client-lookup 41 MiB, monthly-report 48 MiB, vibe-leads 44 MiB), extras on. Metabase 1.34 GiB, Homepage 120 MiB, Authelia 29 MiB (after a quiet night), everything else under 90 MiB each. VM: 2.4 GiB used, 1.45 GiB available. Disk: 8.2 GB of 29 GB.

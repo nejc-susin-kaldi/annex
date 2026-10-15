@@ -10,7 +10,7 @@ scripts/push.sh --extras      # sync and start the platform, incl. Metabase and 
 scripts/test-platform.sh      # M0.1 checks through an SSH tunnel
 scripts/show-users.sh         # demo user passwords
 ```
-For browser access, see [docs/setup.md](docs/setup.md) §3. Day-to-day commands are in [docs/operations.md](docs/operations.md).
+For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo is in [docs/demo.md](docs/demo.md); teardown is in [docs/teardown.md](docs/teardown.md). Day-to-day commands are in [docs/operations.md](docs/operations.md).
 
 ## Deploying apps
 ```bash
@@ -42,5 +42,6 @@ Plus product-db and appdata-db (Postgres 16), Ofelia (jobs), offen backup (night
 | `scripts/backup.sh` | run the nightly backup now |
 | `scripts/restore.sh <app> [archive]` | restore one app's database and files |
 | `scripts/test-apps.sh`, `test-jobs.sh`, `restore-test.sh` | M0.2/M0.3 checks |
+| `scripts/reset-demo.sh` | clean demo state: example apps redeployed, other apps removed, checks run (see docs/demo.md) |
 | `scripts/wipe-vm.sh` | removes everything Annex from the VM (asks first) |
 | `scripts/show-users.sh` | prints demo user passwords |

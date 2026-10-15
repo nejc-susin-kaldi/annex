@@ -27,7 +27,8 @@ The brief is `docs/brief.md`. Read it before changing anything. Decisions and th
 - `cli/`: the `annex` CLI (uv project). `ops.py` holds the operations shared with the MCP server, `manifest.py` validates `annex.yaml`, and `contract.md` is the app contract (`docs/app-contract.md` links to it). Run it with `./annex`.
 - `vm/annex_vm.py`: the VM side of app provisioning (DB, gateway role and JWT, secrets). Stdlib only; prints JSON, never secret values.
 - `templates/<name>/`: app templates (`__APP_NAME__` and `__OWNER__` are replaced by `annex init`). `examples/`: demo apps.
-- `mcp/`, `skills/`: M0.4.
+- `mcp/`: the MCP server (stdio, `mcp` 2.x), a thin layer over `annex_cli.ops`. `skills/annex/SKILL.md`: the Claude Code skill (symlinked into `~/.claude/skills`).
+- `docs/demo.md` + `scripts/reset-demo.sh`: the management demo. Don't run `reset-demo.sh` without Nejc's go-ahead: it removes apps that aren't examples, with their data.
 
 ## Conventions
 - Settings live in `.env` (gitignored; copy `.env.example`). `scripts/render.py` derives everything else into `.build/platform/.env`, which is also the platform's `.env` on the VM and the CLI's source of truth.
