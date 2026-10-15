@@ -151,3 +151,25 @@ def test_message_headers():
     assert msg["X-Annex-App"] == "monthly-report"
     assert "monthly-report via Annex" in str(msg["From"]) and "noreply@annex.example" in str(msg["From"])
     assert msg.is_multipart() and msg.get_body(("html",)) is not None
+
+
+# --- the notice template's optional details block (used by alert messages) ---------------
+def test_notice_details_are_escaped_preformatted_text():
+    html, text = email.render_notice({"title": "t", "body": "b", "details": "line 1\n<script>x</script> & more"})
+    assert "<pre" in html and "&lt;script&gt;" in html and "<script>" not in html and "&amp; more" in html
+    assert "line 1\n<script>x</script> & more" in text
+    assert html.index("<pre") > html.index("<h1")
+
+
+def test_notice_without_details_has_no_pre_block():
+    assert "<pre" not in email.render_notice({"title": "t", "body": "b"})[0]
+    assert "<pre" not in email.render_notice({"title": "t", "body": "b", "details": "  "})[0]
+
+
+def test_notice_details_must_be_a_string():
+    assert error_of(email.render_notice, {"title": "t", "body": "b", "details": ["x"]}).status == 400
+
+
+def test_platform_alerts_come_from_annex_not_from_a_pseudo_app():
+    msg = email.build_message("_platform", "noreply@annex.example", ["cm@annex.example"], "s", "t", None)
+    assert str(msg["From"]).startswith("Annex <") and msg["X-Annex-App"] == "_platform"

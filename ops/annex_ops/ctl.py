@@ -4,9 +4,10 @@ Used by the annex CLI over SSH. Never prints tokens, hashes or message bodies (n
 """
 import argparse
 import json
+import re
 import sys
 
-from . import config, db, sends
+from . import config, db, directory, incidents, sends
 from .errors import OpsError
 
 
@@ -42,12 +43,39 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--json", action="store_true")
     sub.add_parser("grants", help="what each app may do").add_argument("--json", action="store_true")
     sub.add_parser("info", help="how email and Slack are wired").add_argument("--json", action="store_true")
+    s = sub.add_parser("app-status", help="health check, open incident and last job runs of an app")
+    s.add_argument("app")
+    s.add_argument("--json", action="store_true")
+    s = sub.add_parser("incidents", help="incidents, newest first")
+    s.add_argument("--open", action="store_true")
+    s.add_argument("--app")
+    s.add_argument("--limit", type=int, default=50)
+    s.add_argument("--json", action="store_true")
+    s = sub.add_parser("maintenance", help="hold alerts for a subject (app:<name>, job:<app>/<job>, platform:<service>)")
+    s.add_argument("subject")
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--minutes", type=int)
+    g.add_argument("--end", action="store_true")
+    s.add_argument("--json", action="store_true")
+    sub.add_parser("users", help="logins in the user directory").add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
         if a.cmd == "sends":
             data, cols = sends.list_sends(a.app, a.limit), ["ts", "app", "channel", "recipients", "subject", "status", "error"]
         elif a.cmd == "grants":
             data, cols = grants(), ["app", "email", "slack_channels", "updated_at"]
+        elif a.cmd == "app-status":
+            data, cols = incidents.app_status(a.app), []
+        elif a.cmd == "incidents":
+            data = incidents.list_incidents(a.open, a.app, a.limit)
+            cols = ["id", "subject", "opened_at", "resolved_at", "reminders", "signals"]
+        elif a.cmd == "maintenance":
+            if not re.match(r"^(app:[a-z][a-z0-9-]*|job:[a-z][a-z0-9-]*/[a-z][a-z0-9-]*|platform:[a-z][a-z0-9_-]*)$", a.subject):
+                raise OpsError(400, f"{a.subject!r} is not a subject. Use app:<name>, job:<app>/<job> or platform:<service>")
+            data, cols = (incidents.end_maintenance(a.subject) if a.end
+                          else incidents.set_maintenance(a.subject, a.minutes)), []
+        elif a.cmd == "users":
+            data, cols = sorted(directory.users()), []
         else:
             data, cols = info(), []
     except OpsError as e:
@@ -55,8 +83,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if a.json:
         print(json.dumps(data))
-    elif a.cmd == "info":
+    elif isinstance(data, dict):
         print("\n".join(f"{k}: {v}" for k, v in data.items()))
+    elif a.cmd == "users":
+        print("\n".join(data))
     else:
         print(table(data, cols))
     return 0

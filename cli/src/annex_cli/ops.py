@@ -31,6 +31,7 @@ OFELIA = "annex-ofelia-1"
 GATEWAY_URL = "http://gateway:3000"
 OPS_URL = "http://ops:8000"
 OPS_CONTAINER = "annex-ops-1"
+GATUS = "annex-gatus-1"
 HEALTH_TIMEOUT = int(os.environ.get("ANNEX_HEALTH_TIMEOUT", "60"))
 KEEP_RELEASES = 3  # images and data snapshots kept per app
 SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", ".DS_Store", ".pytest_cache", ".mypy_cache"}
@@ -112,6 +113,7 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
         "com.kaldi.annex.type": m.type,
         "com.kaldi.annex.release": str(release),
         "com.kaldi.annex.memory": f"{m.memory_mb}m",
+        "com.kaldi.annex.alerts-to": ",".join(m.alerts_to),
         "homepage.group": "Tools",
         "homepage.name": m.name,
         "homepage.description": f"{m.description} · owner: {m.owner}" if m.description else f"owner: {m.owner}",
@@ -269,6 +271,33 @@ def _provision_args(app: str, *, postgres: bool, files: bool, views: list[str], 
             *(["--slack", ",".join(notify_slack)] if notify_slack else [])]
 
 
+def gatus_config(m: mf.Manifest) -> str | None:
+    """Gatus's check for a web app (one file per app); job-only apps have none, ops watches their jobs instead."""
+    if not m.is_web:
+        return None
+    return yaml.safe_dump({"endpoints": [{
+        "name": m.name, "group": "apps", "url": f"http://{container(m.name)}:{m.port}{m.healthcheck}",
+        "interval": "60s", "conditions": ["[STATUS] == 200"],
+        "alerts": [{"type": "custom", "failure-threshold": 2, "success-threshold": 2, "send-on-resolved": True,
+                    "description": "health check failing"}]}]}, sort_keys=False)
+
+
+def _gatus_check(r: Remote, m: mf.Manifest) -> None:
+    """Write (or delete) the app's Gatus check. Gatus picks up new files by itself after about 30 s but never
+    notices a deleted one, so it is restarted whenever the file changes (spike, D41); unchanged = no restart."""
+    path = f"{r.data}/state/gatus/apps/{m.name}.yaml"
+    want = gatus_config(m)
+    have = r.run(f"cat {path}", check=False)
+    current = have.stdout.decode() if have.returncode == 0 else None
+    if want == current:
+        return
+    if want is None:
+        r.run(f"rm -f {path}")
+    else:
+        r.run(f"mkdir -p {r.data}/state/gatus/apps && cat > {path}", input=want)
+    r.run(f"docker restart {GATUS} >/dev/null 2>&1", check=False)
+
+
 def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Progress
               ) -> tuple[tuple[str, str] | None, dict]:
     """Provision what manifest `m` asks for, switch the app to `image` and run the health gate.
@@ -283,6 +312,8 @@ def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Pro
     progress(f"Starting r{release} ({image})")
     r.run(f"cd {d} && docker compose up -d --remove-orphans 2>&1")
     failed = _gate(r, m, progress)
+    if not failed:
+        _gatus_check(r, m)  # after the gate: Gatus checks at once when it restarts, and the app is up by now
     if failed or not m.is_web:
         return failed, prov
     progress("Waiting for the route and the container healthcheck")
@@ -311,7 +342,8 @@ def _write_record(r: Remote, m: mf.Manifest, image: str, release: int) -> dict:
     record = {"name": m.name, "owner": m.owner, "type": m.type, "release": release, "image": image,
               "url": r.url_for(m.name) if m.is_web else None, "deployed_at": _now(), "postgres": m.postgres,
               "files": m.files, "views": m.views, "secrets": m.secrets, "schedule": [j.__dict__ for j in m.schedule],
-              "memory_mb": m.memory_mb, "notify_email": m.notify_email, "notify_slack": m.notify_slack}
+              "memory_mb": m.memory_mb, "notify_email": m.notify_email, "notify_slack": m.notify_slack,
+              "alerts_to": m.alerts_to}
     r.run(f"cat > {r.data}/deploy/{m.name}/deploy.json", input=json.dumps(record, indent=2))
     return record
 
@@ -411,11 +443,23 @@ def _warnings(r: Remote, m: mf.Manifest) -> list[str]:
     if m.memory_mb > mf.MEMORY_DEFAULT_MB:
         out.append(f"{m.name} runs with {m.memory_mb}m of memory instead of the default {mf.MEMORY_DEFAULT_MB}m. "
                    "That's fine if it needs it; the platform team sees raised limits in annex list")
+    try:
+        connected = _ops_ctl(r, "info")["slack_connected"]
+        logins = set(_ops_ctl(r, "users"))
+    except AnnexError:
+        connected, logins = True, None  # ops isn't reachable: can't tell, so don't warn
+    if logins is not None:
+        unknown = [x for x in dict.fromkeys([m.owner if "owner" in m.alerts_to else None,
+                                             *(a for a in m.alerts_to if a != "owner" and not a.startswith("#"))])
+                   if x and x not in logins]
+        if unknown:
+            out.append(f"alerts: {', '.join(unknown)} isn't in the user directory, so they won't be emailed when "
+                       f"{m.name} has a problem; admins are alerted instead. Fix the owner or alerts.to in annex.yaml")
+    channels = [a for a in m.alerts_to if a.startswith("#")]
+    if channels and not connected:
+        out.append(f"alerts.to lists {', '.join(channels)} but Slack isn't connected yet, so those alerts go by email "
+                   "only (docs/setup.md §7)")
     if m.notify_slack:
-        try:
-            connected = _ops_ctl(r, "info")["slack_connected"]
-        except AnnexError:
-            connected = True  # ops isn't reachable: can't tell, so don't warn
         if not connected:
             out.append(f"notify.slack is declared ({', '.join(m.notify_slack)}) but Slack isn't connected on this "
                        "Annex yet, so Slack posts fail with a clear error until the platform team connects it "
@@ -474,6 +518,23 @@ def releases(app: str) -> list[dict]:
 
 def rollback(app: str, to: int | None = None, with_data: bool = False, progress: Progress = _quiet,
              via: str = "cli") -> dict:
+    """Switch an app back to an earlier release (see _rollback). A data restore holds the app's alerts while the
+    container is stopped (annex_vm opens the maintenance window); it ends once the app is back."""
+    try:
+        return _rollback(app, to, with_data, progress, via)
+    finally:
+        if with_data:
+            _maintenance(Remote(), app, None)
+
+
+def _maintenance(r: Remote, app: str, minutes: int | None) -> None:
+    """Hold (or release, with None) alerts for an app. Best effort: a failure must never block the operation."""
+    args = ["--minutes", str(minutes)] if minutes else ["--end"]
+    r.run(f"docker exec {OPS_CONTAINER} python -m annex_ops.ctl maintenance app:{app} {' '.join(args)} --json", check=False)
+
+
+def _rollback(app: str, to: int | None = None, with_data: bool = False, progress: Progress = _quiet,
+              via: str = "cli") -> dict:
     """Switch an app back to an earlier release (default: the one before the current), re-applying that
     release's manifest. with_data also restores the database and /data snapshot from that release's time,
     losing writes since (human only)."""
@@ -587,6 +648,16 @@ def status(app: str) -> dict:
         notify = (["email"] if record.get("notify_email") else []) + \
                  [f"Slack {c}" for c in record.get("notify_slack", [])]
         info["notify"] = ", ".join(notify) or "none"
+        info["alerts_to"] = ", ".join(record.get("alerts_to", ["owner"]))
+    try:
+        health = _ops_ctl(r, "app-status", app)
+    except AnnexError:
+        health = {"health_check": {"state": "unknown", "detail": "annex-ops can't be reached"}, "incident": None, "jobs": []}
+    info["health_check"] = health["health_check"]
+    info["incident"] = health["incident"]
+    runs = {j["job"]: j for j in health["jobs"]}
+    info["jobs"] = [{"job": j["name"], "cron": j["cron"], **{k: v for k, v in runs.get(j["name"], {}).items() if k != "job"}}
+                    for j in (record or {}).get("schedule", [])]
     info["recent_logs"] = r.out(f"docker logs --tail 15 {container(app)} 2>&1", check=False).splitlines()
     return info
 
@@ -647,6 +718,10 @@ def remove(app: str, keep_data: bool = False) -> dict:
     if not record and not _containers(r, app):
         raise AnnexError(f"No app named {app!r}. See deployed apps with: annex list")
     d = f"{r.data}/deploy/{app}"
+    # the check goes first, so Gatus never sees the stopped container as an outage
+    if r.run(f"test -f {r.data}/state/gatus/apps/{app}.yaml", check=False).returncode == 0:
+        r.run(f"rm -f {r.data}/state/gatus/apps/{app}.yaml")
+        r.run(f"docker restart {GATUS} >/dev/null 2>&1", check=False)
     r.run(f"if [ -f {d}/compose.yaml ]; then cd {d} && docker compose down --remove-orphans 2>&1; "
           f"else docker rm -f {container(app)} >/dev/null 2>&1 || true; fi; "
           f"docker image ls -q annex-app/{app} | xargs -r docker rmi -f >/dev/null 2>&1 || true")

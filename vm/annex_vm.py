@@ -114,6 +114,14 @@ def api_views() -> list[str]:
     return [r for r in rows.splitlines() if r]
 
 
+def maintenance(app: str, minutes: int | None) -> None:
+    """Hold annex-ops's alerts for the app while its container is stopped on purpose (None: release them).
+    Best effort: a failure here must never block a restore."""
+    args = ["--minutes", str(minutes)] if minutes else ["--end"]
+    subprocess.run(["docker", "exec", "annex-ops-1", "python", "-m", "annex_ops.ctl", "maintenance", f"app:{app}", *args, "--json"],
+                   capture_output=True)
+
+
 def helper_image() -> str:
     """An image that is always present (the platform's Postgres) for chown/rm as root."""
     r = subprocess.run(["docker", "inspect", "-f", "{{.Config.Image}}", APPDATA_DB], capture_output=True, text=True)
@@ -369,6 +377,7 @@ def cmd_restore(a: argparse.Namespace) -> None:
     if record.get("postgres") and not have_dump:
         raise Fail(f"{archive.name} has no database dump for {app}")
 
+    maintenance(app, 15)
     subprocess.run(["docker", "stop", f"annex-app-{app}"], capture_output=True)
     try:
         if have_dump:
@@ -383,6 +392,7 @@ def cmd_restore(a: argparse.Namespace) -> None:
     finally:
         subprocess.run(["docker", "start", f"annex-app-{app}"], capture_output=True)
         shutil.rmtree(staging, ignore_errors=True)
+        maintenance(app, None)
     out({"ok": True, "app": app, "archive": archive.name, "database": have_dump, "files": n_files})
 
 
@@ -455,6 +465,7 @@ def cmd_restore_snapshot(a: argparse.Namespace) -> None:
                    f"with scripts/restore.sh {app}")
     snap = snaps[-1]
     meta = json.loads((snap / "meta.json").read_text())
+    maintenance(app, 15)  # the CLI ends it once the release it rolls back to is running
     subprocess.run(["docker", "stop", f"annex-app-{app}"], capture_output=True)
     if (snap / "db.dump").exists():
         restore_database(app, snap / "db.dump")

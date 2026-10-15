@@ -38,6 +38,10 @@ Undo (the same command as above):
 ```bash
 sudo sed -i '' '/# annex$/d' /etc/hosts
 ```
+The status page (M1.3) needs `status.annex.home.arpa`, again as its own line with the same tag (the undo above removes it too):
+```bash
+echo '127.0.0.1 status.annex.home.arpa # annex' | sudo tee -a /etc/hosts
+```
 Then, with no system change:
 ```bash
 scripts/tunnel.sh up
@@ -91,7 +95,7 @@ uv tool uninstall annex-cli
 Without this, Annex works but Slack posts return a clear "Slack isn't connected" error (503) and are logged as `unavailable`; email through Mailpit is unaffected. Do it in a **test** Slack workspace, not a real one.
 
 1. Create a Slack app at https://api.slack.com/apps ("From scratch"), in the test workspace. Under *OAuth & Permissions* add the **bot** scope `chat:write`, then *Install to Workspace* and copy the *Bot User OAuth Token* (`xoxb-...`).
-2. In Slack, create `#finance-reports` and `#annex-alerts` and invite the app to both (`/invite @<app name>`).
+2. In Slack, create `#finance-reports` and `#annex-alerts` and invite the app to both (`/invite @<app name>`). Once Slack is connected, **every alert** (app problems and platform problems, and their "resolved" messages) is also posted to `#annex-alerts` (setting `ANNEX_ALERT_SLACK_CHANNEL`), and apps can list their own channels under `alerts.to`.
 3. Put the token on the VM. The command reads the token from the terminal, so it doesn't land in your shell history. Paste `SLACK_BOT_TOKEN=xoxb-...`, press Enter, then Ctrl-D:
    ```bash
    ssh annex 'umask 077; cat > /srv/annex/secrets/slack.env'

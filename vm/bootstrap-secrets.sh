@@ -10,7 +10,7 @@ S=$D/secrets
 umask 077
 
 mkdir -p "$S/authelia" "$S/apps" "$D/state/authelia" "$D/state/product-db" "$D/state/appdata-db" \
-         "$D/state/mailpit" "$D/state/directory" "$D/apps" "$D/deploy" "$D/backups" "$D/dumps" "$D/certs" "$D/platform"
+         "$D/state/mailpit" "$D/state/directory" "$D/state/gatus/apps" "$D/state/gatus/data" "$D/state/ops" "$D/apps" "$D/deploy" "$D/backups" "$D/dumps" "$D/certs" "$D/platform"
 
 rand() { openssl rand -hex "${1:-24}"; }
 password() { openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 20; }
@@ -27,6 +27,7 @@ ensure_key GATEWAY_JWT_SECRET 32
 ensure_key APPDATA_DB_POSTGRES_PASSWORD
 ensure_key APPDATA_DB_METABASE_PASSWORD
 ensure_key APPDATA_DB_OPS_PASSWORD
+ensure_key OPS_INTERNAL_TOKEN 32
 for f in session_secret storage_encryption_key reset_password_jwt_secret; do
   [ -s "$S/authelia/$f" ] || { rand 32 > "$S/authelia/$f"; echo "bootstrap: generated authelia/$f"; }
 done
@@ -52,7 +53,14 @@ MB_DB_PASS=$APPDATA_DB_METABASE_PASSWORD
 VARS
 cat > "$S/ops.env" <<VARS
 OPS_DATABASE_URL=postgres://annex_ops:$APPDATA_DB_OPS_PASSWORD@appdata-db:5432/annex_ops
+OPS_INTERNAL_TOKEN=$OPS_INTERNAL_TOKEN
 VARS
+# Gatus authenticates its alert webhook to ops with this token
+cat > "$S/gatus.env" <<VARS
+OPS_INTERNAL_TOKEN=$OPS_INTERNAL_TOKEN
+VARS
+# ops reads runtime tuning (state/ops/tuning.json) as uid 10001; the file only exists during tests
+chmod 755 "$D/state/ops"
 
 # Demo users: login, display name, email, groups
 USERS=(

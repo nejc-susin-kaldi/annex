@@ -32,6 +32,7 @@ post_slack("#finance-reports", "Report ready: https://...")
 - Exit 0 on success and non-zero on failure, and print a short summary. That output is what `annex run` shows.
 - `name` is the hostname: lowercase letters, digits and `-`.
 - Views must be in the gateway allowlist (see `annex contract`).
+- **A job must exit non-zero when it fails**, so its owner is alerted (a job that catches its own error and exits 0 looks successful). Keep `/healthz` honest and fast: the owner is emailed when it fails.
 
 ## Workflow
 1. Edit the code. The gateway and `DATA_DIR` only exist on the server.

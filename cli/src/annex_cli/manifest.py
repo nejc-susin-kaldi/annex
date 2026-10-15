@@ -22,10 +22,11 @@ INJECTED_ENV = {"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", "DATABASE_URL", "DAT
                 "ANNEX_GATEWAY_URL", "ANNEX_GATEWAY_TOKEN", "ANNEX_OPS_URL", "ANNEX_OPS_TOKEN"}
 TYPES = ("web", "job", "web+job")
 KNOWN_KEYS = {"name", "owner", "description", "type", "port", "healthcheck", "access", "storage",
-              "data", "notify", "schedule", "env", "secrets", "egress", "resources"}
+              "data", "notify", "alerts", "schedule", "env", "secrets", "egress", "resources"}
 MEMORY_DEFAULT_MB = 256
 MEMORY_MIN_MB, MEMORY_MAX_MB = 128, 512
 MEMORY_RE = re.compile(r"^(\d+)\s*[mM]$")
+LOGIN_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
 SLACK_CHANNEL_RE = re.compile(r"^#[a-z0-9][a-z0-9_-]{0,79}$")  # same rule in vm/annex_vm.py and annex-ops
 
 
@@ -64,6 +65,8 @@ class Manifest:
     # defaulted for the same reason: a rollback to a release without notify: must revoke the grant
     notify_email: bool = False
     notify_slack: list[str] = field(default_factory=list)
+    # who hears about this app's problems, besides the admins: "owner", logins and #channels (older releases: owner)
+    alerts_to: list[str] = field(default_factory=lambda: ["owner"])
 
     @property
     def is_web(self) -> bool:
@@ -238,6 +241,29 @@ def load(folder: Path) -> Manifest:
                 p.append("notify.slack: a channel is listed twice. List each channel once")
             notify_slack = list(slack)
 
+    alerts = raw.get("alerts") or {}
+    alerts_to = ["owner"]
+    if not isinstance(alerts, dict) or set(alerts) - {"to"}:
+        p.append("alerts: must be a mapping with only 'to', e.g. alerts: {to: [owner, cm, \"#finance-alerts\"]}")
+    elif "to" in alerts:
+        to = alerts["to"]
+        if not isinstance(to, list) or not to or not all(isinstance(t, str) for t in to):
+            p.append("alerts.to: must be a non-empty list of 'owner', logins and Slack channels, "
+                     "e.g. [owner, cm, \"#finance-alerts\"]")
+        else:
+            for t in to:
+                if t == "owner" or LOGIN_RE.match(t) or SLACK_CHANNEL_RE.match(t):
+                    continue
+                if t.startswith("#"):
+                    p.append(f"alerts.to: {t!r} is not a valid Slack channel. Use lowercase letters, digits, '-' and "
+                             "'_', e.g. '#finance-alerts'")
+                else:
+                    p.append(f"alerts.to: {t!r} is not a login. Use 'owner', a login like 'cm' (lowercase letters, "
+                             "digits, '.', '_' or '-'), or a Slack channel like '#finance-alerts'")
+            if len(set(to)) != len(to):
+                p.append("alerts.to: an entry is listed twice. List each once")
+            alerts_to = list(to)
+
     resources = raw.get("resources") or {}
     memory_mb = MEMORY_DEFAULT_MB
     if not isinstance(resources, dict) or set(resources) - {"memory"}:
@@ -263,7 +289,8 @@ def load(folder: Path) -> Manifest:
                     port=port, healthcheck=healthcheck, postgres=bool(storage.get("postgres")),
                     files=bool(storage.get("files")), views=list(views), schedule=schedule,
                     env=env, secrets=list(secrets), egress=[str(e) for e in egress], memory_mb=memory_mb,
-                    notify_email=notify_email, notify_slack=notify_slack)
+                    notify_email=notify_email, notify_slack=notify_slack,
+                    alerts_to=alerts_to)
 
 
 def valid_cron(cron: object) -> bool:

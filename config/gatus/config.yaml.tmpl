@@ -1,0 +1,40 @@
+# Gatus: platform-wide settings and the front-door check. Each web app's own check is a file in
+# /annex/apps (state/gatus/apps/<app>.yaml), written by `annex deploy`. Gatus merges every YAML file below
+# /annex. A literal "$" must be written "$$"; ${OPS_INTERNAL_TOKEN} comes from Gatus's environment.
+storage:
+  type: sqlite
+  path: /data/gatus.db
+web:
+  port: 8080
+
+# Every alert goes to annex-ops, which decides who hears about it (one incident per problem, M1.3).
+# Identifiers are in the URL and the errors in a plain-text body: [RESULT_ERRORS] can contain quotes.
+alerting:
+  custom:
+    url: "http://ops:8000/internal/gatus?endpoint=[ENDPOINT_NAME]&group=[ENDPOINT_GROUP]&state=[ALERT_TRIGGERED_OR_RESOLVED]"
+    method: POST
+    body: "[RESULT_ERRORS]"
+    headers:
+      Authorization: "Bearer ${OPS_INTERNAL_TOKEN}"
+      Content-Type: text/plain
+
+endpoints:
+  # An anonymous request that gets a 302 to the login page proves Traefik, forward-auth and Authelia all answer.
+  # Authelia redirects (302) only when the request has an Accept header; without one it answers 401.
+  - name: front-door
+    group: platform
+    url: "{{ANNEX_FRONTDOOR_URL}}"
+    interval: 60s
+    client:
+      insecure: true
+      ignore-redirect: true
+    headers:
+      Accept: text/html
+    conditions:
+      - "[STATUS] == 302"
+    alerts:
+      - type: custom
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true
+        description: "the front door (Traefik and the login) isn't answering"

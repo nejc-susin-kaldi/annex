@@ -38,3 +38,28 @@ CREATE TABLE IF NOT EXISTS annex_ops.sends (
   error      text
 );
 CREATE INDEX IF NOT EXISTS sends_app_ts ON annex_ops.sends (app, ts DESC);
+
+-- --- M1.3: incidents and alerts ------------------------------------------------------
+-- one open incident per subject (app:<a> | job:<a>/<job> | platform:<service>); signals attach to it
+CREATE TABLE IF NOT EXISTS annex_ops.incidents (
+  id               bigserial PRIMARY KEY,
+  subject          text NOT NULL,
+  app              text,                       -- null for platform
+  opened_at        timestamptz NOT NULL DEFAULT now(),
+  resolved_at      timestamptz,
+  resolved_quietly boolean NOT NULL DEFAULT false,  -- removed apps: no "resolved" message
+  last_notified_at timestamptz,
+  reminders        int NOT NULL DEFAULT 0,
+  signals          jsonb NOT NULL DEFAULT '{}', -- active: {"down": {"since": ..., "detail": ..., "cid": ...}, ...}
+  history          jsonb NOT NULL DEFAULT '[]'  -- every signal raised/cleared, for the console (M2)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS incidents_one_open ON annex_ops.incidents (subject) WHERE resolved_at IS NULL;
+-- scheduled job results, read from Ofelia's log (kept 90 days)
+CREATE TABLE IF NOT EXISTS annex_ops.job_runs (
+  id bigserial PRIMARY KEY, app text NOT NULL, job text NOT NULL, finished_at timestamptz NOT NULL,
+  ok boolean NOT NULL, duration_ms int, error text);
+CREATE INDEX IF NOT EXISTS job_runs_app_job ON annex_ops.job_runs (app, job, finished_at DESC);
+-- where each followed container's log was read up to (M2.2 reuses this for log shipping)
+CREATE TABLE IF NOT EXISTS annex_ops.log_cursors (container text PRIMARY KEY, ts timestamptz NOT NULL);
+-- alerts held for a subject until a time (restore and rollback --with-data open one)
+CREATE TABLE IF NOT EXISTS annex_ops.maintenance (subject text PRIMARY KEY, until timestamptz NOT NULL);

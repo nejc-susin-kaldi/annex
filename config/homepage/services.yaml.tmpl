@@ -19,6 +19,15 @@
         icon: mdi-api
         server: annex
         container: annex-gateway-1
+    - Status:
+        href: "{{ANNEX_URL_STATUS}}"
+        description: Health of every app and the platform
+        icon: gatus.png
+        server: annex
+        container: annex-gatus-1
+        widget:
+          type: gatus
+          url: http://gatus:8080
     - Mail:
         href: "{{ANNEX_URL_MAIL}}"
         description: "Outgoing email (prototype catcher: nothing leaves the server). Admins only"

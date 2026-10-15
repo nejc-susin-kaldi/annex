@@ -31,6 +31,7 @@ post_slack("#finance-reports", "Report ready: https://...")
 - Listen on `0.0.0.0:$PORT`, and make `GET /healthz` return 200 when ready.
 - `name` is the hostname: lowercase letters, digits and `-`.
 - Views must be in the gateway allowlist (see `annex contract`).
+- **A job must exit non-zero when it fails**, so its owner is alerted (a job that catches its own error and exits 0 looks successful). Keep `/healthz` honest and fast: the owner is emailed when it fails.
 
 ## Workflow
 1. Edit the code. Test locally if you like: `pip install -r requirements.txt && PORT=8080 python main.py`. Identity headers and the gateway only exist on the server.

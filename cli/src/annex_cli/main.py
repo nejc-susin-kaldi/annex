@@ -20,6 +20,27 @@ def _table(rows: list[dict], cols: list[str]) -> str:
     return "\n".join([line([c.upper() for c in cols])] + [line([r.get(c) for c in cols]) for r in rows])
 
 
+def _health_line(h: dict) -> str:
+    if h["state"] == "none":
+        return "no check (job-only app; its jobs are watched instead)"
+    when = f", checked {h['checked_at'][11:19]} UTC" if h.get("checked_at") else ""
+    return f"{h['state']}{when}" + (f" ({h['detail']})" if h.get("detail") else "")
+
+
+def _incident_line(i: dict | None) -> str:
+    if not i:
+        return "none"
+    return f"OPEN since {i['opened_at'].replace('T', ' ')}: " + "; ".join(f"{k}: {v}" for k, v in i["signals"].items())
+
+
+def _job_line(j: dict) -> str:
+    if not j.get("last_run"):
+        return f"{j['cron']}; no run seen yet"
+    state = "FAILING" if j.get("failing") else ("ok" if j["ok"] else "failed")
+    return (f"{j['cron']}; last run {j['last_run'].replace('T', ' ')} {state}, {j['duration_ms']} ms"
+            + (f" ({j['error']})" if j.get("error") else ""))
+
+
 def _release(v: str) -> int:
     try:
         return int(v.lower().removeprefix("r"))
@@ -97,8 +118,17 @@ def main(argv: list[str] | None = None) -> None:
                 emit(st)
             else:
                 logs = st.pop("recent_logs")
+                jobs = st.pop("jobs", [])
                 for k, v in st.items():
-                    print(f"{k:12} {', '.join(j['name'] + ' (' + j['cron'] + ')' for j in v) if k == 'schedule' else v}")
+                    if k == "schedule":
+                        v = ", ".join(j["name"] + " (" + j["cron"] + ")" for j in v)
+                    elif k == "health_check":
+                        v = _health_line(v)
+                    elif k == "incident":
+                        v = _incident_line(v)
+                    print(f"{k:12} {v}")
+                for j in jobs:
+                    print(f"{'job ' + j['job']:12} {_job_line(j)}")
                 print("recent logs:\n  " + "\n  ".join(logs))
         elif a.cmd == "logs":
             if a.follow:

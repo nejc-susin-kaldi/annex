@@ -28,6 +28,8 @@ data:
 notify:                       # optional: what the app may send, through ANNEX_OPS_URL
   email: true                 # may send email (to company addresses only)
   slack: ["#finance-reports"] # Slack channels it may post to
+alerts:                       # optional: who hears when the app has a problem (default: the owner)
+  to: [owner, cm, "#finance-alerts"]  # 'owner', logins and Slack channels; admins always hear too
 schedule:                     # job and web+job only
   - name: monthly
     cron: "0 6 1 * *"         # minute hour day month weekday, Europe/Ljubljana; or @daily, @hourly
@@ -63,6 +65,13 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `mail`, `ops`, `s
   - **Limits:** 60 emails and 60 Slack posts per hour per app (429 when exceeded). Slack answers 503 if the platform team hasn't connected a workspace yet.
   - Every attempt is logged (app, recipients, subject, time, result), never the body: `annex sends <app>`.
   - Errors are JSON `{"error": "..."}` and say what to fix; the helpers raise `NotifyError` with that message and `.status`.
+- **Alerts.** Annex watches every app, and the owner (plus every admin, plus anyone in `alerts.to`) gets one email when:
+  - the health check fails (checked every minute, 2 failures in a row);
+  - the container stops, or exits with an error 3 times in 10 minutes (crash loop), or runs out of memory;
+  - a scheduled job exits non-zero;
+  - 5xx responses spike (at least 10 in 5 minutes and at least 5 % of requests).
+
+  There is one alert per problem however many signals notice it, a reminder after an hour and then daily, and a "resolved" message when it recovers. So keep `/healthz` honest and fast (it must not depend on slow calls), and make a job **exit non-zero when it fails**: a job that catches its own error and exits 0 looks successful. Redeploys and rollbacks don't alert. `annex status <app>` shows the health check, any open incident and the last run of each job; everyone signed in can see every app's up/down on the status page (`status.` host, also a tile on the discovery page). Slack channels in `alerts.to` only work once Slack is connected.
 - **Secrets** arrive as environment variables at runtime. Never put them in code, the repo or the image.
 - **Never publish ports.** Only Annex's front door does.
 - **Log to stdout/stderr.** Read logs with `annex logs <app>`.
@@ -127,7 +136,7 @@ All data is synthetic. Adding a view is a reviewed change by the platform team, 
 | `annex init <template> <name> [--owner login]` | copy a template |
 | `annex deploy [path]` | validate, provision DB/role/token, build, run, register |
 | `annex list` | list deployed apps |
-| `annex status <app>` | an app's state, config and recent logs |
+| `annex status <app>` | an app's state, health check, open incident, last job runs, config and recent logs |
 | `annex logs <app> [-n 100] [-f]` | an app's logs |
 | `annex run <app> <job>` | trigger a job now |
 | `annex sends [app] [-n 50]` | email and Slack send log: every attempt, rejections too, no bodies |

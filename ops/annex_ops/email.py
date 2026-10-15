@@ -15,7 +15,7 @@ from .errors import OpsError
 
 FIELDS = ("to", "subject", "text", "html", "template", "data")
 TEMPLATES = ("notice",)
-NOTICE_FIELDS = ("title", "body", "link", "link_text")
+NOTICE_FIELDS = ("title", "body", "link", "link_text", "details")
 ADDRESS_RE = re.compile(r"^[^@\s<>,;\"]+@[^@\s<>,;\"]+\.[^@\s<>,;\"]+$")
 MAX_RECIPIENTS = 20
 ATTACHMENTS_MESSAGE = ("Attachments aren't supported. Store the file in /data and email a link to it in your app: "
@@ -176,6 +176,9 @@ def render_notice(data: dict) -> tuple[str, str]:
         if not isinstance(data.get(key), str) or not data[key].strip():
             raise OpsError(400, f'data.{key}: required for template notice, e.g. {{"title": "Report ready", '
                                 '"body": "The June report is ready."}')
+    details = data.get("details")
+    if details is not None and not isinstance(details, str):
+        raise OpsError(400, "data.details: must be a string (preformatted text such as log lines)")
     link, link_text = data.get("link"), data.get("link_text") or "Open"
     if link is not None and (not isinstance(link, str) or not re.match(r"^https?://", link)
                              or re.search(r"\s", link)):
@@ -188,13 +191,17 @@ def render_notice(data: dict) -> tuple[str, str]:
     button = (f'<p style="margin:20px 0 0"><a href="{esc(link, quote=True)}" style="background:#1a56db;color:#fff;'
               f'padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block">{esc(link_text)}</a></p>'
               if link else "")
+    pre = (f'<pre style="margin:16px 0 0;padding:12px;background:#f3f4f6;border-radius:6px;font-size:12px;'
+           f'line-height:1.4;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,Menlo,Consolas,monospace">'
+           f'{esc(details[:8000])}</pre>' if details and details.strip() else "")
     page = ('<!doctype html><html><body style="margin:0;padding:24px;background:#f4f5f7;'
             'font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#1f2937">'
             '<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:8px;padding:28px">'
-            f'<h1 style="margin:0 0 16px;font-size:20px">{esc(data["title"])}</h1>{body_html}{button}'
+            f'<h1 style="margin:0 0 16px;font-size:20px">{esc(data["title"])}</h1>{body_html}{button}{pre}'
             '<p style="margin:28px 0 0;font-size:12px;color:#6b7280">Sent by Kaldi Annex</p>'
             '</div></body></html>')
-    text = f"{data['title']}\n\n{data['body']}" + (f"\n\n{link_text}: {link}" if link else "")
+    text = (f"{data['title']}\n\n{data['body']}" + (f"\n\n{link_text}: {link}" if link else "")
+            + (f"\n\n{details[:8000]}" if details and details.strip() else ""))
     return page, text
 
 
@@ -212,7 +219,7 @@ def render_body(req: EmailRequest) -> tuple[str, str | None]:
 
 def build_message(app: str, sender: str, to: list[str], subject: str, text: str, html: str | None) -> EmailMessage:
     msg = EmailMessage()
-    msg["From"] = Address(display_name=f"{app} via Annex", addr_spec=sender)
+    msg["From"] = Address(display_name="Annex" if app == "_platform" else f"{app} via Annex", addr_spec=sender)
     msg["To"] = [Address(addr_spec=a) for a in to]
     msg["Subject"] = subject
     msg["X-Annex-App"] = app
