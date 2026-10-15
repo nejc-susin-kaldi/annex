@@ -1,0 +1,18 @@
+# Test fixture for scripts/test-hooks.sh (M1.5): an app that records every webhook Annex forwards to it.
+# Standard library only. Not an example app: don't deploy it for real.
+name: hook-probe
+owner: sam
+description: Webhook test probe (fixture)
+type: web
+port: 8080
+healthcheck: /healthz
+access: internal
+storage:
+  files: true
+secrets: [TRELLO_SECRET, GH_SECRET, PLAIN_SECRET]
+webhooks:
+  - {name: trello, path: /hooks/trello, verify: trello, secret: TRELLO_SECRET}
+  - {name: gh, path: /hooks/gh, verify: github, secret: GH_SECRET}
+  - {name: plain, path: /hooks/plain, verify: shared-secret, secret: PLAIN_SECRET}
+env: {}
+egress: []

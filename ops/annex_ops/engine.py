@@ -28,6 +28,10 @@ class Tuning:
     reminder_first_s: float = 3600    # first reminder after an hour open, then
     reminder_repeat_s: float = 86400  # every 24 hours
     tick_s: float = 15
+    # incoming webhooks (M1.5): retry steps (comma-separated seconds; the last repeats), when to give up, when to alert
+    hook_backoff_s: str = "10,30,60,300,900,3600"
+    hook_max_age_s: float = 604800
+    hook_alert_after_s: float = 900
 
 
 # --- inputs ------------------------------------------------------------------
@@ -123,6 +127,19 @@ class Maintenance:  # until=None ends it
 
 
 @dataclass
+class HookFailing:  # a hook's oldest pending event has been failing for a while (repeated while it lasts)
+    app: str
+    hook: str
+    since: float
+
+
+@dataclass
+class HookOk:  # the hook's events are being delivered again
+    app: str
+    hook: str
+
+
+@dataclass
 class Restore:  # open incidents loaded from the database at startup
     incidents: list[dict]  # {subject, opened_at, last_notified_at, reminders, signals: {name: {since, detail, cid}}}
 
@@ -161,6 +178,7 @@ class _Open:
 
 
 CONTAINER_SIGNALS = ("stopped", "crash-loop", "oom", "unhealthy")
+STALE_HOOK_S = 60  # the delivery worker reports failing hooks every 2 s
 
 
 def app_of(subject: str) -> str | None:
@@ -181,6 +199,8 @@ class Engine:
         self.requests: dict[str, deque] = {}            # app -> deque of (ts, is_5xx)
         self.err_below: dict[str, float | None] = {}    # app -> since when the 5xx rate is under the threshold
         self.maint: dict[str, float] = {}
+        self.hooks_failing: dict[str, dict[str, float]] = {}  # app -> hook -> when it was last reported failing
+        self.webhook_restored: dict[str, float] = {}           # apps whose webhook signal came from the database
 
     # --- plumbing ----------------------------------------------------------
     def _in_maintenance(self, subject: str, now: float) -> bool:
@@ -297,6 +317,13 @@ class Engine:
                 pass  # the app is down: its jobs fail because of that (one problem, one alert); a real job bug shows next run
             else:
                 self._raise(now, subject, "job-failed", inp.detail or "the job exited with an error", out)
+        elif isinstance(inp, HookFailing):
+            self.hooks_failing.setdefault(inp.app, {})[inp.hook] = now
+            self.webhook_restored.pop(inp.app, None)
+            self._raise(now, f"app:{inp.app}", "webhook",
+                        f"webhook {inp.hook!r}: its events can't be delivered to the app (pending for {_mins(now - inp.since)})", out)
+        elif isinstance(inp, HookOk):
+            self._hook_ok(now, inp.app, inp.hook, out)
         elif isinstance(inp, Maintenance):
             if inp.until is None:
                 self.maint.pop(inp.subject, None)
@@ -308,7 +335,16 @@ class Engine:
                 self.signals[i["subject"]] = {k: dict(v) for k, v in i["signals"].items()}
                 self.open[i["subject"]] = _Open(i["opened_at"], i.get("last_notified_at") or i["opened_at"],
                                                 i.get("reminders", 0))
+                if "webhook" in i["signals"] and i["subject"].startswith("app:"):
+                    self.webhook_restored[i["subject"][4:]] = now
         return out
+
+    def _hook_ok(self, now: float, app: str, hook: str, out: list[Action]) -> None:
+        hooks = self.hooks_failing.get(app, {})
+        hooks.pop(hook, None)
+        if not hooks:
+            self.hooks_failing.pop(app, None)
+            self._clear(now, f"app:{app}", "webhook", out)
 
     def _seen(self, now: float, ev: Seen, out: list[Action]) -> None:
         c = self._ctr(ev)
@@ -349,6 +385,8 @@ class Engine:
             for name in list(self.signals.get(s, {})):
                 self._clear(now, s, name, out, quiet=True)
         if app and subject.startswith("app:"):
+            self.hooks_failing.pop(app, None)
+            self.webhook_restored.pop(app, None)
             self.requests.pop(app, None)
             self.err_below.pop(app, None)
 
@@ -375,6 +413,16 @@ class Engine:
                     for name in ("crash-loop", "oom"):
                         if sigs.get(name, {}).get("cid") is None:
                             self._clear(now, c.subject, name, out)
+        # webhook reports repeat while a hook fails: one that stops being reported (the worker died, or ops restarted
+        # with a restored signal and the hook has recovered since) is not failing any more
+        for app in list(self.hooks_failing):
+            for hook, seen in list(self.hooks_failing[app].items()):
+                if now - seen > STALE_HOOK_S:
+                    self._hook_ok(now, app, hook, out)
+        for app, since in list(self.webhook_restored.items()):
+            if now - since > STALE_HOOK_S:
+                del self.webhook_restored[app]
+                self._clear(now, f"app:{app}", "webhook", out)
         # also apps whose `errors` signal was restored from the database and have no requests in memory yet
         restored = {s[4:] for s, sig in self.signals.items() if s.startswith("app:") and "errors" in sig}
         for app in list(set(self.requests) | restored):

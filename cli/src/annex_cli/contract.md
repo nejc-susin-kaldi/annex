@@ -28,6 +28,11 @@ data:
 notify:                       # optional: what the app may send, through ANNEX_OPS_URL
   email: true                 # may send email (to company addresses only)
   slack: ["#finance-reports"] # Slack channels it may post to
+webhooks:                     # optional, web apps only, at most 10: calls from outside services (see Webhooks)
+  - name: trello              # part of the public URL
+    path: /hooks/trello       # the app's own endpoint (POST)
+    verify: trello            # trello | stripe | github | slack | shared-secret
+    secret: TRELLO_SECRET     # a name from secrets:
 alerts:                       # optional: who hears when the app has a problem (default: the owner)
   to: [owner, cm, "#finance-alerts"]  # 'owner', logins and Slack channels; admins always hear too
 schedule:                     # job and web+job only
@@ -79,6 +84,15 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `mail`, `ops`, `s
 - **Health gate.** Every deploy is a numbered release (`r1`, `r2`, …). A web app's new release must return 200 on its `healthcheck` within 60 s (a job-only app must keep running). If it doesn't, Annex switches back to the previous release automatically, and the deploy fails with the new release's last log lines. Your database and `/data` are left as they are, and so are any changes the failed release made to them.
 - **Jobs** run inside the app's container with the same environment (`docker exec`). In `type: job`, the container idles (`sleep infinity`) between runs. Trigger a job by hand with `annex run <app> <job>`. A job's exit code and output are its result.
 
+## Webhooks
+Outside services (Trello, Stripe, GitHub, Slack, anything with a shared secret) can call your tool while the tool itself stays behind login. Declare the hooks in `annex.yaml` (block above); each needs a secret listed under `secrets:`, whose value a human sets with `annex secret set <app> TRELLO_SECRET=...`.
+- **The public URL** is `$ANNEX_HOOKS_URL/<name>`, i.e. `https://hooks.<domain>/h/<app>/<name>`: register that with the provider. It is the only address on Annex that needs no login, and it accepts only the hooks you declare.
+- **What Annex does:** it checks the provider's signature on the raw body (`trello`: HMAC-SHA1 of body plus this URL; `stripe`, `slack`: HMAC-SHA256 with a 5-minute timestamp window; `github`: HMAC-SHA256; `shared-secret`: the header `X-Annex-Hook-Secret`), rejects and logs anything else, stores the event, answers the provider at once, and forwards it to your `path` with `POST`. Slack's URL verification challenge is answered by Annex.
+- **What your endpoint must do:** call `hook_event(headers)` first (`hookEvent(req)` in node). It raises `HookError` with status 401 unless the request carries your `ANNEX_HOOK_TOKEN`, so nobody can reach the endpoint around Annex. It returns `.hook`, `.event_id` and `.attempt`. Then answer **2xx quickly** (do slow work afterwards), and **dedupe by `event_id`**: delivery is at least once, and a retry or replay carries the same id.
+- **Retries:** a non-2xx answer or a connection error is retried after 10 s, 30 s, 1 min, 5 min, 15 min, then hourly, for 7 days; events of one hook are delivered oldest first, so a failing event holds back newer ones of that hook. If events stay undeliverable for 15 minutes the owner is alerted. Events (with their bodies) are kept 7 days.
+- **Limits:** 1 MB per request; 60 events per minute per hook.
+- **Seeing and replaying:** `annex hooks <app>` lists events (never their bodies). **Human only:** `annex hooks show <id>` (headers and body, which can hold personal data) and `annex hooks replay <app> --id N | --failed | --since 1h`. Rotate a signing secret with `annex secret set`, which updates what Annex checks.
+
 ## Bring your own stack
 The templates are the fast path, not a requirement. Any language or framework works if it runs as **one container** and follows the runtime rules above. Write your own `Dockerfile` and `annex.yaml` and check:
 
@@ -119,6 +133,7 @@ If the deploy rejects something, the error says what to change.
 | `DATA_DIR=/data` | `storage.files: true` |
 | `ANNEX_GATEWAY_URL`, `ANNEX_GATEWAY_TOKEN` | `data.views` is not empty |
 | `ANNEX_OPS_URL`, `ANNEX_OPS_TOKEN` | `notify.email` is true or `notify.slack` is not empty |
+| `ANNEX_HOOKS_URL`, `ANNEX_HOOK_TOKEN` | `webhooks` is not empty (`ANNEX_HOOKS_URL` is the public base: `…/h/<app>`) |
 | each declared secret | `secrets` |
 
 ## Gateway views (allowlist)
@@ -140,6 +155,7 @@ All data is synthetic. Adding a view is a reviewed change by the platform team, 
 | `annex status <app>` | an app's state, health check, open incident, last job runs, config and recent logs |
 | `annex logs <app> [-n 100] [-f]` | an app's logs |
 | `annex run <app> <job>` | trigger a job now |
+| `annex hooks <app>` | incoming webhook events of an app (metadata only); **human only:** `annex hooks show <id>`, `annex hooks replay <app> ...` |
 | `annex usage [app]` | users, requests, errors and response times per app (totals; with an app, by day) |
 | `annex sends [app] [-n 50]` | email and Slack send log: every attempt, rejections too, no bodies |
 | `annex releases <app>` | an app's releases, and which can be rolled back to |

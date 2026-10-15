@@ -9,8 +9,12 @@ AUTHELIA_IMAGE=${1:?usage: bootstrap-secrets.sh <authelia-image>}
 S=$D/secrets
 umask 077
 
-mkdir -p "$S/authelia" "$S/apps" "$D/state/authelia" "$D/state/product-db" "$D/state/appdata-db" \
+mkdir -p "$S/authelia" "$S/apps" "$S/hooks" "$D/state/authelia" "$D/state/product-db" "$D/state/appdata-db" \
          "$D/state/mailpit" "$D/state/directory" "$D/state/gatus/apps" "$D/state/gatus/data" "$D/state/ops" "$D/apps" "$D/deploy" "$D/backups" "$D/dumps" "$D/certs" "$D/platform"
+
+# incoming webhooks (M1.5): one JSON file per app with its signing secrets, written by annex_vm.py provision and
+# owned by uid 10001 (the ops container). The directory is the mount: replacing files in it never goes stale (D7).
+chmod 755 "$S/hooks"
 
 rand() { openssl rand -hex "${1:-24}"; }
 password() { openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 20; }

@@ -175,6 +175,8 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
         env["ANNEX_GATEWAY_URL"] = GATEWAY_URL
     if m.notify_email or m.notify_slack:
         env["ANNEX_OPS_URL"] = OPS_URL  # the token is in the env file
+    if m.webhooks:
+        env["ANNEX_HOOKS_URL"] = f"{r.settings.get('ANNEX_URL_HOOKS', '')}/h/{m.name}"  # the token is in the env file
     if m.schedule:
         labels["ofelia.enabled"] = "true"
         for j in m.schedule:
@@ -281,12 +283,22 @@ def _gate(r: Remote, m: mf.Manifest, progress: Progress) -> tuple[str, str] | No
 
 
 def _provision_args(app: str, *, postgres: bool, files: bool, views: list[str], secrets: list[str],
-                    notify_email: bool = False, notify_slack: list[str] | None = None) -> list[str]:
-    """Arguments for `annex_vm.py provision`. Records written before M1.2 have no notify keys: no grant."""
+                    notify_email: bool = False, notify_slack: list[str] | None = None,
+                    webhooks: list[dict] | None = None, port: int | None = None) -> list[str]:
+    """Arguments for `annex_vm.py provision`. Records written before M1.2 have no notify keys, and before M1.5
+    no webhooks: no grant, no hooks file."""
     return [app, *(["--postgres"] if postgres else []), *(["--files"] if files else []),
             "--views", ",".join(views), "--secrets", ",".join(secrets),
             *(["--notify-email"] if notify_email else []),
-            *(["--slack", ",".join(notify_slack)] if notify_slack else [])]
+            *(["--slack", ",".join(notify_slack)] if notify_slack else []),
+            *(["--hooks", json.dumps(webhooks), "--hook-port", str(port or 0)] if webhooks else [])]
+
+
+def _webhook_urls(r: Remote, app: str, webhooks) -> list[dict]:
+    """The public URL of each declared webhook (what the provider is told), for deploy and status output."""
+    base = r.settings.get("ANNEX_URL_HOOKS", "")
+    return [{"name": w["name"], "verify": w["verify"], "url": f"{base}/h/{app}/{w['name']}"}
+            for w in (x if isinstance(x, dict) else x.__dict__ for x in webhooks)]
 
 
 def gatus_config(m: mf.Manifest) -> str | None:
@@ -324,7 +336,8 @@ def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Pro
     progress("Provisioning storage, data access and secrets")
     prov = r.vm("provision", *_provision_args(m.name, postgres=m.postgres, files=m.files, views=m.views,
                                               secrets=m.secrets, notify_email=m.notify_email,
-                                              notify_slack=m.notify_slack))
+                                              notify_slack=m.notify_slack, port=m.port,
+                                              webhooks=[w.__dict__ for w in m.webhooks]))
     compose = yaml.safe_dump(compose_for(m, r, image, release), sort_keys=False)
     r.run(f"mkdir -p {d} && cat > {d}/compose.yaml", input=compose)
     progress(f"Starting r{release} ({image})")
@@ -361,7 +374,7 @@ def _write_record(r: Remote, m: mf.Manifest, image: str, release: int) -> dict:
               "url": r.url_for(m.name) if m.is_web else None, "deployed_at": _now(), "postgres": m.postgres,
               "files": m.files, "views": m.views, "secrets": m.secrets, "schedule": [j.__dict__ for j in m.schedule],
               "memory_mb": m.memory_mb, "notify_email": m.notify_email, "notify_slack": m.notify_slack,
-              "alerts_to": m.alerts_to}
+              "alerts_to": m.alerts_to, "webhooks": [w.__dict__ for w in m.webhooks], "port": m.port}
     r.run(f"cat > {r.data}/deploy/{m.name}/deploy.json", input=json.dumps(record, indent=2))
     return record
 
@@ -447,11 +460,12 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
     _cleanup(r, m.name)
     progress("Done")
     warnings = _warnings(r, m)
-    return {**record, "warnings": warnings, "previous_release": live and live["release"], "snapshot": rel["snapshot"],
+    return {**record, "warnings": warnings, "webhooks": _webhook_urls(r, m.name, m.webhooks), "previous_release": live and live["release"], "snapshot": rel["snapshot"],
             "injected_env": sorted({"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", *prov["injected"],
                                     *(["DATA_DIR"] if m.files else []),
                                     *(["ANNEX_GATEWAY_URL"] if m.views else []),
-                                    *(["ANNEX_OPS_URL"] if m.notify_email or m.notify_slack else [])}
+                                    *(["ANNEX_OPS_URL"] if m.notify_email or m.notify_slack else []),
+                                    *(["ANNEX_HOOKS_URL"] if m.webhooks else [])}
                                   - ({"PORT"} if not m.is_web else set()))}
 
 
@@ -506,6 +520,25 @@ def usage(app: str | None = None, by_user: bool = False) -> dict | list:
     if by_user and not app:
         raise AnnexError("--by-user needs an app: annex usage <app> --by-user")
     return _ops_ctl(Remote(), "usage", *(["--app", app] if app else []), *(["--by-user"] if by_user else []))
+
+
+def hooks(app: str | None = None, status: str | None = None, limit: int = 50) -> list[dict]:
+    """Incoming webhook events, newest first: metadata only (never a body)."""
+    return _ops_ctl(Remote(), "hooks", "list", *(["--app", app] if app else []), *(["--status", status] if status else []),
+                    "--limit", str(max(1, min(int(limit), 500))))
+
+
+def hook_show(event_id: int) -> dict:
+    """One event with its headers and body (truncated to 64 KB). Human-only: bodies can hold personal data."""
+    return _ops_ctl(Remote(), "hooks", "show", str(int(event_id)))
+
+
+def hooks_replay(app: str, event_id: int | None = None, failed: bool = False, since: str | None = None) -> dict:
+    """Queue copies of stored events for delivery again (the app sees the same X-Annex-Hook-Event). Human-only."""
+    if sum(x is not None and x is not False for x in (event_id, failed or None, since)) != 1:
+        raise AnnexError("Choose what to replay: --id N, --failed, or --since 1h")
+    return _ops_ctl(Remote(), "hooks", "replay", app, *(["--id", str(event_id)] if event_id is not None else []),
+                    *(["--failed"] if failed else []), *(["--since", since] if since else []))
 
 
 def sends(app: str | None = None, limit: int = 50) -> list[dict]:
@@ -679,6 +712,8 @@ def status(app: str) -> dict:
                  [f"Slack {c}" for c in record.get("notify_slack", [])]
         info["notify"] = ", ".join(notify) or "none"
         info["alerts_to"] = ", ".join(record.get("alerts_to", ["owner"]))
+        if record.get("webhooks"):
+            info["webhooks"] = _webhook_urls(r, app, record["webhooks"])
     try:
         health = _ops_ctl(r, "app-status", app)
     except AnnexError:
@@ -732,7 +767,8 @@ def secret_set(app: str, pairs: list[str]) -> dict:
         undeclared = [k for k in res["set"] if k not in record.get("secrets", [])]
         r.vm("provision", *_provision_args(
             app, postgres=record["postgres"], files=record["files"], views=record["views"], secrets=record["secrets"],
-            notify_email=record.get("notify_email", False), notify_slack=record.get("notify_slack", [])))
+            notify_email=record.get("notify_email", False), notify_slack=record.get("notify_slack", []),
+            webhooks=record.get("webhooks", []), port=record.get("port")))
         r.run(f"cd {r.data}/deploy/{app} && docker compose up -d 2>&1")
         res["applied"] = "restarted with new values"
         if undeclared:

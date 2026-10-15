@@ -1,4 +1,6 @@
-// Helpers for the Annex app contract: identity, the data gateway, email and Slack. Keep this file as is.
+import { timingSafeEqual } from "node:crypto";
+
+// Helpers for the Annex app contract: identity, the data gateway, email, Slack and incoming webhooks. Keep this file as is.
 
 /** The signed-in user, from the headers Annex's front door sets (and strips from clients). */
 export function currentUser(req) {
@@ -79,4 +81,26 @@ export function sendEmail(to, subject, { text, html, template, data } = {}) {
  *  Returns {id, channel, ts}. Throws NotifyError. */
 export function postSlack(channel, text, blocks) {
   return ops("/v1/slack", JSON.parse(JSON.stringify({ channel, text, blocks })));
+}
+
+/** A webhook delivery from Annex isn't authentic. .status is the HTTP status to answer with (401). */
+export class HookError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** Check that a request really comes from Annex (annex-ops, after it verified the provider's signature) and return
+ *  { hook, eventId, attempt }. Call it first in every webhook endpoint (declared under webhooks: in annex.yaml);
+ *  a HookError (.status 401) means answer 401 and do nothing. Answer 2xx quickly, and skip an eventId you have
+ *  seen: deliveries are at least once. */
+export function hookEvent(req) {
+  const expected = Buffer.from(process.env.ANNEX_HOOK_TOKEN || "");
+  const got = Buffer.from(req.get("x-annex-hook-token") || "");
+  if (!expected.length || got.length !== expected.length || !timingSafeEqual(got, expected)) {
+    throw new HookError(401, "missing or wrong X-Annex-Hook-Token: this endpoint takes webhooks forwarded by Annex only");
+  }
+  return { hook: req.get("x-annex-hook") || "", eventId: req.get("x-annex-hook-event") || "",
+           attempt: parseInt(req.get("x-annex-hook-attempt") || "1", 10) || 1 };
 }

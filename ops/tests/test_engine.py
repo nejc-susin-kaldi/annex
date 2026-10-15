@@ -325,3 +325,60 @@ def test_a_job_that_still_fails_after_the_app_is_back_alerts_on_its_own():
     run(e, [(0, Start(**C)), (1, Stop(**C)), (5, JobResult("probe", "check", False)), (100, Start(**C))])
     out = run(e, [(160, JobResult("probe", "check", False, "exit 1"))])
     assert kinds(out) == ["open"] and out[0].subject == "job:probe/check"
+
+
+# --- webhooks ---------------------------------------------------------------------------------------------
+from annex_ops.engine import HookFailing, HookOk  # noqa: E402
+
+
+def test_a_failing_hook_raises_the_webhook_signal_and_resolves_when_delivered():
+    e = engine()
+    out = run(e, [(0, Start(**C)), (10, HookFailing("probe", "trello", 0))])
+    assert kinds(out) == ["open"] and "webhook" in out[0].signals and "trello" in out[0].signals["webhook"]["detail"]
+    assert kinds(run(e, [(20, HookOk("probe", "trello"))])) == [("clear_signal", "webhook"), "resolve"]
+
+
+def test_webhook_joins_the_open_incident_of_a_stopped_app():
+    e = engine()
+    out = run(e, [(0, Start(**C)), (1, Stop(**C)), (62, "tick"), (70, HookFailing("probe", "trello", 5))])
+    assert kinds(out) == ["open", ("add_signal", "webhook")]
+    out = run(e, [(80, Start(**C)), (90, HookOk("probe", "trello"))])
+    assert kinds(out) == [("clear_signal", "stopped"), ("clear_signal", "webhook"), "resolve"]
+
+
+def test_the_signal_stays_until_every_failing_hook_is_ok():
+    e = engine()
+    run(e, [(0, Start(**C)), (1, HookFailing("probe", "a1", 0)), (2, HookFailing("probe", "b2", 0))])
+    assert run(e, [(3, HookOk("probe", "a1"))]) == []
+    assert kinds(run(e, [(4, HookOk("probe", "b2"))])) == [("clear_signal", "webhook"), "resolve"]
+
+
+def test_a_hook_that_stops_being_reported_is_not_failing_any_more():
+    e = engine()
+    run(e, [(0, Start(**C)), (1, HookFailing("probe", "trello", 0))])
+    run(e, [(30, HookFailing("probe", "trello", 0))])      # the worker repeats the report while it lasts
+    assert run(e, [(80, "tick")]) == []
+    assert kinds(run(e, [(100, "tick")])) == [("clear_signal", "webhook"), "resolve"]
+
+
+def test_a_restored_webhook_signal_clears_if_no_report_follows_the_restart():
+    e = engine()
+    run(e, [(1000, Restore([{"subject": APP, "opened_at": 900, "last_notified_at": 900, "reminders": 0,
+                             "signals": {"webhook": {"since": 900, "detail": "x", "cid": None}}}]))])
+    assert run(e, [(1020, "tick")]) == []
+    assert kinds(run(e, [(1061, "tick")])) == [("clear_signal", "webhook"), "resolve"]
+
+
+def test_a_restored_webhook_signal_stays_while_the_worker_still_reports_it():
+    e = engine()
+    run(e, [(1000, Restore([{"subject": APP, "opened_at": 900, "last_notified_at": 900, "reminders": 0,
+                             "signals": {"webhook": {"since": 900, "detail": "x", "cid": None}}}])),
+            (1002, HookFailing("probe", "trello", 800)), (1040, HookFailing("probe", "trello", 800))])
+    assert run(e, [(1065, "tick")]) == []
+
+
+def test_removing_the_app_closes_a_webhook_incident_quietly():
+    e = engine()
+    run(e, [(0, Start(**C)), (1, HookFailing("probe", "trello", 0))])
+    out = run(e, [(5, Destroy("c1", APP))])
+    assert out[-1].kind == "resolve" and out[-1].quiet and e.hooks_failing == {}

@@ -2,16 +2,19 @@
 import hmac
 import json
 import sys
+import time
 import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import auth, config, db, email, engine, incidents, sends, slack, usage
+from . import (auth, config, db, email, engine, hooks_config, hooks_store, hooks_verify, incidents, sends, slack,
+               usage)
+from .ratelimit import SlidingWindow
 from .errors import OpsError
 
 
@@ -32,13 +35,32 @@ def error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
+def is_hooks_host(request: Request) -> bool:
+    """Is this request for the public webhooks hostname? That host has no login in front of it, so nothing but /h/
+    is served there and every answer is terse (details go to the log and `annex hooks`)."""
+    host = request.headers.get("host", "").split(":")[0].lower()
+    return bool(config.HOST_HOOKS) and host == config.HOST_HOOKS
+
+
+@app.middleware("http")
+async def hooks_host_guard(request: Request, call_next):
+    """Second layer behind Traefik's router: even if a routing mistake sent other paths here, they'd be a 404."""
+    if is_hooks_host(request) and not request.url.path.startswith("/h/"):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return await call_next(request)
+
+
 @app.exception_handler(OpsError)
-async def _ops_error(_: Request, e: OpsError):
+async def _ops_error(request: Request, e: OpsError):
+    if is_hooks_host(request):
+        return error(e.status, "unavailable" if e.status >= 500 else "request refused")
     return error(e.status, e.message)
 
 
 @app.exception_handler(StarletteHTTPException)
 async def _http_error(request: Request, e: StarletteHTTPException):
+    if is_hooks_host(request):
+        return error(e.status_code, "not found" if e.status_code == 404 else "request refused")
     if e.status_code == 404:
         return error(404, f"no such endpoint: {request.method} {request.url.path}. "
                           "Endpoints: GET /v1/me, POST /v1/email, POST /v1/slack")
@@ -48,7 +70,9 @@ async def _http_error(request: Request, e: StarletteHTTPException):
 
 
 @app.exception_handler(RequestValidationError)
-async def _validation_error(_: Request, e: RequestValidationError):
+async def _validation_error(request: Request, e: RequestValidationError):
+    if is_hooks_host(request):
+        return error(400, "bad request")
     problems = "; ".join(f"{'.'.join(str(p) for p in err['loc'] if p != 'body')}: {err['msg']}" for err in e.errors())
     return error(400, f"invalid request ({problems}). See the endpoint's JSON in annex contract")
 
@@ -56,6 +80,8 @@ async def _validation_error(_: Request, e: RequestValidationError):
 @app.exception_handler(Exception)
 async def _unexpected(request: Request, e: Exception):
     traceback.print_exception(e, file=sys.stderr)
+    if is_hooks_host(request):
+        return error(500, "error")
     return error(500, "annex-ops hit an internal error. Try again; if it keeps failing, tell the platform team "
                       "(docker logs annex-ops-1)")
 
@@ -124,6 +150,56 @@ async def gatus_webhook(request: Request):
     detail = (await request.body()).decode(errors="replace").strip()[:300]
     incidents._manager.submit(engine.GatusState(subject, state == "TRIGGERED", detail))
     return {"ok": True}
+
+
+# --- incoming webhooks: the one route without a login (hooks.<domain>) -----------------------------------------
+_event_limit = SlidingWindow(config.HOOK_EVENTS_PER_MINUTE)  # verified events per hook per minute
+_reject_log_limit = SlidingWindow(30)                         # rejected requests we write down, per hook per minute
+
+
+def log_hook(msg: str) -> None:
+    print(f"hooks: {msg}", file=sys.stderr, flush=True)  # never a body, a secret or a signature
+
+
+@app.head("/h/{app_name}/{hook_name}")
+async def hook_declared(app_name: str, hook_name: str):
+    """Trello checks the callback URL with HEAD when a webhook is registered: 200 for a declared hook."""
+    return Response(status_code=200 if hooks_config.hook(app_name, hook_name) else 404)
+
+
+@app.post("/h/{app_name}/{hook_name}")
+async def hook_receive(app_name: str, hook_name: str, request: Request):
+    """A provider's call: check the signature on the raw body, store the event, answer at once. The delivery worker
+    forwards it to the app (and retries). Answers are terse: the sender gets no hints."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > config.HOOK_MAX_BODY:
+        return error(413, "too large")
+    body = await request.body()  # the raw bytes: every provider signs exactly these
+    if len(body) > config.HOOK_MAX_BODY:
+        return error(413, "too large")
+    hook = hooks_config.hook(app_name, hook_name)
+    if hook is None:
+        return error(404, "not found")
+    key = f"{app_name}/{hook_name}"
+    try:
+        hooks_verify.verify(hook["verify"], hook["secret"], request.headers, body,
+                            hooks_config.callback_url(app_name, hook_name), time.time())
+    except hooks_verify.VerifyError as e:
+        log_hook(f"rejected {key}: {e}")
+        if _reject_log_limit.allow(key, time.time()):  # a flood of junk must not fill the table
+            await run_in_threadpool(hooks_store.insert_rejected, app_name, hook_name, str(e))
+        return error(401, "signature check failed")
+    # only verified events count against the limit, so junk can't use up a hook's quota
+    if not _event_limit.allow(key, time.time()):
+        return error(429, "slow down")
+    if hook["verify"] == "slack":
+        challenge = hooks_verify.parse_slack_challenge(body)
+        if challenge is not None:
+            return PlainTextResponse(challenge)
+    event_id = await run_in_threadpool(
+        hooks_store.insert_pending, app_name, hook_name, (request.headers.get("content-type") or "")[:200] or None,
+        hooks_verify.forwardable(request.headers), body)
+    return {"ok": True, "id": event_id}
 
 
 @app.post("/v1/email")

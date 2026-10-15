@@ -90,6 +90,13 @@ def usage_settings():
     return _settings(UsageSettings)
 
 
+# incoming webhooks (M1.5): the one public hostname, and where each app's signing secrets are mounted
+HOST_HOOKS = os.environ.get("ANNEX_HOST_HOOKS", "").lower()
+URL_HOOKS = os.environ.get("ANNEX_URL_HOOKS", "").rstrip("/")
+HOOKS_DIR = os.environ.get("OPS_HOOKS_DIR", "/annex/hooks")
+HOOK_MAX_BODY = 1024 * 1024
+HOOK_EVENTS_PER_MINUTE = 60
+
 # usage days and weeks are Europe/Ljubljana (the TZ setting's default): the SQL view uses the same zone
 USAGE_TZ = "Europe/Ljubljana"
 METABASE_URL = os.environ.get("ANNEX_URL_METABASE", "")

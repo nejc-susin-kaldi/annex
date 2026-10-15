@@ -1,9 +1,10 @@
-"""Helpers for the Annex app contract: identity, the data gateway, email and Slack.
+"""Helpers for the Annex app contract: identity, the data gateway, email, Slack and incoming webhooks.
 
 Keep this file as is; build your app in main.py.
 """
 from __future__ import annotations
 
+import hmac
 import json
 import os
 from dataclasses import dataclass
@@ -100,3 +101,34 @@ def post_slack(channel: str, text: str, blocks: list | None = None) -> dict:
     """Post to a Slack channel the app declared under notify.slack in annex.yaml, e.g. "#finance-reports".
     Returns {"id", "channel", "ts"}. Raises NotifyError."""
     return _ops("/v1/slack", {"channel": channel, "text": text, **({"blocks": blocks} if blocks else {})})
+
+
+class HookError(Exception):
+    """A webhook delivery from Annex isn't authentic. .status is the HTTP status to answer with (401)."""
+
+    def __init__(self, status: int, message: str):
+        self.status = status
+        super().__init__(message)
+
+
+@dataclass
+class HookEvent:
+    hook: str      # the webhook's name in annex.yaml
+    event_id: str  # the same for retries and replays: dedupe on it, deliveries are at least once
+    attempt: int   # 1 for the first delivery
+
+
+def hook_event(headers) -> HookEvent:
+    """Check that a request really comes from Annex (annex-ops, after it verified the provider's signature) and
+    return what it says. Call it first in every webhook endpoint (declared under webhooks: in annex.yaml); a
+    HookError (.status 401) means answer 401 and do nothing. Answer 2xx quickly, and skip an event_id you have seen."""
+    expected = os.environ.get("ANNEX_HOOK_TOKEN", "")
+    got = headers.get("x-annex-hook-token") or headers.get("X-Annex-Hook-Token") or ""
+    if not expected or not hmac.compare_digest(got.encode(), expected.encode()):
+        raise HookError(401, "missing or wrong X-Annex-Hook-Token: this endpoint takes webhooks forwarded by Annex only")
+    try:
+        attempt = int(headers.get("x-annex-hook-attempt") or headers.get("X-Annex-Hook-Attempt") or 1)
+    except ValueError:
+        attempt = 1
+    return HookEvent(hook=headers.get("x-annex-hook") or headers.get("X-Annex-Hook") or "",
+                     event_id=headers.get("x-annex-hook-event") or headers.get("X-Annex-Hook-Event") or "", attempt=attempt)

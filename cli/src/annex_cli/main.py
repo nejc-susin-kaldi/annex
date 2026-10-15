@@ -71,6 +71,15 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("usage", help="who uses what: users, requests, errors and response times per app")
     s.add_argument("app", nargs="?", help="one app, by day (default: every app)")
     s.add_argument("--by-user", action="store_true", help="per-person request counts (admins only; needs an app)")
+    s = sub.add_parser("hooks", help="incoming webhooks: list an app's events, show one, replay (human only)")
+    s.add_argument("args", nargs="+", metavar="app | show ID | replay APP",
+                   help="annex hooks <app>; annex hooks show <id>; annex hooks replay <app> --id N|--failed|--since 1h")
+    s.add_argument("--status", choices=["pending", "delivered", "failed", "rejected"])
+    s.add_argument("-n", "--limit", type=int, default=50)
+    s.add_argument("--id", type=int, help="replay: this event")
+    s.add_argument("--failed", action="store_true", help="replay: every failed event")
+    s.add_argument("--since", help="replay: events received within this long (30m, 1h, 2d)")
+    s.add_argument("--yes", action="store_true", help="don't ask for confirmation (replay)")
     s = sub.add_parser("sends", help="email and Slack send log (every attempt, no message bodies)")
     s.add_argument("app", nargs="?", help="only this app (default: all)")
     s.add_argument("-n", "--limit", type=int, default=50)
@@ -111,6 +120,7 @@ def main(argv: list[str] | None = None) -> None:
             emit(res) if emit else print(
                 f"{res['name']} r{res['release']} is live" + (f" at {res['url']}" if res["url"] else " (no web page)")
                 + f"\nimage {res['image']}\ninjected env: {', '.join(res['injected_env'])}"
+                + "".join(f"\nwebhook {w['name']} ({w['verify']}): {w['url']}" for w in res.get("webhooks", []))
                 + "".join(f"\nwarning: {w}" for w in res.get("warnings", [])))
         elif a.cmd == "list":
             apps = ops.list_apps()
@@ -129,6 +139,8 @@ def main(argv: list[str] | None = None) -> None:
                         v = _health_line(v)
                     elif k == "incident":
                         v = _incident_line(v)
+                    elif k == "webhooks":
+                        v = "; ".join(f"{w['name']} ({w['verify']}) {w['url']}" for w in v)
                     elif k == "usage":
                         v = "not recorded" if not v else f"{v['users_7d']} user(s) in the last 7 days ({v['trend']}), {v['requests_7d']} requests"
                     print(f"{k:12} {v}")
@@ -165,6 +177,43 @@ def main(argv: list[str] | None = None) -> None:
                 if a.by_user:
                     print("\nPer-person usage is personal data: for admins only, don't share it. Last 30 days:")
                     print(_table([{"login": u["login"], "requests": str(u["requests"])} for u in res["by_user"]], ["login", "requests"]))
+        elif a.cmd == "hooks":
+            first = a.args[0]
+            if first == "show":
+                if len(a.args) != 2 or not a.args[1].isdigit():
+                    sys.exit("error: usage: annex hooks show <id>")
+                ev = ops.hook_show(int(a.args[1]))
+                if emit:
+                    emit(ev)
+                else:
+                    print(f"event {ev['id']}: {ev['app']}/{ev['hook']} {ev['status']}, {ev['attempts']} attempt(s), "
+                          f"received {ev['received_at'].replace('T', ' ')}" + (f", replay of {ev['replay_of']}" if ev["replay_of"] else "")
+                          + (f"\nlast error: {ev['last_error']}" if ev["last_error"] else ""))
+                    print(f"headers: {json.dumps(ev['headers'])}\nThe body can hold personal data: for admins only.\n"
+                          f"body ({ev['body_bytes']} bytes{', truncated' if ev['truncated'] else ''}):\n{ev['body']}")
+            elif first == "replay":
+                if len(a.args) != 2:
+                    sys.exit("error: usage: annex hooks replay <app> --id N | --failed | --since 1h")
+                app = a.args[1]
+                if not a.yes and input(f"The app will process the replayed events again. Replay for {app}? "
+                                       "Type the app name to confirm: ") != app:
+                    sys.exit("Aborted.")
+                res = ops.hooks_replay(app, a.id, a.failed, a.since)
+                emit(res) if emit else print(f"queued {len(res['replayed'])} event(s) for {app} (ids {', '.join(map(str, res['replayed']))}); "
+                                             f"watch them with: annex hooks {app}")
+            else:
+                app = a.args[1] if first == "list" and len(a.args) > 1 else first
+                rows = ops.hooks(app, a.status, a.limit)
+                if emit:
+                    emit(rows)
+                else:
+                    for x in rows:
+                        x["time"] = x["received_at"][:19].replace("T", " ")
+                        x["id"], x["tries"] = str(x["id"]), str(x["attempts"])
+                        x["error"] = (x["last_error"] or "")[:70]
+                        x["replay"] = f"of {x['replay_of']}" if x["replay_of"] else ""
+                    print(_table(rows, ["id", "time", "hook", "status", "tries", "replay", "error"]))
+                    print(f"Bodies are not shown here. One event: annex hooks show <id>. Again: annex hooks replay {app} --id <id>")
         elif a.cmd == "sends":
             rows = ops.sends(a.app, a.limit)
             if emit:

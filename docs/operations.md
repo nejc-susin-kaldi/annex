@@ -15,13 +15,14 @@
 | Is an app healthy? Any open incident? | `./annex status <app>` (health check, open incident, last run of each job) |
 | All incidents, or the open ones | `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl incidents [--open] [--app X]` |
 | Hold alerts while you do planned work | `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl maintenance app:<name> --minutes 30` (`--end` releases it) |
+| Incoming webhook events of an app | `./annex hooks <app>` (metadata only); `./annex hooks show <id>` (headers and body: admins), `./annex hooks replay <app> --id N \| --failed \| --since 1h` (asks first) |
 | Who uses what | `./annex usage` (every app, last 7 days), `./annex usage <app>` (by day), `./annex usage <app> --by-user` (per person: admins only) |
 | Email and Slack sends of an app | `./annex sends <app> [-n 50]` (every attempt, rejections too; never the body) |
 | Set a secret | `./annex secret set <app> KEY=VALUE` |
 | Remove an app | `./annex remove <app> [--keep-data]` |
 | Back up now | `scripts/backup.sh` (nightly at 02:00 anyway; 7 days kept) |
 | Restore one app | `scripts/restore.sh <app> [archive]` (replaces its DB and `/data`) |
-| Checks | `scripts/test-platform.sh` (M0.1), `scripts/test-apps.sh` (M0.2), `scripts/test-jobs.sh` + `scripts/restore-test.sh` (M0.3), `scripts/test-rollback.sh` (M1.1), `scripts/test-notify.sh` (M1.2), `scripts/test-alerts.sh` (M1.3, 12-20 minutes), `scripts/test-usage.sh` (M1.4) |
+| Checks | `scripts/test-platform.sh` (M0.1), `scripts/test-apps.sh` (M0.2), `scripts/test-jobs.sh` + `scripts/restore-test.sh` (M0.3), `scripts/test-rollback.sh` (M1.1), `scripts/test-notify.sh` (M1.2), `scripts/test-alerts.sh` (M1.3, 12-20 minutes), `scripts/test-usage.sh` (M1.4), `scripts/test-hooks.sh` (M1.5) |
 | Add a gateway view | edit `db/product/api_views.sql`, run `scripts/push.sh`, and add it to the table in `cli/src/annex_cli/contract.md` |
 
 `./annex` runs the CLI from the repo through uv. To put `annex` on your PATH, see `docs/setup.md` §6.
@@ -30,8 +31,8 @@
 | Path | What |
 |---|---|
 | `platform/` | synced copy of the rendered repo bundle (compose, config, db, vm, ops, images); `platform/.env` holds the settings |
-| `secrets/` | `master.env`, per-service env files (`ops.env`; `slack.env` once Slack is connected), `authelia/`, `users.txt`, `apps/<app>/` (db_password, gateway_token, ops_token, secrets.env, runtime.env) |
-| `state/` | Postgres data directories, Authelia's sqlite, `mailpit/` (caught mail), `directory/users.json` (login → name, email, groups, no passwords; read by ops), `gatus/apps/<app>.yaml` (one health check per web app, written by `annex deploy`), `gatus/data` (Gatus's history), `ops/tuning.json` (only during tests; the usage settings can be overridden there too) |
+| `secrets/` | `master.env`, per-service env files (`ops.env`; `slack.env` once Slack is connected), `hooks/<app>.json` (an app's webhook signing secrets and token; owned by uid 10001, read by ops), `authelia/`, `users.txt`, `apps/<app>/` (db_password, gateway_token, ops_token, secrets.env, runtime.env) |
+| `state/` | Postgres data directories, Authelia's sqlite, `mailpit/` (caught mail), `directory/users.json` (login → name, email, groups, no passwords; read by ops), `gatus/apps/<app>.yaml` (one health check per web app, written by `annex deploy`), `gatus/data` (Gatus's history), `ops/tuning.json` (only during tests; the usage settings and webhook retry delays can be overridden there too) |
 | `deploy/<app>/` | app source (`src/`), generated `compose.yaml`, `deploy.json` (what's running now) |
 | `apps/<app>/data` | app files, mounted at `/data`, backed up |
 | `apps/<app>/releases.jsonl` | release history: image, manifest, who, when, git commit, result (backed up) |
@@ -84,3 +85,13 @@
 - **Settings** (defaults in `ops/annex_ops/usage.py`, `UsageSettings`; override with `OPS_<NAME>` environment variables on ops or in `state/ops/tuning.json`): `usage_retention_days` 30, `graduation_min_users` 5, `graduation_weeks` 4 (2 to 4), `dormant_days` 30, `rollup_s` 600, `digest_weekday` 0, `digest_hour` 8.
 - **Dashboard maintenance:** `push.sh` creates what's missing (connection, collection, cards, dashboard) from `config/metabase/usage-dashboard.json` and leaves existing cards alone. To rebuild them after editing the spec: `ssh annex ANNEX_DATA_DIR=/srv/annex bash /srv/annex/platform/vm/metabase-setup.sh --rebuild-usage`.
 - **Demo history (optional):** `scripts/seed-usage.sh` writes 8 weeks of synthetic history (marked `synthetic`, weeks 3 to 10 back) so the dashboard has lines; `--clear` removes it. See the note in the script about graduation.
+
+## Incoming webhooks (M1.5)
+- **The hooks host:** `hooks.<domain>` (`ANNEX_HOST_HOOKS`) is the **only route without a login**. A webhook is `https://hooks.<domain>[:port]/h/<app>/<hook>`, declared in the app's `annex.yaml` (`webhooks:`); `annex deploy` and `annex status` print each URL. Traefik routes only `/h/` there (rate limit 20/s per source, burst 40; 1 MB body cap) and ops refuses everything else on that host, so a routing mistake can't expose `/v1/`, `/internal/` or the tiles. Answers on that host are terse (`{"error": "signature check failed"}`); the reasons are in `annex hooks` and ops's log.
+- **What happens to a call:** ops checks the provider's signature on the raw body (`trello`, `stripe`, `github`, `slack` or `shared-secret`; the secret is an app secret), stores the event, answers the provider at once, and a worker forwards it to the app's endpoint with `X-Annex-Hook-Token`, `-Event`, `-Attempt` and `-Hook` headers. Bad signatures are rejected, logged (reason, no body) and never forwarded; at most 60 verified events per minute per hook.
+- **Retries:** after 10 s, 30 s, 1 min, 5 min, 15 min, then hourly, until the event is 7 days old (then `failed`). Within one hook, events are delivered oldest first: a failing event holds back newer ones of that hook. Delivery is at least once, so apps dedupe by `X-Annex-Hook-Event`. If a hook's oldest event has been failing for 15 minutes, the app's incident gets a `webhook` signal (same alert and "resolved" as any other problem).
+- **Retention and privacy:** event bodies are kept 7 days (needed for retries and replay), so they are in the nightly database dump for that long; then they are deleted. Bodies are shown only by `annex hooks show <id>` (human only); rejected requests have no body.
+- **Replay:** `annex hooks replay <app> --id N` (or `--failed`, `--since 1h`) queues copies; the app sees the same `X-Annex-Hook-Event` and attempt 1 (it asks you to confirm: the app will process the events again).
+- **Rotating a signing secret:** `annex secret set <app> TRELLO_SECRET=<new>`. It regenerates the hooks file ops reads (ops picks it up on the next request) and restarts the app; then update the secret at the provider. Events signed with the old secret are rejected in between.
+- **Settings:** retry steps (`hook_backoff_s`), the age after which events fail (`hook_max_age_s`) and the alert delay (`hook_alert_after_s`) are in `Tuning` (`ops/annex_ops/engine.py`) and overridable in `state/ops/tuning.json`.
+- **Production:** this is the only internet-facing route. It will want a WAF or the providers' published IP ranges in front of it, and its own monitoring and alerting.

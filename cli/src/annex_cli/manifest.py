@@ -19,10 +19,13 @@ CRON_DESCRIPTORS = {"@yearly", "@annually", "@monthly", "@weekly", "@daily", "@m
 RESERVED_NAMES = {"home", "auth", "metabase", "logs", "gateway", "mail", "ops", "status", "hooks", "console",
                   "echo-test", "www", "api"}
 INJECTED_ENV = {"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", "DATABASE_URL", "DATA_DIR",
-                "ANNEX_GATEWAY_URL", "ANNEX_GATEWAY_TOKEN", "ANNEX_OPS_URL", "ANNEX_OPS_TOKEN"}
+                "ANNEX_GATEWAY_URL", "ANNEX_GATEWAY_TOKEN", "ANNEX_OPS_URL", "ANNEX_OPS_TOKEN", "ANNEX_HOOK_TOKEN",
+                "ANNEX_HOOKS_URL"}
+HOOK_VERIFY = ("trello", "stripe", "github", "slack", "shared-secret")
+MAX_WEBHOOKS = 10
 TYPES = ("web", "job", "web+job")
 KNOWN_KEYS = {"name", "owner", "description", "type", "port", "healthcheck", "access", "storage",
-              "data", "notify", "alerts", "schedule", "env", "secrets", "egress", "resources"}
+              "data", "notify", "alerts", "webhooks", "schedule", "env", "secrets", "egress", "resources"}
 MEMORY_DEFAULT_MB = 256
 MEMORY_MIN_MB, MEMORY_MAX_MB = 128, 512
 MEMORY_RE = re.compile(r"^(\d+)\s*[mM]$")
@@ -43,6 +46,14 @@ class Job:
     name: str
     cron: str
     command: list[str]
+
+
+@dataclass
+class Webhook:
+    name: str     # part of the public URL: https://hooks.<domain>/h/<app>/<name>
+    path: str     # the app's internal endpoint (POST)
+    verify: str   # how annex-ops checks the provider's signature
+    secret: str   # a name from `secrets:`
 
 
 @dataclass
@@ -67,6 +78,8 @@ class Manifest:
     notify_slack: list[str] = field(default_factory=list)
     # who hears about this app's problems, besides the admins: "owner", logins and #channels (older releases: owner)
     alerts_to: list[str] = field(default_factory=lambda: ["owner"])
+    # defaulted (and rebuilt in from_dict) so manifests stored with older releases load for rollback
+    webhooks: list[Webhook] = field(default_factory=list)
 
     @property
     def is_web(self) -> bool:
@@ -82,7 +95,8 @@ class Manifest:
 
     @classmethod
     def from_dict(cls, d: dict) -> Manifest:
-        return cls(**{**d, "schedule": [Job(**j) for j in d.get("schedule", [])]})
+        return cls(**{**d, "schedule": [Job(**j) for j in d.get("schedule", [])],
+                      "webhooks": [Webhook(**w) for w in d.get("webhooks", [])]})
 
 
 def load(folder: Path) -> Manifest:
@@ -241,6 +255,44 @@ def load(folder: Path) -> Manifest:
                 p.append("notify.slack: a channel is listed twice. List each channel once")
             notify_slack = list(slack)
 
+    wh_raw = raw.get("webhooks") or []
+    webhooks: list[Webhook] = []
+    if not isinstance(wh_raw, list):
+        p.append("webhooks: must be a list of {name, path, verify, secret}")
+        wh_raw = []
+    if wh_raw and not web:
+        p.append("webhooks: only for type web or web+job (the provider's call is forwarded to the app's HTTP endpoint). "
+                 "Change type, or remove webhooks")
+    if len(wh_raw) > MAX_WEBHOOKS:
+        p.append(f"webhooks: {len(wh_raw)} is too many; the limit is {MAX_WEBHOOKS} per app")
+    seen_hooks = set()
+    for i, w in enumerate(wh_raw[:MAX_WEBHOOKS]):
+        where = f"webhooks[{i}]"
+        if not isinstance(w, dict):
+            p.append(f"{where}: must be a mapping with name, path, verify and secret")
+            continue
+        if set(w) - {"name", "path", "verify", "secret"}:
+            p.append(f"{where}: unknown key(s) {', '.join(sorted(set(w) - {'name', 'path', 'verify', 'secret'}))}. "
+                     "Allowed: name, path, verify, secret")
+        hn, hp, hv, hs = w.get("name"), w.get("path"), w.get("verify"), w.get("secret")
+        if not isinstance(hn, str) or not NAME_RE.match(hn):
+            p.append(f"{where}.name: {hn!r} is not valid. Use 2-32 lowercase letters, digits and '-', e.g. trello "
+                     "(it becomes part of the public URL)")
+        elif hn in seen_hooks:
+            p.append(f"{where}.name: {hn!r} is used twice. Webhook names must be unique")
+        seen_hooks.add(hn)
+        if not isinstance(hp, str) or not re.match(r"^/[A-Za-z0-9._~/-]*$", hp):
+            p.append(f"{where}.path: {hp!r} is not valid. Give the app's own endpoint, starting with '/', e.g. /hooks/trello")
+        elif hp == healthcheck:
+            p.append(f"{where}.path: {hp!r} is the health check path. Use a different endpoint for the webhook")
+        if hv not in HOOK_VERIFY:
+            p.append(f"{where}.verify: {hv!r} is not valid. Use one of: {', '.join(HOOK_VERIFY)}")
+        if not isinstance(hs, str) or hs not in secrets:
+            p.append(f"{where}.secret: {hs!r} must be a name listed under secrets:, e.g. secrets: [TRELLO_SECRET] "
+                     f"and secret: TRELLO_SECRET. A human sets its value with: annex secret set {name or '<app>'} KEY=VALUE")
+        if all(isinstance(x, str) for x in (hn, hp, hv, hs)):
+            webhooks.append(Webhook(hn, hp, hv, hs))
+
     alerts = raw.get("alerts") or {}
     alerts_to = ["owner"]
     if not isinstance(alerts, dict) or set(alerts) - {"to"}:
@@ -290,7 +342,7 @@ def load(folder: Path) -> Manifest:
                     files=bool(storage.get("files")), views=list(views), schedule=schedule,
                     env=env, secrets=list(secrets), egress=[str(e) for e in egress], memory_mb=memory_mb,
                     notify_email=notify_email, notify_slack=notify_slack,
-                    alerts_to=alerts_to)
+                    alerts_to=alerts_to, webhooks=webhooks)
 
 
 def valid_cron(cron: object) -> bool:

@@ -110,7 +110,7 @@ def signal_for(row: dict, now: datetime, s: UsageSettings, dormant_days: int | N
 
 # --- the discovery tile ---------------------------------------------------------------
 STATUS_WORD = {"down": "down", "stopped": "down", "crash-loop": "crash-looping", "unhealthy": "unhealthy",
-               "oom": "out of memory", "errors": "errors", "job-failed": "job failing"}
+               "oom": "out of memory", "errors": "errors", "job-failed": "job failing", "webhook": "webhooks failing"}
 
 
 def tile(row: dict, app_signals: list[str], job_failing: bool, last_run: dict | None, tz=None) -> dict:

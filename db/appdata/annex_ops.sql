@@ -136,3 +136,25 @@ WHERE s.removed_at IS NULL;
 REVOKE ALL ON ALL TABLES IN SCHEMA annex_ops FROM metabase_usage;
 GRANT USAGE ON SCHEMA annex_ops TO metabase_usage;
 GRANT SELECT ON annex_ops.usage_daily, annex_ops.usage_weekly, annex_ops.usage_apps TO metabase_usage;
+
+-- --- M1.5: incoming webhooks ----------------------------------------------------------------
+-- Every call to https://hooks.<domain>/h/<app>/<hook> that passed (or failed) its signature check. Bodies are kept
+-- for 7 days for retries and replay (so they are in the nightly dump for that long); rejected requests have none.
+-- Signing secrets are never stored here: they stay in /srv/annex/secrets/hooks/<app>.json.
+CREATE TABLE IF NOT EXISTS annex_ops.hook_events (
+  id              bigserial PRIMARY KEY,
+  app             text NOT NULL,
+  hook            text NOT NULL,
+  received_at     timestamptz NOT NULL DEFAULT now(),
+  status          text NOT NULL CHECK (status IN ('pending', 'delivered', 'failed', 'rejected')),
+  content_type    text,
+  headers         jsonb NOT NULL DEFAULT '{}',   -- the allowlisted provider headers only
+  body            bytea,                         -- null for rejected requests
+  attempts        int NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz,
+  delivered_at    timestamptz,
+  last_error      text,
+  replay_of       bigint                         -- set on events created by `annex hooks replay`
+);
+CREATE INDEX IF NOT EXISTS hook_events_due ON annex_ops.hook_events (next_attempt_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS hook_events_app ON annex_ops.hook_events (app, received_at DESC);

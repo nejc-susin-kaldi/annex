@@ -3,12 +3,13 @@ from datetime import datetime
 
 # the phrase for an app's headline, by the signal that opened the incident (a stopped container is down to users)
 PHRASE = {"down": "is down", "stopped": "is down", "crash-loop": "is crash-looping", "unhealthy": "is unhealthy",
-          "oom": "ran out of memory", "errors": "is returning server errors"}
+          "oom": "ran out of memory", "errors": "is returning server errors", "webhook": "can't receive its webhooks"}
 WORD = {"down": "down", "stopped": "down", "crash-loop": "crash-looping", "unhealthy": "unhealthy",
-        "oom": "out of memory", "errors": "returning errors", "job-failed": "failing"}
+        "oom": "out of memory", "errors": "returning errors", "job-failed": "failing", "webhook": "not receiving webhooks"}
 EXPLAIN = {"down": "the health check is failing", "stopped": "the container is not running",
            "crash-loop": "the app keeps exiting with an error", "unhealthy": "the container's health check fails",
            "oom": "the app used more memory than its limit", "errors": "a spike of server errors (5xx)",
+           "webhook": "events from a provider are waiting for the app and can't be delivered",
            "job-failed": "a scheduled job exited with an error"}
 
 

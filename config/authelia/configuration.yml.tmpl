@@ -22,6 +22,9 @@ authentication_backend:
 access_control:
   default_policy: deny
   rules:
+    # incoming webhooks (M1.5): no login; annex-ops checks the provider's signature instead
+    - domain: "{{ANNEX_HOST_HOOKS}}"
+      policy: bypass
     - domain: "{{ANNEX_HOST_AUTH}}"
       policy: bypass
     - domain: ["{{ANNEX_HOST_LOGS}}", "{{ANNEX_HOST_GATEWAY}}", "{{ANNEX_HOST_MAIL}}"]

@@ -42,6 +42,10 @@ The status page (M1.3) needs `status.annex.home.arpa`, again as its own line wit
 ```bash
 echo '127.0.0.1 status.annex.home.arpa # annex' | sudo tee -a /etc/hosts
 ```
+Incoming webhooks (M1.5) need `hooks.annex.home.arpa`, again as its own line with the same tag (the undo above removes it too). Only a browser or your own `curl` needs it: `scripts/test-hooks.sh` goes through `--connect-to` and works without it.
+```bash
+echo '127.0.0.1 hooks.annex.home.arpa # annex' | sudo tee -a /etc/hosts
+```
 Then, with no system change:
 ```bash
 scripts/tunnel.sh up

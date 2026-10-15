@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from . import config, db, digest, directory, incidents, sends, usage
+from . import config, db, digest, directory, hooks_store, incidents, sends, usage
 from .errors import OpsError
 
 
@@ -34,6 +34,27 @@ def table(rows: list[dict], cols: list[str]) -> str:
     lines = ["  ".join(c.upper().ljust(widths[c]) for c in cols)]
     lines += ["  ".join(cell(r[c]).ljust(widths[c]) for c in cols) for r in rows]
     return "\n".join(lines)
+
+
+def parse_since(text: str) -> float:
+    """"30m", "1h", "2d" -> seconds."""
+    m = re.fullmatch(r"(\d+)\s*([smhd])", (text or "").strip())
+    if not m:
+        raise OpsError(400, f"--since {text!r} is not a duration. Use e.g. 30m, 1h or 2d")
+    return int(m[1]) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[m[2]]
+
+
+def hooks_action(a) -> dict | list:
+    if a.action == "show":
+        if not (a.target or "").isdigit():
+            raise OpsError(400, "usage: annex hooks show <id>")
+        return hooks_store.show_event(int(a.target))
+    if a.action == "replay":
+        if not a.target:
+            raise OpsError(400, "usage: annex hooks replay <app> --id N | --failed | --since 1h")
+        ids = hooks_store.replay(a.target, a.id, a.failed, parse_since(a.since) if a.since else None)
+        return {"app": a.target, "replayed": ids}
+    return hooks_store.list_events(a.app or a.target, a.status, a.limit)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -64,6 +85,16 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--app")
     s.add_argument("--by-user", action="store_true", help="per-login request counts for the last 30 days (admins only)")
     s.add_argument("--json", action="store_true")
+    s = sub.add_parser("hooks", help="incoming webhook events: list (metadata only), show <id> (body: admins), replay <app>")
+    s.add_argument("action", nargs="?", default="list", choices=["list", "show", "replay"])
+    s.add_argument("target", nargs="?", help="show: the event id; replay: the app")
+    s.add_argument("--app")
+    s.add_argument("--status", choices=["pending", "delivered", "failed", "rejected"])
+    s.add_argument("--limit", type=int, default=50)
+    s.add_argument("--id", type=int, help="replay: this event")
+    s.add_argument("--failed", action="store_true", help="replay: every failed event of the app")
+    s.add_argument("--since", help="replay: events received within this long, e.g. 30m, 1h, 2d")
+    s.add_argument("--json", action="store_true")
     sub.add_parser("rollup", help="run the usage rollup now").add_argument("--json", action="store_true")
     s = sub.add_parser("digest", help="preview the weekly digest, or send it with --send")
     s.add_argument("--send", action="store_true")
@@ -91,6 +122,8 @@ def main(argv: list[str] | None = None) -> int:
             if a.by_user and not a.app:
                 raise OpsError(400, "--by-user needs an app: annex usage <app> --by-user")
             data, cols = (usage.usage_app(a.app, a.by_user) if a.app else usage.usage_table()), []
+        elif a.cmd == "hooks":
+            data, cols = hooks_action(a), []
         elif a.cmd == "rollup":
             data, cols = usage.rollup(), []
         elif a.cmd == "digest":

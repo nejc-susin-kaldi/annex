@@ -341,13 +341,14 @@ def start_background() -> Manager:
     """Start the engine thread, the Docker watcher, the log followers and the usage and digest threads (called
     once, at app startup)."""
     global _manager, _ingest
-    from . import digest, follow_logs, usage, watch_docker
+    from . import digest, follow_logs, hooks_delivery, usage, watch_docker
 
     mgr = _manager = Manager()
     mgr.start()
     ingest = _ingest = usage.Ingest()
     usage.Worker(ingest).start()
     digest.Worker().start()
+    hooks_delivery.Worker(mgr.submit).start()
 
     def submit(inp) -> None:
         mgr.submit(inp)

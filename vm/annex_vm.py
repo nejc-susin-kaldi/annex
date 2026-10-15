@@ -36,6 +36,8 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}[a-z0-9]$")
 KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 CHANNEL_RE = re.compile(r"^#[a-z0-9][a-z0-9_-]{0,79}$")  # same as the CLI's notify.slack and annex-ops
 OPS_DB = "annex_ops"
+HOOK_VERIFY = ("trello", "stripe", "github", "slack", "shared-secret")
+HOOK_PATH_RE = re.compile(r"^/[A-Za-z0-9._~/-]*$")
 
 
 class Fail(Exception):
@@ -236,6 +238,44 @@ def drop_notify(app: str) -> None:
     (SECRETS / "apps" / app / "ops_token").unlink(missing_ok=True)
 
 
+# --- incoming webhooks: what annex-ops needs to check and forward a provider's call ------------------------
+def write_hooks(app: str, hooks: list[dict], port: int, user_secrets: dict[str, str]) -> str | None:
+    """Write (or, with no hooks, delete) the app's webhook file for annex-ops: its token for the app, and for
+    each hook the way to verify, the signing secret's VALUE (copied from secrets.env, the only place outside
+    secrets/apps/<app>) and the app's path. Returns the token the app checks. Never prints a secret."""
+    hdir = SECRETS / "hooks"
+    path = hdir / f"{app}.json"
+    token_path = SECRETS / "apps" / app / "hook_token"
+    if not hooks:
+        path.unlink(missing_ok=True)
+        token_path.unlink(missing_ok=True)
+        return None
+    hdir.mkdir(mode=0o755, parents=True, exist_ok=True)
+    seen = set()
+    for h in hooks:
+        if not NAME_RE.match(str(h.get("name", ""))) or h["name"] in seen:
+            raise Fail(f"webhook name {h.get('name')!r} is not valid or is used twice")
+        seen.add(h["name"])
+        if h.get("verify") not in HOOK_VERIFY:
+            raise Fail(f"webhook {h['name']}: verify must be one of {', '.join(HOOK_VERIFY)}")
+        if not HOOK_PATH_RE.match(str(h.get("path", ""))):
+            raise Fail(f"webhook {h['name']}: path {h.get('path')!r} must start with '/'")
+        if h.get("secret") not in user_secrets:
+            raise Fail(f"webhook {h['name']}: its secret {h.get('secret')} is not set. A human sets it with: "
+                       f"annex secret set {app} {h.get('secret')}=<value>")
+    token = secret_file(app_secrets_dir(app) / "hook_token", 32)
+    data = {"token": token, "port": port,
+            "hooks": {h["name"]: {"verify": h["verify"], "secret": user_secrets[h["secret"]], "path": h["path"]} for h in hooks}}
+    tmp = hdir / f".{app}.json.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f)
+    tmp.replace(path)
+    # ops runs as uid 10001; the directory stays ours, so the next provision can replace the file
+    as_root(["chown", "10001:10001", str(path)], hdir)
+    return token
+
+
 def restore_database(app: str, dump: Path) -> None:
     """Replace the app's database with a pg_dump -Fc file."""
     role = role_name(app)
@@ -274,6 +314,13 @@ def cmd_provision(a: argparse.Namespace) -> None:
     ops_token = grant_notify(app, a.notify_email, [c for c in a.slack.split(",") if c])
     if ops_token:
         env["ANNEX_OPS_TOKEN"] = ops_token
+    try:
+        hooks = json.loads(a.hooks) if a.hooks else []
+    except ValueError:
+        raise Fail("--hooks must be a JSON list of {name, verify, secret, path}") from None
+    hook_token = write_hooks(app, hooks, a.hook_port, user_secrets)
+    if hook_token:
+        env["ANNEX_HOOK_TOKEN"] = hook_token
     for s in declared:
         env[s] = user_secrets[s]
     if a.files:
@@ -314,6 +361,9 @@ def cmd_deprovision(a: argparse.Namespace) -> None:
     app = a.app
     drop_product_role(app)
     removed = ["gateway role"]
+    if (SECRETS / "hooks" / f"{app}.json").exists():
+        write_hooks(app, [], 0, {})
+        removed.append("webhook file")
     if ops_db_exists():
         psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.app_grants WHERE app = '{app}';")
         removed.append("email/Slack grant")
@@ -501,6 +551,8 @@ def main() -> None:
     s.add_argument("--secrets", default="")
     s.add_argument("--notify-email", action="store_true", help="grant email through annex-ops")
     s.add_argument("--slack", default="", help="comma-separated Slack channels the app may post to, e.g. '#a,#b'")
+    s.add_argument("--hooks", default="", help="JSON list of incoming webhooks: [{name, verify, secret, path}]")
+    s.add_argument("--hook-port", type=int, default=0, help="the app's port, for forwarding webhooks")
     s.set_defaults(fn=cmd_provision)
     s = sub.add_parser("secret-set")
     s.add_argument("app")
