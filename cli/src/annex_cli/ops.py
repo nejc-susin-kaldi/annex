@@ -109,6 +109,7 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
         "com.kaldi.annex.owner": m.owner,
         "com.kaldi.annex.type": m.type,
         "com.kaldi.annex.release": str(release),
+        "com.kaldi.annex.memory": f"{m.memory_mb}m",
         "homepage.group": "Tools",
         "homepage.name": m.name,
         "homepage.description": f"{m.description} · owner: {m.owner}" if m.description else f"owner: {m.owner}",
@@ -126,7 +127,7 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
         "tmpfs": ["/tmp:size=64m,mode=1777"],
         "cap_drop": ["ALL"],
         "security_opt": ["no-new-privileges:true"],
-        "mem_limit": "256m",
+        "mem_limit": f"{m.memory_mb}m",
         "cpus": 0.5,
         "env_file": [f"{data_dir}/secrets/apps/{m.name}/runtime.env"],
         "environment": env,
@@ -295,7 +296,8 @@ def _write_record(r: Remote, m: mf.Manifest, image: str, release: int) -> dict:
     """deploy.json: what's running now (read by status, run, secret set, remove and restore)."""
     record = {"name": m.name, "owner": m.owner, "type": m.type, "release": release, "image": image,
               "url": r.url_for(m.name) if m.is_web else None, "deployed_at": _now(), "postgres": m.postgres,
-              "files": m.files, "views": m.views, "secrets": m.secrets, "schedule": [j.__dict__ for j in m.schedule]}
+              "files": m.files, "views": m.views, "secrets": m.secrets, "schedule": [j.__dict__ for j in m.schedule],
+              "memory_mb": m.memory_mb}
     r.run(f"cat > {r.data}/deploy/{m.name}/deploy.json", input=json.dumps(record, indent=2))
     return record
 
@@ -380,7 +382,11 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
     _append_release(r, m.name, {**rel, "result": "live"})
     _cleanup(r, m.name)
     progress("Done")
-    return {**record, "previous_release": live and live["release"], "snapshot": rel["snapshot"],
+    warning = None
+    if m.memory_mb > mf.MEMORY_DEFAULT_MB:
+        warning = (f"{m.name} runs with {m.memory_mb}m of memory instead of the default {mf.MEMORY_DEFAULT_MB}m. "
+                   "That's fine if it needs it; the platform team sees raised limits in annex list")
+    return {**record, "warning": warning, "previous_release": live and live["release"], "snapshot": rel["snapshot"],
             "injected_env": sorted({"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", *prov["injected"],
                                     *(["DATA_DIR"] if m.files else []),
                                     *(["ANNEX_GATEWAY_URL"] if m.views else [])} - ({"PORT"} if not m.is_web else set()))}
@@ -511,6 +517,7 @@ def _summary(c: dict, r: Remote) -> dict:
         "url": lb.get("homepage.href"),
         "started_at": st.get("StartedAt", "")[:19],
         "restarts": c.get("RestartCount", 0),
+        "memory": lb.get("com.kaldi.annex.memory", f"{mf.MEMORY_DEFAULT_MB}m"),
     }
 
 
@@ -529,6 +536,7 @@ def status(app: str) -> dict:
     if record:
         info["release"] = f"r{record['release']}" if record.get("release") else "none (deployed before releases)"
         info.update({k: record[k] for k in ("image", "deployed_at", "postgres", "files", "views", "secrets", "schedule")})
+        info["memory"] = f"{record.get('memory_mb', mf.MEMORY_DEFAULT_MB)}m"
     info["recent_logs"] = r.out(f"docker logs --tail 15 {container(app)} 2>&1", check=False).splitlines()
     return info
 

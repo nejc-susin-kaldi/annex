@@ -5,11 +5,11 @@ You write a small folder. Annex does the rest: routing and login, the discovery 
 ```
 my-tool/
   annex.yaml    # manifest, required
-  Dockerfile    # from a template; must end with a non-root USER
+  Dockerfile    # from a template, or your own; must end with a non-root USER
   ...code
 ```
 
-Start from a template: `annex init <template> <name> --owner <login>`. Templates: `python-web` (FastAPI), `python-job` (scheduled script, no web), `node-web` (Express), `static` (built files plus a tiny server). Deploy with `annex deploy <folder>`.
+Start from a template: `annex init <template> <name> --owner <login>`. Templates: `python-web` (FastAPI), `python-job` (scheduled script, no web), `node-web` (Express), `static` (built files plus a tiny server). Another language or framework works too: see [Bring your own stack](#bring-your-own-stack). Deploy with `annex deploy <folder>`.
 
 ## annex.yaml
 ```yaml
@@ -33,6 +33,8 @@ env:                          # non-secret config only
   REPORT_TITLE: Monthly positions
 secrets: [SMTP_PASSWORD]      # names only; a human sets values with `annex secret set`
 egress: []                    # hostnames the app calls; declared, not enforced in v0
+resources:
+  memory: 512m                # optional; default 256m, 128m-512m
 ```
 Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `echo-test`, `www`, `api`.
 
@@ -40,7 +42,7 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `echo-test`, `www
 - **Stateless container.** Persist only to `DATABASE_URL` or `/data`. Everything else is lost on redeploy and isn't backed up.
 - **Read-only root filesystem.** Only `/tmp` (64 MB, cleared on restart) and `/data` are writable.
 - **Runs as uid 10001**, with no capabilities and `no-new-privileges`. The Dockerfile must still end with a non-root `USER`; the deploy refuses images that run as root.
-- **Limits:** 256 MB RAM, 0.5 CPU.
+- **Limits:** 256 MB RAM by default, 0.5 CPU. An app that needs more memory sets `resources.memory`, up to `512m`; the deploy notes it, and the platform team sees raised limits in `annex list`. Files in `/tmp` count against memory. More than 512 MB means the tool is too big for Annex: talk to the platform team.
 - **Identity** comes from the request headers set by the front door. Never implement your own login:
   - `Remote-User`: login, e.g. `sam`
   - `Remote-Name`: display name, e.g. `Sam Novak`
@@ -54,6 +56,37 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `echo-test`, `www
 - **Log to stdout/stderr.** Read logs with `annex logs <app>`.
 - **Health gate.** Every deploy is a numbered release (`r1`, `r2`, …). A web app's new release must return 200 on its `healthcheck` within 60 s (a job-only app must keep running). If it doesn't, Annex switches back to the previous release automatically, and the deploy fails with the new release's last log lines. Your database and `/data` are left as they are, and so are any changes the failed release made to them.
 - **Jobs** run inside the app's container with the same environment (`docker exec`). In `type: job`, the container idles (`sleep infinity`) between runs. Trigger a job by hand with `annex run <app> <job>`. A job's exit code and output are its result.
+
+## Bring your own stack
+The templates are the fast path, not a requirement. Any language or framework works if it runs as **one container** and follows the runtime rules above. Write your own `Dockerfile` and `annex.yaml` and check:
+
+- **Web:** serve HTTP on `0.0.0.0:$PORT`. The `healthcheck` path must return 200 without a login. Annex calls it directly, not through the front door.
+- **User:** end the Dockerfile with a non-root `USER`. Annex runs the app as uid 10001 regardless, so the files the app reads must be readable by any user. Files added with `COPY` are, by default.
+- **Health:** a Docker `HEALTHCHECK` is optional but recommended, because `annex list` shows its state.
+  - Use a command the image actually has; slim images have no `curl`.
+  - If there is one, the deploy waits for it to report healthy.
+- **Read-only filesystem:** set `ENV HOME=/tmp`, and point caches and temp files at `/tmp`.
+- **Build in the image:** do everything at image build time: install dependencies, compile, bundle, collect static files. Nothing may be installed or built at startup.
+- **Memory:** the default limit is 256 MB. Raise it with `resources.memory` (max `512m`) only if the app needs more. Size runtime heaps to fit, e.g. a JVM with `-Xmx` at about 70 % of the limit, or Node with `--max-old-space-size`.
+- **Identity on the server:** read `Remote-*` headers in your server code. A browser-only app can't see request headers, so serve a small endpoint such as `/api/me` that returns them.
+- **Gateway token stays on the server:** call the gateway from your server. Never send `ANNEX_GATEWAY_TOKEN` to the browser.
+- **Storage:**
+  - Postgres (`DATABASE_URL`) and files under `/data` are the only storage. A SQLite file is fine if it lives in `/data`.
+  - There's no MySQL, MongoDB or Redis, and no second container.
+  - If the tool needs those, it's a candidate to move to a Kaldi project.
+- **Upload size:** the app folder is uploaded and built on the server (x86_64). Keep it under 50 MB compressed: add `node_modules`, `.venv`, `.next`, `dist` and data files to `.dockerignore`. Pin the base image version.
+
+Common stacks:
+
+| Stack | What to do |
+|---|---|
+| Vite / React / Vue single-page app (also Lovable exports) | Build to `dist/` and serve it with the `static` template's server: copy the build output into `public/`. You get `api/me` and `api/data/<view>` for free. Supabase calls must be replaced with those. The server has no fallback to `index.html`, so use hash routing (`/#/clients/42`) or a reload on a deep link returns 404. |
+| Next.js | `output: "standalone"`, `next build` in the Dockerfile, run `node server.js`, `NEXT_TELEMETRY_DISABLED=1`. Runtime caches (image optimisation, ISR) write to `.next/cache`, which is read-only: turn them off (`images: {unoptimized: true}`). Usually needs `memory: 384m` or more. |
+| Streamlit | `ENV HOME=/tmp`; run `streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false`; `healthcheck: /_stcore/health`. Read `Remote-User` with `st.context.headers`. |
+| Django / Flask | Run with gunicorn on `0.0.0.0:$PORT`. Run `collectstatic` in the Dockerfile, and serve static files with WhiteNoise. Set `PYTHONDONTWRITEBYTECODE=1`. |
+| Go, Rust, .NET, Java | Multi-stage build; copy only the binary or app into a slim runtime image. |
+
+If the deploy rejects something, the error says what to change.
 
 ## Injected environment
 | Variable | When |

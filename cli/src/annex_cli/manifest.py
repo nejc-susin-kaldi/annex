@@ -20,7 +20,10 @@ INJECTED_ENV = {"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", "DATABASE_URL", "DAT
                 "ANNEX_GATEWAY_URL", "ANNEX_GATEWAY_TOKEN"}
 TYPES = ("web", "job", "web+job")
 KNOWN_KEYS = {"name", "owner", "description", "type", "port", "healthcheck", "access", "storage",
-              "data", "schedule", "env", "secrets", "egress"}
+              "data", "schedule", "env", "secrets", "egress", "resources"}
+MEMORY_DEFAULT_MB = 256
+MEMORY_MIN_MB, MEMORY_MAX_MB = 128, 512
+MEMORY_RE = re.compile(r"^(\d+)\s*[mM]$")
 
 
 class ManifestError(Exception):
@@ -53,6 +56,8 @@ class Manifest:
     env: dict[str, str]
     secrets: list[str]
     egress: list[str] = field(default_factory=list)
+    # defaulted: manifests stored with older releases don't have it (rollback loads them)
+    memory_mb: int = MEMORY_DEFAULT_MB
 
     @property
     def is_web(self) -> bool:
@@ -205,15 +210,31 @@ def load(folder: Path) -> Manifest:
         p.append("egress: must be a list of hostnames (declared, not enforced in v0)")
         egress = []
 
+    resources = raw.get("resources") or {}
+    memory_mb = MEMORY_DEFAULT_MB
+    if not isinstance(resources, dict) or set(resources) - {"memory"}:
+        p.append("resources: must be a mapping with only memory, e.g. resources: {memory: 512m}")
+    elif "memory" in resources:
+        mem = resources["memory"]
+        mm = MEMORY_RE.match(str(mem)) if isinstance(mem, str) else None
+        if not mm or not MEMORY_MIN_MB <= int(mm.group(1)) <= MEMORY_MAX_MB:
+            p.append(f"resources.memory: {mem!r} is not valid. Use megabytes with an 'm' between "
+                     f"{MEMORY_MIN_MB}m and {MEMORY_MAX_MB}m, e.g. memory: 512m. The default is "
+                     f"{MEMORY_DEFAULT_MB}m; if the app needs more than {MEMORY_MAX_MB}m, it's too big for Annex: "
+                     "ask the platform team")
+        else:
+            memory_mb = int(mm.group(1))
+
     if not (folder / "Dockerfile").exists():
-        p.append("Dockerfile is missing next to annex.yaml. Copy it from a template: annex init <template> <name>")
+        p.append("Dockerfile is missing next to annex.yaml. Copy it from a template (annex init <template> <name>), "
+                 "or write your own: see 'Bring your own stack' in annex contract")
 
     if p:
         raise ManifestError(path, p)
     return Manifest(name=name, owner=owner.strip(), description=description.strip(), type=typ,
                     port=port, healthcheck=healthcheck, postgres=bool(storage.get("postgres")),
                     files=bool(storage.get("files")), views=list(views), schedule=schedule,
-                    env=env, secrets=list(secrets), egress=[str(e) for e in egress])
+                    env=env, secrets=list(secrets), egress=[str(e) for e in egress], memory_mb=memory_mb)
 
 
 def valid_cron(cron: object) -> bool:

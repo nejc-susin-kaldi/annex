@@ -83,10 +83,11 @@ def main(argv: list[str] | None = None) -> None:
             res = ops.deploy(a.path, progress)
             emit(res) if emit else print(
                 f"{res['name']} r{res['release']} is live" + (f" at {res['url']}" if res["url"] else " (no web page)")
-                + f"\nimage {res['image']}\ninjected env: {', '.join(res['injected_env'])}")
+                + f"\nimage {res['image']}\ninjected env: {', '.join(res['injected_env'])}"
+                + (f"\nwarning: {res['warning']}" if res.get("warning") else ""))
         elif a.cmd == "list":
             apps = ops.list_apps()
-            emit(apps) if emit else print(_table(apps, ["name", "owner", "type", "state", "health", "url"]))
+            emit(apps) if emit else print(_table(apps, ["name", "owner", "type", "state", "health", "memory", "url"]))
         elif a.cmd == "status":
             st = ops.status(a.app)
             if emit:

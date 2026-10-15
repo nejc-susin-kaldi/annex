@@ -25,6 +25,9 @@ Removing apps, setting secrets and restoring data are **human only**: tell the u
 | A dashboard or page that shows data, no server logic | `static` (HTML/JS in `public/`, data via `fetch("api/data/<view>")`) |
 | A web tool with server logic, forms, its own database | `python-web` (FastAPI) or `node-web` (Express) |
 | Something that runs on a schedule (reports, syncs) | `python-job`; for a job with a page, use `python-web` with `type: web+job` |
+| Another framework (Next.js, Streamlit, Django, Go…), or existing code to move to Annex | No template: write `annex.yaml` and a `Dockerfile` yourself, following **Bring your own stack** in `annex_contract`. A built React/Vite app goes into the `static` template's `public/` instead |
+
+Prefer a template when the user hasn't asked for a specific stack: it already follows the rules.
 
 ## Workflow
 1. `annex_contract`. Note the gateway views and their columns.
@@ -40,6 +43,7 @@ Removing apps, setting secrets and restoring data are **human only**: tell the u
 - **Product data only through the gateway views**, never a database connection. Everything is synthetic, but treat it as client data anyway: don't paste rows into chat or commit them.
 - **No secrets in code.** Declare names under `secrets:` and ask a human to set them.
 - **Read-only filesystem.** Write only to `/tmp` or `/data` (`storage.files: true`), or use `DATABASE_URL` (`storage.postgres: true`).
+- **Memory.** 256 MB by default. Only if the app needs more (it's killed for running out of memory, or the stack needs it, e.g. Next.js), set `resources: {memory: 384m}` or up to `512m`. Don't raise it by default.
 - **Pin versions** of libraries, including CDN URLs.
 
 ## Homelab note (M0 prototype)
