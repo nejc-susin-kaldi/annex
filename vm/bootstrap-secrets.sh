@@ -10,22 +10,23 @@ S=$D/secrets
 umask 077
 
 mkdir -p "$S/authelia" "$S/apps" "$D/state/authelia" "$D/state/product-db" "$D/state/appdata-db" \
-         "$D/apps" "$D/deploy" "$D/backups" "$D/dumps" "$D/certs" "$D/platform"
+         "$D/state/mailpit" "$D/state/directory" "$D/apps" "$D/deploy" "$D/backups" "$D/dumps" "$D/certs" "$D/platform"
 
 rand() { openssl rand -hex "${1:-24}"; }
 password() { openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 20; }
 
-if [ ! -s "$S/master.env" ]; then
-  cat > "$S/master.env" <<VARS
-PRODUCT_DB_POSTGRES_PASSWORD=$(rand)
-PRODUCT_DB_AUTHENTICATOR_PASSWORD=$(rand)
-PRODUCT_DB_METABASE_RO_PASSWORD=$(rand)
-GATEWAY_JWT_SECRET=$(rand 32)
-APPDATA_DB_POSTGRES_PASSWORD=$(rand)
-APPDATA_DB_METABASE_PASSWORD=$(rand)
-VARS
-  echo "bootstrap: generated master.env"
-fi
+# master.env is never rewritten, so a key added in a later milestone is appended only if it's missing
+touch "$S/master.env"
+ensure_key() { # ensure_key NAME [random bytes]
+  grep -q "^$1=" "$S/master.env" || { echo "$1=$(rand "${2:-24}")" >> "$S/master.env"; echo "bootstrap: generated $1"; }
+}
+ensure_key PRODUCT_DB_POSTGRES_PASSWORD
+ensure_key PRODUCT_DB_AUTHENTICATOR_PASSWORD
+ensure_key PRODUCT_DB_METABASE_RO_PASSWORD
+ensure_key GATEWAY_JWT_SECRET 32
+ensure_key APPDATA_DB_POSTGRES_PASSWORD
+ensure_key APPDATA_DB_METABASE_PASSWORD
+ensure_key APPDATA_DB_OPS_PASSWORD
 for f in session_secret storage_encryption_key reset_password_jwt_secret; do
   [ -s "$S/authelia/$f" ] || { rand 32 > "$S/authelia/$f"; echo "bootstrap: generated authelia/$f"; }
 done
@@ -49,6 +50,9 @@ VARS
 cat > "$S/metabase.env" <<VARS
 MB_DB_PASS=$APPDATA_DB_METABASE_PASSWORD
 VARS
+cat > "$S/ops.env" <<VARS
+OPS_DATABASE_URL=postgres://annex_ops:$APPDATA_DB_OPS_PASSWORD@appdata-db:5432/annex_ops
+VARS
 
 # Demo users: login, display name, email, groups
 USERS=(
@@ -56,6 +60,19 @@ USERS=(
   "cm|Maja Horvat|cm@annex.example|users"
   "kaldi-admin|Kaldi Admin|admin@annex.example|admins,builders"
 )
+# The user directory for annex-ops (login -> name, email, groups). No password hashes. It's mounted as a
+# directory, because replacing the file would leave a single-file bind mount on the old inode (D7), and
+# it must be readable by the ops container (uid 10001), unlike everything under secrets/.
+users_json=$(for u in "${USERS[@]}"; do
+  IFS='|' read -r login name email groups <<<"$u"
+  jq -n --arg l "$login" --arg n "$name" --arg e "$email" --arg g "$groups" \
+    '{($l): {name: $n, email: $e, groups: ($g | split(","))}}'
+done | jq -s 'add')
+chmod 755 "$D/state/directory"
+echo "$users_json" > "$D/state/directory/users.json.tmp"
+chmod 644 "$D/state/directory/users.json.tmp"
+mv "$D/state/directory/users.json.tmp" "$D/state/directory/users.json"
+
 if [ ! -s "$S/users.txt" ]; then
   : > "$S/users.txt"
   for u in "${USERS[@]}"; do echo "${u%%|*} $(password)" >> "$S/users.txt"; done

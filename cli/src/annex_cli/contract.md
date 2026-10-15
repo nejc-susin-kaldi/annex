@@ -25,6 +25,9 @@ storage:
   files: true                 # persistent directory at /data (DATA_DIR), backed up nightly
 data:
   views: [monthly_positions]  # gateway views to read; must be in the allowlist
+notify:                       # optional: what the app may send, through ANNEX_OPS_URL
+  email: true                 # may send email (to company addresses only)
+  slack: ["#finance-reports"] # Slack channels it may post to
 schedule:                     # job and web+job only
   - name: monthly
     cron: "0 6 1 * *"         # minute hour day month weekday, Europe/Ljubljana; or @daily, @hourly
@@ -36,7 +39,7 @@ egress: []                    # hostnames the app calls; declared, not enforced 
 resources:
   memory: 512m                # optional; default 256m, 128m-512m
 ```
-Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `echo-test`, `www`, `api`.
+Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `mail`, `ops`, `status`, `hooks`, `console`, `echo-test`, `www`, `api`.
 
 ## Runtime rules
 - **Stateless container.** Persist only to `DATABASE_URL` or `/data`. Everything else is lost on redeploy and isn't backed up.
@@ -51,6 +54,15 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `echo-test`, `www
 
   Annex strips client-sent copies of these headers, so they can be trusted.
 - **Product data only through the gateway**, never directly from a database. Call `GET $ANNEX_GATEWAY_URL/<view>` with `Authorization: Bearer $ANNEX_GATEWAY_TOKEN`. The gateway is PostgREST, so filters work as query parameters, e.g. `/client_summary?client_name=ilike.*novak*&order=aum_eur.desc&limit=20`. Requesting a view you didn't declare returns 401/403. Every call is logged with your app's identity.
+- **Email and Slack only through Annex.** Never run an SMTP client or hold a Slack token. Declare `notify:` in `annex.yaml`; Annex injects `ANNEX_OPS_URL` and an `ANNEX_OPS_TOKEN` that can do exactly what you declared. The python and node templates ship helpers (`send_email`, `post_slack` / `sendEmail`, `postSlack`); the raw API is below.
+  - `POST $ANNEX_OPS_URL/v1/email` with `Authorization: Bearer $ANNEX_OPS_TOKEN` and JSON `{"to": ["cm", "sam@annex.example"], "subject": "Report ready", "template": "notice", "data": {"title": "...", "body": "...", "link": "https://...", "link_text": "Open"}}`. Instead of `template`+`data`, give `text` or `html` (exactly one of the three). Answers `{"id", "to": [resolved addresses]}`.
+  - `POST $ANNEX_OPS_URL/v1/slack` with `{"channel": "#finance-reports", "text": "...", "blocks": [...]}`. The channel must be one you declared; `text` is required (it's also the notification fallback when `blocks` is set). Answers `{"id", "channel", "ts"}`.
+  - `GET $ANNEX_OPS_URL/v1/me` shows what your token may do and whether Slack is connected.
+  - **Recipients** are logins (`"cm"`, as in `Remote-User`) or company addresses. Anything outside the client's domains is refused (403), and if one recipient is refused, **nothing is sent**. 1-20 recipients; subject 1-200 characters on one line; body up to 256 KB.
+  - **No attachments** (400). Save the file under `/data` and email a link to it in your app: it stays behind login and downloads are logged.
+  - **Limits:** 60 emails and 60 Slack posts per hour per app (429 when exceeded). Slack answers 503 if the platform team hasn't connected a workspace yet.
+  - Every attempt is logged (app, recipients, subject, time, result), never the body: `annex sends <app>`.
+  - Errors are JSON `{"error": "..."}` and say what to fix; the helpers raise `NotifyError` with that message and `.status`.
 - **Secrets** arrive as environment variables at runtime. Never put them in code, the repo or the image.
 - **Never publish ports.** Only Annex's front door does.
 - **Log to stdout/stderr.** Read logs with `annex logs <app>`.
@@ -96,6 +108,7 @@ If the deploy rejects something, the error says what to change.
 | `DATABASE_URL` | `storage.postgres: true` (`postgres://…@appdata-db:5432/app_<name>`) |
 | `DATA_DIR=/data` | `storage.files: true` |
 | `ANNEX_GATEWAY_URL`, `ANNEX_GATEWAY_TOKEN` | `data.views` is not empty |
+| `ANNEX_OPS_URL`, `ANNEX_OPS_TOKEN` | `notify.email` is true or `notify.slack` is not empty |
 | each declared secret | `secrets` |
 
 ## Gateway views (allowlist)
@@ -117,6 +130,7 @@ All data is synthetic. Adding a view is a reviewed change by the platform team, 
 | `annex status <app>` | an app's state, config and recent logs |
 | `annex logs <app> [-n 100] [-f]` | an app's logs |
 | `annex run <app> <job>` | trigger a job now |
+| `annex sends [app] [-n 50]` | email and Slack send log: every attempt, rejections too, no bodies |
 | `annex releases <app>` | an app's releases, and which can be rolled back to |
 | `annex rollback <app> [--to rN]` | switch back to an earlier release (default: the one before), with that release's manifest |
 | `annex rollback <app> --with-data` | **human only**: also restore the database and `/data` from that release's time; writes since are lost |

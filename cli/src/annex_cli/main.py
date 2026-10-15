@@ -47,6 +47,9 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("-n", "--tail", type=int, default=100)
     s.add_argument("-f", "--follow", action="store_true")
     s.add_argument("--since", help="e.g. 10m, 2h")
+    s = sub.add_parser("sends", help="email and Slack send log (every attempt, no message bodies)")
+    s.add_argument("app", nargs="?", help="only this app (default: all)")
+    s.add_argument("-n", "--limit", type=int, default=50)
     s = sub.add_parser("releases", help="list an app's releases")
     s.add_argument("app")
     s = sub.add_parser("rollback", help="switch an app back to an earlier release")
@@ -84,7 +87,7 @@ def main(argv: list[str] | None = None) -> None:
             emit(res) if emit else print(
                 f"{res['name']} r{res['release']} is live" + (f" at {res['url']}" if res["url"] else " (no web page)")
                 + f"\nimage {res['image']}\ninjected env: {', '.join(res['injected_env'])}"
-                + (f"\nwarning: {res['warning']}" if res.get("warning") else ""))
+                + "".join(f"\nwarning: {w}" for w in res.get("warnings", [])))
         elif a.cmd == "list":
             apps = ops.list_apps()
             emit(apps) if emit else print(_table(apps, ["name", "owner", "type", "state", "health", "memory", "url"]))
@@ -101,6 +104,17 @@ def main(argv: list[str] | None = None) -> None:
             if a.follow:
                 sys.exit(ops.follow_logs(a.app, a.tail))
             print(ops.logs(a.app, a.tail, a.since), end="")
+        elif a.cmd == "sends":
+            rows = ops.sends(a.app, a.limit)
+            if emit:
+                emit(rows)
+            else:
+                for x in rows:
+                    x["time"] = x["ts"][:19].replace("T", " ")
+                    x["to"] = ", ".join(x["recipients"])
+                    x["error"] = x["error"] if not x["error"] or len(x["error"]) <= 70 else x["error"][:69] + "…"
+                print(_table(rows, ["time", "app", "channel", "to", "subject", "status", "error"] if not a.app
+                             else ["time", "channel", "to", "subject", "status", "error"]))
         elif a.cmd == "releases":
             rels = ops.releases(a.app)
             if emit:

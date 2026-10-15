@@ -1,4 +1,4 @@
-// Helpers for the Annex app contract: identity and the data gateway. Keep this file as is.
+// Helpers for the Annex app contract: identity, the data gateway, email and Slack. Keep this file as is.
 
 /** The signed-in user, from the headers Annex's front door sets (and strips from clients). */
 export function currentUser(req) {
@@ -28,4 +28,55 @@ export async function gateway(view, params = {}) {
   });
   if (!res.ok) throw new GatewayError(res.status, (await res.text()).slice(0, 300));
   return res.json();
+}
+
+/** An email or Slack call failed. .status is the HTTP status (0: annex-ops wasn't reachable or the app didn't
+ *  declare notify:). The message is the server's own and says what to fix. */
+export class NotifyError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function ops(path, payload) {
+  const base = process.env.ANNEX_OPS_URL;
+  if (!base) throw new NotifyError(0, "add notify: {email: true} (or slack: [...]) to annex.yaml and deploy again");
+  let res;
+  try {
+    res = await fetch(`${base.replace(/\/$/, "")}${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.ANNEX_OPS_TOKEN}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch (e) {
+    throw new NotifyError(0, `can't reach annex-ops (${e.cause?.code || e.cause?.errors?.[0]?.code || e.message}). Try again in a minute`);
+  }
+  const body = await res.text();
+  if (!res.ok) {
+    let message = body.slice(0, 300);
+    try {
+      message = JSON.parse(body).error || message;
+    } catch {}
+    throw new NotifyError(res.status, message);
+  }
+  return JSON.parse(body);
+}
+
+/** Send one email through Annex. `to` is a login ("cm"), a company address or an array of them; give exactly one
+ *  of text, html or template ("notice" with data {title, body, link, link_text}). No attachments: link to a file
+ *  in your app instead. Returns {id, to}. Needs notify: {email: true} in annex.yaml. Throws NotifyError. */
+export function sendEmail(to, subject, { text, html, template, data } = {}) {
+  return ops("/v1/email", JSON.parse(JSON.stringify({ to, subject, text, html, template, data })));
+}
+
+/** Post to a Slack channel the app declared under notify.slack in annex.yaml, e.g. "#finance-reports".
+ *  Returns {id, channel, ts}. Throws NotifyError. */
+export function postSlack(channel, text, blocks) {
+  return ops("/v1/slack", JSON.parse(JSON.stringify({ channel, text, blocks })));
 }

@@ -1,4 +1,4 @@
-"""Helpers for the Annex app contract: identity and the data gateway.
+"""Helpers for the Annex app contract: identity, the data gateway, email and Slack.
 
 Keep this file as is; build your app in main.py.
 """
@@ -54,3 +54,49 @@ def gateway(view: str, **params: str | int) -> list[dict]:
         raise GatewayError(e.code, e.read().decode(errors="replace")[:300]) from None
     except URLError as e:
         raise GatewayError(0, str(e.reason)) from None
+
+
+class NotifyError(Exception):
+    """An email or Slack call failed. .status is the HTTP status (0: annex-ops wasn't reachable or the app
+    didn't declare notify:). The message is the server's own and says what to fix."""
+
+    def __init__(self, status: int, message: str):
+        self.status = status
+        super().__init__(message)
+
+
+def _ops(path: str, payload: dict) -> dict:
+    base = os.environ.get("ANNEX_OPS_URL")
+    if not base:
+        raise NotifyError(0, "add notify: {email: true} (or slack: [...]) to annex.yaml and deploy again")
+    req = Request(f"{base.rstrip('/')}{path}", data=json.dumps(payload).encode(), method="POST",
+                  headers={"Authorization": f"Bearer {os.environ['ANNEX_OPS_TOKEN']}",
+                           "Content-Type": "application/json", "Accept": "application/json"})
+    try:
+        with urlopen(req, timeout=20) as r:
+            return json.load(r)
+    except HTTPError as e:
+        body = e.read().decode(errors="replace")
+        try:
+            message = json.loads(body)["error"]
+        except (ValueError, KeyError, TypeError):
+            message = body[:300]
+        raise NotifyError(e.code, message) from None
+    except URLError as e:
+        raise NotifyError(0, f"can't reach annex-ops ({e.reason}). Try again in a minute") from None
+
+
+def send_email(to, subject: str, *, text: str | None = None, html: str | None = None,
+               template: str | None = None, data: dict | None = None) -> dict:
+    """Send one email through Annex. `to` is a login ("cm"), a company address or a list of them; give exactly
+    one of text, html or template ("notice" with data={"title", "body", "link", "link_text"}). No attachments:
+    link to a file in your app instead. Returns {"id", "to": [resolved addresses]}.
+    Needs notify: {email: true} in annex.yaml. Raises NotifyError."""
+    payload = {"to": to, "subject": subject, "text": text, "html": html, "template": template, "data": data}
+    return _ops("/v1/email", {k: v for k, v in payload.items() if v is not None})
+
+
+def post_slack(channel: str, text: str, blocks: list | None = None) -> dict:
+    """Post to a Slack channel the app declared under notify.slack in annex.yaml, e.g. "#finance-reports".
+    Returns {"id", "channel", "ts"}. Raises NotifyError."""
+    return _ops("/v1/slack", {"channel": channel, "text": text, **({"blocks": blocks} if blocks else {})})

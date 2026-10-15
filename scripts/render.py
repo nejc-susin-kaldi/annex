@@ -3,7 +3,7 @@
 
 Reads .env (falls back to .env.example), derives hostnames and mode-specific
 settings, renders every *.tmpl under config/ with {{VAR}} placeholders, and
-copies compose files, config, db/ and vm/ alongside. The resulting .env in the
+copies compose files, config, db/, vm/ and ops/ alongside. The resulting .env in the
 bundle holds non-secret settings only; it is used by Compose on the VM and read
 by the annex CLI as the source of truth for the deployed platform.
 
@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / ".build" / "platform"
-PLATFORM_SERVICES = ["home", "auth", "metabase", "logs", "gateway"]
+PLATFORM_SERVICES = ["home", "auth", "metabase", "logs", "gateway", "mail"]
 # Used in templates only; kept out of .env because Compose would try to interpolate "$".
 TEMPLATE_ONLY = {"ANNEX_HOST_REGEX"}
 
@@ -79,6 +79,9 @@ def derive(env: dict[str, str]) -> dict[str, str]:
         "ANNEX_HOST_REGEX": "^" + re.escape(prefix) + "[a-z0-9-]+" + re.escape(suffix) + "$",
         "ANNEX_CERT_NAMES": f"*.{rest} {rest}",
         "TZ": env.get("TZ", "Europe/Ljubljana"),
+        "ANNEX_EMAIL_DOMAINS": env.get("ANNEX_EMAIL_DOMAINS", "annex.example"),
+        "ANNEX_EMAIL_ALLOW": env.get("ANNEX_EMAIL_ALLOW", ""),
+        "ANNEX_EMAIL_FROM": env.get("ANNEX_EMAIL_FROM", "noreply@annex.example"),
     }
     for svc in PLATFORM_SERVICES:
         host = pattern.replace("{name}", svc)
@@ -110,6 +113,9 @@ def main() -> None:
         shutil.copy2(ROOT / name, OUT / name)
     for d in ("config", "db", "vm"):
         shutil.copytree(ROOT / d, OUT / d)
+    # annex-ops is the first platform image built from source on the VM
+    shutil.copytree(ROOT / "ops", OUT / "ops",
+                    ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "tests"))
 
     # Mode-specific Traefik files: keep the one for this mode, drop the other.
     tdir = OUT / "config" / "traefik"

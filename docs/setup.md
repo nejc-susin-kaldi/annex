@@ -30,6 +30,14 @@ Undo:
 ```bash
 sudo sed -i '' '/# annex$/d' /etc/hosts
 ```
+Mailpit (M1.2) needs its own name, `mail.annex.home.arpa`. Add it as a new line with the same tag, so the undo above removes it too:
+```bash
+echo '127.0.0.1 mail.annex.home.arpa # annex' | sudo tee -a /etc/hosts
+```
+Undo (the same command as above):
+```bash
+sudo sed -i '' '/# annex$/d' /etc/hosts
+```
 Then, with no system change:
 ```bash
 scripts/tunnel.sh up
@@ -78,3 +86,28 @@ Undo:
 ```bash
 uv tool uninstall annex-cli
 ```
+
+## 7. Slack (optional, M1.2)
+Without this, Annex works but Slack posts return a clear "Slack isn't connected" error (503) and are logged as `unavailable`; email through Mailpit is unaffected. Do it in a **test** Slack workspace, not a real one.
+
+1. Create a Slack app at https://api.slack.com/apps ("From scratch"), in the test workspace. Under *OAuth & Permissions* add the **bot** scope `chat:write`, then *Install to Workspace* and copy the *Bot User OAuth Token* (`xoxb-...`).
+2. In Slack, create `#finance-reports` and `#annex-alerts` and invite the app to both (`/invite @<app name>`).
+3. Put the token on the VM. The command reads the token from the terminal, so it doesn't land in your shell history. Paste `SLACK_BOT_TOKEN=xoxb-...`, press Enter, then Ctrl-D:
+   ```bash
+   ssh annex 'umask 077; cat > /srv/annex/secrets/slack.env'
+   ```
+4. Apply it (ops reads the file at start):
+   ```bash
+   scripts/push.sh --extras
+   ```
+   If the push doesn't restart ops (it doesn't when nothing else changed), run `ssh annex docker restart annex-ops-1`.
+5. Check: `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl info` should say `slack_connected: True`, and `scripts/test-notify.sh` then posts for real to `#finance-reports`.
+
+Undo (Annex goes back to "not connected"):
+```bash
+ssh annex rm /srv/annex/secrets/slack.env
+```
+```bash
+ssh annex docker restart annex-ops-1
+```
+Then delete the Slack app in the workspace (*Basic Information* → *Delete App*), or the test workspace. See `docs/teardown.md`.

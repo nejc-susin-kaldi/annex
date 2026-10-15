@@ -15,15 +15,18 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}[a-z0-9]$")
 KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 CRON_FIELD_RE = re.compile(r"^[0-9A-Za-z*/,\-]+$")
 CRON_DESCRIPTORS = {"@yearly", "@annually", "@monthly", "@weekly", "@daily", "@midnight", "@hourly"}
-RESERVED_NAMES = {"home", "auth", "metabase", "logs", "gateway", "echo-test", "www", "api"}
+# mail and ops exist as of M1.2; status, hooks and console are taken for M1.3, M1.5 and M2
+RESERVED_NAMES = {"home", "auth", "metabase", "logs", "gateway", "mail", "ops", "status", "hooks", "console",
+                  "echo-test", "www", "api"}
 INJECTED_ENV = {"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", "DATABASE_URL", "DATA_DIR",
-                "ANNEX_GATEWAY_URL", "ANNEX_GATEWAY_TOKEN"}
+                "ANNEX_GATEWAY_URL", "ANNEX_GATEWAY_TOKEN", "ANNEX_OPS_URL", "ANNEX_OPS_TOKEN"}
 TYPES = ("web", "job", "web+job")
 KNOWN_KEYS = {"name", "owner", "description", "type", "port", "healthcheck", "access", "storage",
-              "data", "schedule", "env", "secrets", "egress", "resources"}
+              "data", "notify", "schedule", "env", "secrets", "egress", "resources"}
 MEMORY_DEFAULT_MB = 256
 MEMORY_MIN_MB, MEMORY_MAX_MB = 128, 512
 MEMORY_RE = re.compile(r"^(\d+)\s*[mM]$")
+SLACK_CHANNEL_RE = re.compile(r"^#[a-z0-9][a-z0-9_-]{0,79}$")  # same rule in vm/annex_vm.py and annex-ops
 
 
 class ManifestError(Exception):
@@ -58,6 +61,9 @@ class Manifest:
     egress: list[str] = field(default_factory=list)
     # defaulted: manifests stored with older releases don't have it (rollback loads them)
     memory_mb: int = MEMORY_DEFAULT_MB
+    # defaulted for the same reason: a rollback to a release without notify: must revoke the grant
+    notify_email: bool = False
+    notify_slack: list[str] = field(default_factory=list)
 
     @property
     def is_web(self) -> bool:
@@ -210,6 +216,28 @@ def load(folder: Path) -> Manifest:
         p.append("egress: must be a list of hostnames (declared, not enforced in v0)")
         egress = []
 
+    notify = raw.get("notify") or {}
+    notify_email, notify_slack = False, []
+    if not isinstance(notify, dict) or set(notify) - {"email", "slack"}:
+        p.append("notify: must be a mapping with only email and slack, e.g. notify: {email: true, slack: [\"#finance\"]}")
+    else:
+        notify_email = notify.get("email", False)
+        if not isinstance(notify_email, bool):
+            p.append(f"notify.email: {notify_email!r} is not valid. Use true or false")
+            notify_email = False
+        slack = notify.get("slack", [])
+        if not isinstance(slack, list) or not all(isinstance(c, str) for c in slack):
+            p.append("notify.slack: must be a list of channel names, e.g. [\"#finance-reports\"]")
+        else:
+            for c in slack:
+                if not SLACK_CHANNEL_RE.match(c):
+                    hint = f"{c!r} must start with '#', e.g. '#{c.lstrip('#')}'" if not c.startswith("#") else \
+                        f"{c!r} is not a valid channel name. Use lowercase letters, digits, '-' and '_', e.g. '#finance-reports'"
+                    p.append(f"notify.slack: {hint}")
+            if len(set(slack)) != len(slack):
+                p.append("notify.slack: a channel is listed twice. List each channel once")
+            notify_slack = list(slack)
+
     resources = raw.get("resources") or {}
     memory_mb = MEMORY_DEFAULT_MB
     if not isinstance(resources, dict) or set(resources) - {"memory"}:
@@ -234,7 +262,8 @@ def load(folder: Path) -> Manifest:
     return Manifest(name=name, owner=owner.strip(), description=description.strip(), type=typ,
                     port=port, healthcheck=healthcheck, postgres=bool(storage.get("postgres")),
                     files=bool(storage.get("files")), views=list(views), schedule=schedule,
-                    env=env, secrets=list(secrets), egress=[str(e) for e in egress], memory_mb=memory_mb)
+                    env=env, secrets=list(secrets), egress=[str(e) for e in egress], memory_mb=memory_mb,
+                    notify_email=notify_email, notify_slack=notify_slack)
 
 
 def valid_cron(cron: object) -> bool:

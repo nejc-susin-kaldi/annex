@@ -29,8 +29,9 @@ The app contract is in [docs/app-contract.md](docs/app-contract.md), or run `./a
 | Metabase (extras) | `metabase` | everyone signed in; its own login (D9) |
 | Dozzle (extras) | `logs` | admins |
 | PostgREST gateway | `gateway` | apps with a JWT; admins via browser |
+| Mailpit (caught outgoing email) | `mail` | admins |
 
-Plus product-db and appdata-db (Postgres 16), Ofelia (jobs), offen backup (nightly, 7 days) and two Docker socket proxies. Hostnames come from `ANNEX_HOST_PATTERN`, `{name}.annex.home.arpa` by default.
+Plus annex-ops (`ops/`: email and Slack for apps, no public route), product-db and appdata-db (Postgres 16), Ofelia (jobs), offen backup (nightly, 7 days) and two Docker socket proxies. Hostnames come from `ANNEX_HOST_PATTERN`, `{name}.annex.home.arpa` by default.
 
 ## Scripts
 | Script | Does |
@@ -44,6 +45,7 @@ Plus product-db and appdata-db (Postgres 16), Ofelia (jobs), offen backup (night
 | `scripts/restore.sh <app> [archive]` | restore one app's database and files |
 | `scripts/test-apps.sh`, `test-jobs.sh`, `restore-test.sh` | M0.2/M0.3 checks |
 | `scripts/test-rollback.sh` | M1.1 checks: automatic rollback, `annex rollback`, `--with-data` |
+| `scripts/test-notify.sh` | M1.2 checks: email through Mailpit, Slack allowlist, send log, grants |
 | `scripts/reset-demo.sh` | clean demo state: example apps redeployed, other apps removed, checks run (see docs/demo.md) |
 | `scripts/wipe-vm.sh` | removes everything Annex from the VM (asks first) |
 | `scripts/show-users.sh` | prints demo user passwords |

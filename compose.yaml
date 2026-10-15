@@ -218,6 +218,72 @@ services:
       docker-volume-backup.archive-pre: /bin/sh /annex/dump-all.sh
       docker-volume-backup.exec-label: annex
 
+  # --- Outbound: email and Slack for apps (annex-ops) ---------------------
+  # Apps call http://ops:8000 with a per-app token; ops holds the SMTP and Slack side so apps never do.
+  # No Traefik route: ops is reached only from the edge network.
+  ops:
+    <<: *base
+    image: annex-ops:local
+    build:
+      context: ./ops
+      labels:
+        com.kaldi.annex: "true"
+    env_file:
+      - ${ANNEX_DATA_DIR}/secrets/ops.env
+      # SLACK_BOT_TOKEN; the file only exists once a human has connected Slack (docs/setup.md)
+      - path: ${ANNEX_DATA_DIR}/secrets/slack.env
+        required: false
+    environment:
+      <<: *tz
+      ANNEX_EMAIL_DOMAINS: ${ANNEX_EMAIL_DOMAINS}
+      ANNEX_EMAIL_ALLOW: ${ANNEX_EMAIL_ALLOW}
+      ANNEX_EMAIL_FROM: ${ANNEX_EMAIL_FROM}
+      OPS_SMTP_HOST: mailpit
+      OPS_SMTP_PORT: "1025"
+      OPS_USERS_FILE: /annex/directory/users.json
+    volumes:
+      # the directory, not the file: replacing the file would leave a stale single-file bind mount (D7)
+      - ${ANNEX_DATA_DIR}/state/directory:/annex/directory:ro
+    # edge: apps reach it, and it reaches Slack; platform: Mailpit's SMTP; appdata: its database
+    networks: [edge, platform, appdata]
+    user: "10001:10001"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    mem_limit: 128m
+    depends_on:
+      appdata-db: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      start_interval: 2s
+
+  # Prototype mail server: catches everything, nothing leaves the VM. Admins only (Authelia rule).
+  mailpit:
+    <<: *base
+    image: axllent/mailpit:v1.31.6
+    environment:
+      <<: *tz
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: "500"
+      MP_DISABLE_VERSION_CHECK: "true"
+    volumes:
+      - ${ANNEX_DATA_DIR}/state/mailpit:/data
+    networks: [platform]
+    mem_limit: 64m
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 15s
+      timeout: 3s
+    labels:
+      com.kaldi.annex: "true"
+      traefik.enable: "true"
+      traefik.docker.network: annex-platform
+      traefik.http.routers.mail.rule: Host(`${ANNEX_HOST_MAIL}`)
+      traefik.http.services.mail.loadbalancer.server.port: "8025"
+
   # --- Jobs and backups ---------------------------------------------------
   ofelia:
     <<: *base

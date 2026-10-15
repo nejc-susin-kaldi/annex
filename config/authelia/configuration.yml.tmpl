@@ -24,10 +24,10 @@ access_control:
   rules:
     - domain: "{{ANNEX_HOST_AUTH}}"
       policy: bypass
-    - domain: ["{{ANNEX_HOST_LOGS}}", "{{ANNEX_HOST_GATEWAY}}"]
+    - domain: ["{{ANNEX_HOST_LOGS}}", "{{ANNEX_HOST_GATEWAY}}", "{{ANNEX_HOST_MAIL}}"]
       policy: one_factor
       subject: ["group:admins"]
-    - domain: ["{{ANNEX_HOST_LOGS}}", "{{ANNEX_HOST_GATEWAY}}"]
+    - domain: ["{{ANNEX_HOST_LOGS}}", "{{ANNEX_HOST_GATEWAY}}", "{{ANNEX_HOST_MAIL}}"]
       policy: deny
     - domain_regex: '{{ANNEX_HOST_REGEX}}'
       policy: one_factor

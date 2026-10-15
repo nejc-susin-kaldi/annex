@@ -11,14 +11,19 @@ storage:
   files: true          # CSV reports in /data/reports
 data:
   views: [monthly_positions]
+notify:
+  email: true                        # the "report is ready" email, through ANNEX_OPS_URL
+  slack: ["#finance-reports"]        # optional channel post
 schedule:
   - name: monthly
     cron: "0 6 1 * *"            # 06:00 on the 1st, Europe/Ljubljana
-    command: ["python", "report.py"]
+    command: ["python", "report.py", "--notify"]   # --notify: email the recipients and post to Slack
   - name: refresh
     cron: "*/10 * * * *"         # demo: every 10 minutes, so the scheduler is visibly working
     command: ["python", "report.py"]
 env:
   REPORT_TITLE: Monthly positions
+  REPORT_RECIPIENTS: cm                 # logins or company addresses, comma-separated
+  REPORT_SLACK_CHANNEL: "#finance-reports"
 secrets: []
 egress: []

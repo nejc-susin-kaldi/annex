@@ -29,6 +29,8 @@ APP_UID = 10001
 TRAEFIK = "annex-traefik-1"
 OFELIA = "annex-ofelia-1"
 GATEWAY_URL = "http://gateway:3000"
+OPS_URL = "http://ops:8000"
+OPS_CONTAINER = "annex-ops-1"
 HEALTH_TIMEOUT = int(os.environ.get("ANNEX_HEALTH_TIMEOUT", "60"))
 KEEP_RELEASES = 3  # images and data snapshots kept per app
 SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", ".DS_Store", ".pytest_cache", ".mypy_cache"}
@@ -151,6 +153,8 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
         svc["volumes"] = [f"{data_dir}/apps/{m.name}/data:/data"]
     if m.views:
         env["ANNEX_GATEWAY_URL"] = GATEWAY_URL
+    if m.notify_email or m.notify_slack:
+        env["ANNEX_OPS_URL"] = OPS_URL  # the token is in the env file
     if m.schedule:
         labels["ofelia.enabled"] = "true"
         for j in m.schedule:
@@ -256,14 +260,24 @@ def _gate(r: Remote, m: mf.Manifest, progress: Progress) -> tuple[str, str] | No
     return reason, r.out(f"docker logs --tail 40 {c} 2>&1", check=False)
 
 
+def _provision_args(app: str, *, postgres: bool, files: bool, views: list[str], secrets: list[str],
+                    notify_email: bool = False, notify_slack: list[str] | None = None) -> list[str]:
+    """Arguments for `annex_vm.py provision`. Records written before M1.2 have no notify keys: no grant."""
+    return [app, *(["--postgres"] if postgres else []), *(["--files"] if files else []),
+            "--views", ",".join(views), "--secrets", ",".join(secrets),
+            *(["--notify-email"] if notify_email else []),
+            *(["--slack", ",".join(notify_slack)] if notify_slack else [])]
+
+
 def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Progress
               ) -> tuple[tuple[str, str] | None, dict]:
     """Provision what manifest `m` asks for, switch the app to `image` and run the health gate.
     Returns (gate failure or None, provision result)."""
     d = f"{r.data}/deploy/{m.name}"
     progress("Provisioning storage, data access and secrets")
-    prov = r.vm("provision", m.name, *(["--postgres"] if m.postgres else []), *(["--files"] if m.files else []),
-                "--views", ",".join(m.views), "--secrets", ",".join(m.secrets))
+    prov = r.vm("provision", *_provision_args(m.name, postgres=m.postgres, files=m.files, views=m.views,
+                                              secrets=m.secrets, notify_email=m.notify_email,
+                                              notify_slack=m.notify_slack))
     compose = yaml.safe_dump(compose_for(m, r, image, release), sort_keys=False)
     r.run(f"mkdir -p {d} && cat > {d}/compose.yaml", input=compose)
     progress(f"Starting r{release} ({image})")
@@ -297,7 +311,7 @@ def _write_record(r: Remote, m: mf.Manifest, image: str, release: int) -> dict:
     record = {"name": m.name, "owner": m.owner, "type": m.type, "release": release, "image": image,
               "url": r.url_for(m.name) if m.is_web else None, "deployed_at": _now(), "postgres": m.postgres,
               "files": m.files, "views": m.views, "secrets": m.secrets, "schedule": [j.__dict__ for j in m.schedule],
-              "memory_mb": m.memory_mb}
+              "memory_mb": m.memory_mb, "notify_email": m.notify_email, "notify_slack": m.notify_slack}
     r.run(f"cat > {r.data}/deploy/{m.name}/deploy.json", input=json.dumps(record, indent=2))
     return record
 
@@ -382,14 +396,47 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
     _append_release(r, m.name, {**rel, "result": "live"})
     _cleanup(r, m.name)
     progress("Done")
-    warning = None
-    if m.memory_mb > mf.MEMORY_DEFAULT_MB:
-        warning = (f"{m.name} runs with {m.memory_mb}m of memory instead of the default {mf.MEMORY_DEFAULT_MB}m. "
-                   "That's fine if it needs it; the platform team sees raised limits in annex list")
-    return {**record, "warning": warning, "previous_release": live and live["release"], "snapshot": rel["snapshot"],
+    warnings = _warnings(r, m)
+    return {**record, "warnings": warnings, "previous_release": live and live["release"], "snapshot": rel["snapshot"],
             "injected_env": sorted({"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", *prov["injected"],
                                     *(["DATA_DIR"] if m.files else []),
-                                    *(["ANNEX_GATEWAY_URL"] if m.views else [])} - ({"PORT"} if not m.is_web else set()))}
+                                    *(["ANNEX_GATEWAY_URL"] if m.views else []),
+                                    *(["ANNEX_OPS_URL"] if m.notify_email or m.notify_slack else [])}
+                                  - ({"PORT"} if not m.is_web else set()))}
+
+
+def _warnings(r: Remote, m: mf.Manifest) -> list[str]:
+    """Things a successful deploy should still tell the builder. More are added here by later milestones."""
+    out = []
+    if m.memory_mb > mf.MEMORY_DEFAULT_MB:
+        out.append(f"{m.name} runs with {m.memory_mb}m of memory instead of the default {mf.MEMORY_DEFAULT_MB}m. "
+                   "That's fine if it needs it; the platform team sees raised limits in annex list")
+    if m.notify_slack:
+        try:
+            connected = _ops_ctl(r, "info")["slack_connected"]
+        except AnnexError:
+            connected = True  # ops isn't reachable: can't tell, so don't warn
+        if not connected:
+            out.append(f"notify.slack is declared ({', '.join(m.notify_slack)}) but Slack isn't connected on this "
+                       "Annex yet, so Slack posts fail with a clear error until the platform team connects it "
+                       "(docs/setup.md §7). Email works either way")
+    return out
+
+
+def _ops_ctl(r: Remote, *args: str) -> dict | list:
+    """Run an annex-ops admin command (`python -m annex_ops.ctl ... --json`) and parse its answer."""
+    res = r.run(f"docker exec {OPS_CONTAINER} python -m annex_ops.ctl {shlex.join(args)} --json", check=False)
+    try:
+        return json.loads(res.stdout.decode().strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        detail = (res.stderr or res.stdout).decode(errors="replace").strip()[-300:]
+        raise AnnexError(f"annex-ops isn't answering ({detail or 'is the container running?'}). "
+                         f"Check it with: ssh {r.host} docker logs {OPS_CONTAINER}") from None
+
+
+def sends(app: str | None = None, limit: int = 50) -> list[dict]:
+    """Email and Slack send attempts, newest first (every attempt, rejections too; never a body)."""
+    return _ops_ctl(Remote(), "sends", *(["--app", app] if app else []), "--limit", str(max(1, min(int(limit), 500))))
 
 
 def releases(app: str) -> list[dict]:
@@ -537,6 +584,9 @@ def status(app: str) -> dict:
         info["release"] = f"r{record['release']}" if record.get("release") else "none (deployed before releases)"
         info.update({k: record[k] for k in ("image", "deployed_at", "postgres", "files", "views", "secrets", "schedule")})
         info["memory"] = f"{record.get('memory_mb', mf.MEMORY_DEFAULT_MB)}m"
+        notify = (["email"] if record.get("notify_email") else []) + \
+                 [f"Slack {c}" for c in record.get("notify_slack", [])]
+        info["notify"] = ", ".join(notify) or "none"
     info["recent_logs"] = r.out(f"docker logs --tail 15 {container(app)} 2>&1", check=False).splitlines()
     return info
 
@@ -578,8 +628,9 @@ def secret_set(app: str, pairs: list[str]) -> dict:
     record = _record(r, app)
     if record:
         undeclared = [k for k in res["set"] if k not in record.get("secrets", [])]
-        r.vm("provision", app, *(["--postgres"] if record["postgres"] else []), *(["--files"] if record["files"] else []),
-             "--views", ",".join(record["views"]), "--secrets", ",".join(record["secrets"]))
+        r.vm("provision", *_provision_args(
+            app, postgres=record["postgres"], files=record["files"], views=record["views"], secrets=record["secrets"],
+            notify_email=record.get("notify_email", False), notify_slack=record.get("notify_slack", [])))
         r.run(f"cd {r.data}/deploy/{app} && docker compose up -d 2>&1")
         res["applied"] = "restarted with new values"
         if undeclared:

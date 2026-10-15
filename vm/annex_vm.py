@@ -34,6 +34,8 @@ SNAPSHOT_MAX_FILES_KB = 200 * 1024
 APP_UID = 10001
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}[a-z0-9]$")
 KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+CHANNEL_RE = re.compile(r"^#[a-z0-9][a-z0-9_-]{0,79}$")  # same as the CLI's notify.slack and annex-ops
+OPS_DB = "annex_ops"
 
 
 class Fail(Exception):
@@ -192,6 +194,40 @@ def database_exists(app: str) -> bool:
     return psql(APPDATA_DB, "postgres", f"SELECT 1 FROM pg_database WHERE datname = '{role_name(app)}';") == "1"
 
 
+# --- annex-ops: what an app's token may do (email, Slack channels) ----------
+def ops_db_exists() -> bool:
+    return psql(APPDATA_DB, "postgres", f"SELECT 1 FROM pg_database WHERE datname = '{OPS_DB}';") == "1"
+
+
+def grant_notify(app: str, email: bool, channels: list[str]) -> str | None:
+    """Create or update the app's annex-ops grant and return its token (kept in secrets/apps/<app>/ops_token;
+    only the sha256 goes into the database). Nothing requested: revoke."""
+    if not email and not channels:
+        drop_notify(app)
+        return None
+    bad = [c for c in channels if not CHANNEL_RE.match(c)]
+    if bad:
+        raise Fail(f"notify.slack: {', '.join(bad)} is not a channel name; use '#name' in lowercase, e.g. '#finance-reports'")
+    if not ops_db_exists():
+        raise Fail("annex-ops isn't set up on this server: run scripts/bootstrap.sh and scripts/push.sh")
+    token = secret_file(app_secrets_dir(app) / "ops_token", 32)
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    chans = "ARRAY[" + ",".join(f"'{c}'" for c in channels) + "]::text[]"
+    psql(APPDATA_DB, OPS_DB, f"""
+INSERT INTO annex_ops.app_grants (app, token_sha256, email, slack_channels, updated_at)
+VALUES ('{app}', '{digest}', {'true' if email else 'false'}, {chans}, now())
+ON CONFLICT (app) DO UPDATE SET token_sha256 = EXCLUDED.token_sha256, email = EXCLUDED.email,
+  slack_channels = EXCLUDED.slack_channels, updated_at = now();
+""")
+    return token
+
+
+def drop_notify(app: str) -> None:
+    if ops_db_exists():
+        psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.app_grants WHERE app = '{app}';")
+    (SECRETS / "apps" / app / "ops_token").unlink(missing_ok=True)
+
+
 def restore_database(app: str, dump: Path) -> None:
     """Replace the app's database with a pg_dump -Fc file."""
     role = role_name(app)
@@ -227,6 +263,9 @@ def cmd_provision(a: argparse.Namespace) -> None:
     token = grant_views(app, views)
     if token:
         env["ANNEX_GATEWAY_TOKEN"] = token
+    ops_token = grant_notify(app, a.notify_email, [c for c in a.slack.split(",") if c])
+    if ops_token:
+        env["ANNEX_OPS_TOKEN"] = ops_token
     for s in declared:
         env[s] = user_secrets[s]
     if a.files:
@@ -267,6 +306,9 @@ def cmd_deprovision(a: argparse.Namespace) -> None:
     app = a.app
     drop_product_role(app)
     removed = ["gateway role"]
+    if ops_db_exists():
+        psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.app_grants WHERE app = '{app}';")
+        removed.append("email/Slack grant")
     if not a.keep_data:
         drop_database(app)
         appdir = DATA / "apps" / app
@@ -446,6 +488,8 @@ def main() -> None:
     s.add_argument("--files", action="store_true")
     s.add_argument("--views", default="")
     s.add_argument("--secrets", default="")
+    s.add_argument("--notify-email", action="store_true", help="grant email through annex-ops")
+    s.add_argument("--slack", default="", help="comma-separated Slack channels the app may post to, e.g. '#a,#b'")
     s.set_defaults(fn=cmd_provision)
     s = sub.add_parser("secret-set")
     s.add_argument("app")

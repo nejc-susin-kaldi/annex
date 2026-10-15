@@ -44,6 +44,7 @@ Prefer a template when the user hasn't asked for a specific stack: it already fo
 - **No secrets in code.** Declare names under `secrets:` and ask a human to set them.
 - **Read-only filesystem.** Write only to `/tmp` or `/data` (`storage.files: true`), or use `DATABASE_URL` (`storage.postgres: true`).
 - **Memory.** 256 MB by default. Only if the app needs more (it's killed for running out of memory, or the stack needs it, e.g. Next.js), set `resources: {memory: 384m}` or up to `512m`. Don't raise it by default.
+- **Email and Slack** only through Annex, never an SMTP server or a Slack token of your own. Declare `notify: {email: true, slack: ["#channel"]}` in `annex.yaml`, then use the template's helpers (`send_email`, `post_slack`; `sendEmail`, `postSlack` in node). Recipients are logins (`"cm"`) or company addresses; anything else is refused, and one refused recipient means nothing is sent. No attachments: save the file under `/data` and email a link to it in your app. The `notice` template (title, body, link) covers most messages. Errors say what to fix. The deploy warns if Slack isn't connected yet.
 - **Pin versions** of libraries, including CDN URLs.
 
 ## Homelab note (M0 prototype)

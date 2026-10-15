@@ -10,8 +10,17 @@ render
 log "Syncing platform to $SSH_HOST:$DATA/platform"
 rsync -rlpt --delete "$ROOT/.build/platform/" "$SSH_HOST:$DATA/platform/"
 
+# annex-ops's database goes in before the full start: its healthcheck needs the database, so
+# `up --wait` would time out on the first push. The password stays on the VM.
+log "Applying annex-ops database (db/appdata/annex_ops.sql)"
+vm "cd $DATA/platform && docker compose up -d --wait appdata-db >/dev/null"
+vm "cd $DATA/platform && . $DATA/secrets/master.env 2>/dev/null && [ -n \"\${APPDATA_DB_OPS_PASSWORD:-}\" ]" \
+  || { echo "push: APPDATA_DB_OPS_PASSWORD is missing in $DATA/secrets/master.env: run scripts/bootstrap.sh first" >&2; exit 1; }
+vm "cd $DATA/platform && . $DATA/secrets/master.env && docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' appdata-db \
+      psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -v ops_pw=\"\$APPDATA_DB_OPS_PASSWORD\" -f - < db/appdata/annex_ops.sql"
+
 log "Starting platform ${profile[*]:-(core)}"
-vm "cd $DATA/platform && docker compose ${profile[*]:-} up -d --wait --wait-timeout 420 --remove-orphans"
+vm "cd $DATA/platform && docker compose ${profile[*]:-} up -d --build --wait --wait-timeout 420 --remove-orphans"
 
 log "Applying gateway allowlist (db/product/api_views.sql)"
 vm "cd $DATA/platform && for f in api_views.sql gateway.sql; do
@@ -23,6 +32,6 @@ if vm "cd $DATA/platform && docker compose ps --status running --services | grep
   vm "ANNEX_DATA_DIR=$DATA bash $DATA/platform/vm/metabase-setup.sh"
 fi
 
-vm "docker image prune -f >/dev/null; docker builder prune -f >/dev/null"
+vm "docker image prune -f >/dev/null; docker builder prune -f --max-used-space 1500mb >/dev/null"
 vm "cd $DATA/platform && docker compose ps --format 'table {{.Service}}\t{{.Status}}'"
 log "Home: $(setting ANNEX_URL_HOME)"

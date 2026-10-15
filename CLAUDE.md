@@ -21,7 +21,8 @@ The brief is `docs/brief.md`. Read it before changing anything. Decisions and th
 ## Layout
 - `compose.yaml` (+ `compose.tls-local.yaml`): the platform. Runs on the VM from `/srv/annex/platform`.
 - `config/`: Traefik, Authelia and Homepage config. `*.tmpl` files are rendered by `scripts/render.py` using `{{VAR}}` placeholders.
-- `db/product/`: synthetic product DB (schema, seed, `api_views.sql` = the gateway allowlist). `db/appdata/`: app database init and backup hook.
+- `db/product/`: synthetic product DB (schema, seed, `api_views.sql` = the gateway allowlist). `db/appdata/`: app database init and backup hook; `annex_ops.sql` is annex-ops's schema (idempotent, applied by `push.sh` on every push, later milestones append to it).
+- `ops/`: the annex-ops service (FastAPI: email via SMTP/Mailpit and Slack for apps, the send log; later alerts, usage, audit). Built on the VM from the synced bundle. Unit tests: `uv run --python 3.13 --with-requirements ops/requirements.txt --with pytest pytest ops/tests -q`.
 - `vm/`: scripts that run **on the VM** (secrets, Metabase setup). They are synced with the platform.
 - `scripts/`: scripts that run **on the Mac**. Source `scripts/lib.sh` for `vm`, `setting`, `render`.
 - `cli/`: the `annex` CLI (uv project). `ops.py` holds the operations shared with the MCP server, `manifest.py` validates `annex.yaml`, and `contract.md` is the app contract (`docs/app-contract.md` links to it). Run it with `./annex`.

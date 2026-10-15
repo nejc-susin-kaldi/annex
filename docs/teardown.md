@@ -62,6 +62,7 @@ virsh -c qemu:///system undefine annex --snapshots-metadata --remove-all-storage
 ## 3. Clean up the homelab
 - Remove the router's DHCP reservation for `52:54:00:a7:13:30`.
 - Remove the Annex route from the Traefik on `dronky`, if one was added.
+- If you connected Slack for M1.2 (setup.md §7): delete the Slack app you created in the test workspace (*api.slack.com/apps* → the app → *Basic Information* → *Delete App*), or the whole test workspace. The bot token lives only on the VM (`/srv/annex/secrets/slack.env`) and goes with it. Nothing else outside the VM and the Mac was created for mail: Mailpit only catches mail on the VM, and the `mail.annex.home.arpa` line in `/etc/hosts` is covered by the `# annex` undo above.
 
 ## Reset without destroying
 - **Roll back to `clean-base`.** On `dronky`, as `neon`. This loses everything since the snapshot, including `/srv/annex`.
@@ -94,3 +95,4 @@ virsh -c qemu:///system undefine annex --snapshots-metadata --remove-all-storage
 - [ ] Docker context, `/etc/hosts` line, MCP server, skill (and any Claude chat app config) removed
 - [ ] `uv tool uninstall annex-cli`, if it was installed
 - [ ] Router DHCP reservation and any `dronky` Traefik route removed
+- [ ] Slack test app deleted, if one was created
