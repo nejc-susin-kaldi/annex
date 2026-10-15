@@ -20,6 +20,13 @@ def _table(rows: list[dict], cols: list[str]) -> str:
     return "\n".join([line([c.upper() for c in cols])] + [line([r.get(c) for c in cols]) for r in rows])
 
 
+def _release(v: str) -> int:
+    try:
+        return int(v.lower().removeprefix("r"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{v!r} is not a release; use e.g. r3") from None
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="annex", description="Deploy small internal tools to Annex.")
     p.add_argument("--json", action="store_true", help="machine-readable output")
@@ -40,6 +47,14 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("-n", "--tail", type=int, default=100)
     s.add_argument("-f", "--follow", action="store_true")
     s.add_argument("--since", help="e.g. 10m, 2h")
+    s = sub.add_parser("releases", help="list an app's releases")
+    s.add_argument("app")
+    s = sub.add_parser("rollback", help="switch an app back to an earlier release")
+    s.add_argument("app")
+    s.add_argument("--to", type=_release, metavar="rN", help="release to switch to (default: the one before the current)")
+    s.add_argument("--with-data", action="store_true",
+                   help="also restore the database and /data from that release's time; loses writes since (human only)")
+    s.add_argument("--yes", action="store_true", help="don't ask for confirmation (--with-data)")
     s = sub.add_parser("run", help="run one of an app's jobs now")
     s.add_argument("app")
     s.add_argument("job")
@@ -67,7 +82,7 @@ def main(argv: list[str] | None = None) -> None:
         elif a.cmd == "deploy":
             res = ops.deploy(a.path, progress)
             emit(res) if emit else print(
-                f"{res['name']} is live" + (f" at {res['url']}" if res["url"] else " (no web page)")
+                f"{res['name']} r{res['release']} is live" + (f" at {res['url']}" if res["url"] else " (no web page)")
                 + f"\nimage {res['image']}\ninjected env: {', '.join(res['injected_env'])}")
         elif a.cmd == "list":
             apps = ops.list_apps()
@@ -85,6 +100,29 @@ def main(argv: list[str] | None = None) -> None:
             if a.follow:
                 sys.exit(ops.follow_logs(a.app, a.tail))
             print(ops.logs(a.app, a.tail, a.since), end="")
+        elif a.cmd == "releases":
+            rels = ops.releases(a.app)
+            if emit:
+                emit(rels)
+            else:
+                for x in rels:
+                    x["r"] = f"r{x['release']}" + (" *" if x["current"] else "")
+                    x["when"] = x["deployed_at"][:16].replace("T", " ")
+                    x["by"] = f"{x['deployed_by']} ({x['via']})"
+                    x["note"] = x["note"] if len(x["note"]) <= 70 else x["note"][:69] + "…"
+                    x["rollback"] = ("yes" + (", with data" if x["data_snapshot"] else "")) if x["can_roll_back_to"] else ""
+                print(_table(rels, ["r", "result", "when", "by", "git", "rollback", "note"]))
+                print("* = live now. Roll back with: annex rollback <app> [--to rN] [--with-data]")
+        elif a.cmd == "rollback":
+            if a.with_data and not a.yes:
+                if input(f"Restore {a.app}'s database and /data from that release's time? Writes since then are "
+                         "lost (a snapshot of the current data is taken first). Type the app name to confirm: ") != a.app:
+                    sys.exit("Aborted.")
+            res = ops.rollback(a.app, a.to, a.with_data, progress)
+            emit(res) if emit else print(
+                f"{a.app} rolled back from r{res['rolled_back_from']} to r{res['rolled_back_to']} "
+                f"(now live as r{res['release']}, {res['image']})"
+                + (", data restored" if res["with_data"] else "") + (f" at {res['url']}" if res["url"] else ""))
         elif a.cmd == "run":
             res = ops.run_job(a.app, a.job)
             emit(res) if emit else print(f"{res['output']}--\n{a.app}/{a.job} exited {res['exit_code']} in {res['seconds']} s")

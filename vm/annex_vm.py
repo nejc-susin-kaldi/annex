@@ -29,6 +29,8 @@ PRODUCT_DB = "annex-product-db-1"
 APPDATA_DB = "annex-appdata-db-1"
 BACKUP = "annex-backup-1"
 BACKUPS = DATA / "backups"
+SNAPSHOTS = DATA / "snapshots"
+SNAPSHOT_MAX_FILES_KB = 200 * 1024
 APP_UID = 10001
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}[a-z0-9]$")
 KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
@@ -186,6 +188,22 @@ def drop_database(app: str) -> None:
     psql(APPDATA_DB, "postgres", f"DROP DATABASE IF EXISTS {role} WITH (FORCE);\nDROP ROLE IF EXISTS {role};")
 
 
+def database_exists(app: str) -> bool:
+    return psql(APPDATA_DB, "postgres", f"SELECT 1 FROM pg_database WHERE datname = '{role_name(app)}';") == "1"
+
+
+def restore_database(app: str, dump: Path) -> None:
+    """Replace the app's database with a pg_dump -Fc file."""
+    role = role_name(app)
+    psql(APPDATA_DB, "postgres", f"DROP DATABASE IF EXISTS {role} WITH (FORCE);")
+    ensure_database(app)
+    with open(dump, "rb") as f:
+        r = subprocess.run(["docker", "exec", "-i", APPDATA_DB, "pg_restore", "-U", "postgres", "-d", role,
+                            "--exit-on-error"], stdin=f, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Fail(f"pg_restore failed: {r.stderr.strip()[-800:]}")
+
+
 # --- commands --------------------------------------------------------------
 def cmd_views(_: argparse.Namespace) -> None:
     out({"views": api_views()})
@@ -255,7 +273,8 @@ def cmd_deprovision(a: argparse.Namespace) -> None:
         if appdir.exists():
             as_root(["rm", "-rf", str(appdir)], appdir.parent)
         shutil.rmtree(SECRETS / "apps" / app, ignore_errors=True)
-        removed += ["database", "files", "secrets"]
+        shutil.rmtree(SNAPSHOTS / app, ignore_errors=True)
+        removed += ["database", "files", "release history", "snapshots", "secrets"]
     shutil.rmtree(DATA / "deploy" / app, ignore_errors=True)
     removed.append("deploy files")
     out({"ok": True, "removed": removed, "kept_data": a.keep_data})
@@ -311,13 +330,7 @@ def cmd_restore(a: argparse.Namespace) -> None:
     subprocess.run(["docker", "stop", f"annex-app-{app}"], capture_output=True)
     try:
         if have_dump:
-            psql(APPDATA_DB, "postgres", f"DROP DATABASE IF EXISTS {role} WITH (FORCE);")
-            ensure_database(app)
-            with open(staging / dump_name, "rb") as f:
-                r = subprocess.run(["docker", "exec", "-i", APPDATA_DB, "pg_restore", "-U", "postgres", "-d", role,
-                                    "--exit-on-error"], stdin=f, capture_output=True, text=True)
-            if r.returncode != 0:
-                raise Fail(f"pg_restore failed: {r.stderr.strip()[-800:]}")
+            restore_database(app, staging / dump_name)
         if (staging / files_prefix).exists():
             appdir = DATA / "apps" / app
             appdir.mkdir(parents=True, exist_ok=True)
@@ -329,6 +342,98 @@ def cmd_restore(a: argparse.Namespace) -> None:
         subprocess.run(["docker", "start", f"annex-app-{app}"], capture_output=True)
         shutil.rmtree(staging, ignore_errors=True)
     out({"ok": True, "app": app, "archive": archive.name, "database": have_dump, "files": n_files})
+
+
+# --- pre-deploy snapshots (rollback --with-data) -----------------------------
+def in_helper(args: list[str], mounts: list[str], stdout=None) -> subprocess.CompletedProcess:
+    """Run a command as root in the helper image, with no network."""
+    vols = [x for m in mounts for x in ("-v", m)]
+    return subprocess.run(["docker", "run", "--rm", "--network", "none", *vols, "--entrypoint", args[0],
+                           helper_image(), *args[1:]], stdout=stdout or subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+def snapshot_dirs(app: str) -> list[Path]:
+    """The app's snapshots, oldest first."""
+    found = [p for p in (SNAPSHOTS / app).glob("pre-r*") if (p / "meta.json").exists() and p.name[5:].isdigit()]
+    return sorted(found, key=lambda p: int(p.name[5:]))
+
+
+def cmd_snapshot(a: argparse.Namespace) -> None:
+    """Before release N goes live: dump the app's database, and archive /data if it's under 200 MB."""
+    app = a.app
+    target = SNAPSHOTS / app / f"pre-r{a.release}"
+    shutil.rmtree(target, ignore_errors=True)
+    target.mkdir(mode=0o700, parents=True)
+    meta: dict = {"name": target.name, "release": a.release, "from_release": a.from_release,
+                  "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "db": False, "files": False}
+    try:
+        if database_exists(app):
+            with open(target / "db.dump", "wb") as f:
+                r = subprocess.run(["docker", "exec", APPDATA_DB, "pg_dump", "-U", "postgres", "-Fc", role_name(app)],
+                                   stdout=f, stderr=subprocess.PIPE)
+            if r.returncode != 0:
+                raise Fail(f"pg_dump failed: {r.stderr.decode(errors='replace').strip()[-400:]}")
+            meta["db"] = True
+        data = DATA / "apps" / app / "data"
+        if data.is_dir():
+            r = in_helper(["du", "-sk", "/d"], [f"{data}:/d:ro"])
+            kb = int(r.stdout.split()[0]) if r.returncode == 0 else 0
+            if kb > SNAPSHOT_MAX_FILES_KB:
+                meta["files"] = f"skipped: /data is {kb // 1024} MB, over 200 MB; the nightly backup covers it"
+            else:
+                with open(target / "data.tar.gz", "wb") as f:
+                    r = in_helper(["tar", "-czf", "-", "-C", "/d", "."], [f"{data}:/d:ro"], stdout=f)
+                if r.returncode != 0:
+                    raise Fail(f"archiving /data failed: {r.stderr.decode(errors='replace').strip()[-400:]}")
+                meta["files"] = True
+    except Exception:
+        shutil.rmtree(target, ignore_errors=True)
+        raise
+    if not meta["db"] and meta["files"] is False:
+        shutil.rmtree(target, ignore_errors=True)
+        out({"ok": True, "snapshot": None})
+        return
+    meta["bytes"] = sum(p.stat().st_size for p in target.iterdir())
+    (target / "meta.json").write_text(json.dumps(meta))
+    out({"ok": True, "snapshot": meta})
+
+
+def cmd_snapshots(a: argparse.Namespace) -> None:
+    out({"ok": True, "snapshots": [json.loads((p / "meta.json").read_text()) for p in snapshot_dirs(a.app)]})
+
+
+def cmd_restore_snapshot(a: argparse.Namespace) -> None:
+    """Replace the app's database and /data with the newest snapshot taken while release K was live.
+    Leaves the app's container stopped: the caller starts the release it rolls back to."""
+    app = a.app
+    snaps = [p for p in snapshot_dirs(app) if json.loads((p / "meta.json").read_text())["from_release"] == a.from_release]
+    if not snaps:
+        raise Fail(f"no data snapshot from while r{a.from_release} was live; snapshots are taken before each "
+                   "deploy and the last 3 are kept. Roll back without --with-data, or restore a nightly backup "
+                   f"with scripts/restore.sh {app}")
+    snap = snaps[-1]
+    meta = json.loads((snap / "meta.json").read_text())
+    subprocess.run(["docker", "stop", f"annex-app-{app}"], capture_output=True)
+    if (snap / "db.dump").exists():
+        restore_database(app, snap / "db.dump")
+    if (snap / "data.tar.gz").exists():
+        appdir = DATA / "apps" / app
+        appdir.mkdir(parents=True, exist_ok=True)
+        r = in_helper(["sh", "-c", f"rm -rf /app/data && mkdir /app/data && tar -xzf /snap/data.tar.gz -C /app/data "
+                                   f"&& chown -R {APP_UID}:{APP_UID} /app/data"],
+                      [f"{appdir}:/app", f"{snap}:/snap:ro"])
+        if r.returncode != 0:
+            raise Fail(f"restoring /data failed: {r.stderr.decode(errors='replace').strip()[-400:]}")
+    out({"ok": True, "app": app, "snapshot": meta["name"], "database": (snap / "db.dump").exists(),
+         "files": (snap / "data.tar.gz").exists()})
+
+
+def cmd_prune_snapshots(a: argparse.Namespace) -> None:
+    snaps = snapshot_dirs(a.app)
+    old = snaps[:-a.keep] if a.keep else snaps
+    for p in old:
+        shutil.rmtree(p, ignore_errors=True)
+    out({"ok": True, "removed": [p.name for p in old], "kept": [p.name for p in snaps[len(old):]]})
 
 
 def main() -> None:
@@ -357,6 +462,22 @@ def main() -> None:
     s.add_argument("app")
     s.add_argument("--archive")
     s.set_defaults(fn=cmd_restore)
+    s = sub.add_parser("snapshot")
+    s.add_argument("app")
+    s.add_argument("--release", type=int, required=True)
+    s.add_argument("--from-release", type=int, required=True)
+    s.set_defaults(fn=cmd_snapshot)
+    s = sub.add_parser("snapshots")
+    s.add_argument("app")
+    s.set_defaults(fn=cmd_snapshots)
+    s = sub.add_parser("restore-snapshot")
+    s.add_argument("app")
+    s.add_argument("--from-release", type=int, required=True)
+    s.set_defaults(fn=cmd_restore_snapshot)
+    s = sub.add_parser("prune-snapshots")
+    s.add_argument("app")
+    s.add_argument("--keep", type=int, default=3)
+    s.set_defaults(fn=cmd_prune_snapshots)
     a = p.parse_args()
     if hasattr(a, "app") and not NAME_RE.match(a.app):
         out({"ok": False, "error": f"invalid app name {a.app!r}"})

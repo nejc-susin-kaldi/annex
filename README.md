@@ -17,6 +17,7 @@ For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo 
 ./annex init python-web my-tool --owner sam   # copy a template
 ./annex deploy my-tool                         # validate, provision, build, run, register
 ./annex list
+./annex releases my-tool                       # release history; ./annex rollback my-tool undoes a deploy
 ```
 The app contract is in [docs/app-contract.md](docs/app-contract.md), or run `./annex contract`. Example apps: `examples/client-lookup` (web, gateway) and `examples/monthly-report` (web+job, Postgres, files). Templates: `python-web`, `python-job`.
 
@@ -42,6 +43,7 @@ Plus product-db and appdata-db (Postgres 16), Ofelia (jobs), offen backup (night
 | `scripts/backup.sh` | run the nightly backup now |
 | `scripts/restore.sh <app> [archive]` | restore one app's database and files |
 | `scripts/test-apps.sh`, `test-jobs.sh`, `restore-test.sh` | M0.2/M0.3 checks |
+| `scripts/test-rollback.sh` | M1.1 checks: automatic rollback, `annex rollback`, `--with-data` |
 | `scripts/reset-demo.sh` | clean demo state: example apps redeployed, other apps removed, checks run (see docs/demo.md) |
 | `scripts/wipe-vm.sh` | removes everything Annex from the VM (asks first) |
 | `scripts/show-users.sh` | prints demo user passwords |

@@ -60,7 +60,7 @@ Undo:
 ```bash
 rm ~/.claude/skills/annex
 ```
-The MCP server exposes `annex_contract`, `annex_init`, `annex_deploy`, `annex_list`, `annex_status`, `annex_logs` and `annex_run`. `remove` and `secret set` aren't exposed; they stay CLI-only.
+The MCP server exposes `annex_contract`, `annex_init`, `annex_deploy`, `annex_list`, `annex_status`, `annex_logs`, `annex_run`, `annex_releases` and `annex_rollback` (without data). `remove`, `secret set` and `rollback --with-data` aren't exposed; they stay CLI-only. The MCP server picks up new tools when Claude Code restarts it (a new session).
 
 ## 5. Route through Traefik on `dronky` (open question)
 Not decided yet; nothing to do. Annex supports two shapes, chosen in `.env`:

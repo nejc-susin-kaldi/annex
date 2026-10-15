@@ -52,6 +52,7 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `echo-test`, `www
 - **Secrets** arrive as environment variables at runtime. Never put them in code, the repo or the image.
 - **Never publish ports.** Only Annex's front door does.
 - **Log to stdout/stderr.** Read logs with `annex logs <app>`.
+- **Health gate.** Every deploy is a numbered release (`r1`, `r2`, …). A web app's new release must return 200 on its `healthcheck` within 60 s (a job-only app must keep running). If it doesn't, Annex switches back to the previous release automatically, and the deploy fails with the new release's last log lines. Your database and `/data` are left as they are, and so are any changes the failed release made to them.
 - **Jobs** run inside the app's container with the same environment (`docker exec`). In `type: job`, the container idles (`sleep infinity`) between runs. Trigger a job by hand with `annex run <app> <job>`. A job's exit code and output are its result.
 
 ## Injected environment
@@ -83,6 +84,9 @@ All data is synthetic. Adding a view is a reviewed change by the platform team, 
 | `annex status <app>` | an app's state, config and recent logs |
 | `annex logs <app> [-n 100] [-f]` | an app's logs |
 | `annex run <app> <job>` | trigger a job now |
+| `annex releases <app>` | an app's releases, and which can be rolled back to |
+| `annex rollback <app> [--to rN]` | switch back to an earlier release (default: the one before), with that release's manifest |
+| `annex rollback <app> --with-data` | **human only**: also restore the database and `/data` from that release's time; writes since are lost |
 | `annex secret set <app> KEY=VALUE` | **human only**: store a secret on the server |
 | `annex remove <app> [--keep-data]` | **human only**: remove an app |
 | `annex contract` | print this contract |

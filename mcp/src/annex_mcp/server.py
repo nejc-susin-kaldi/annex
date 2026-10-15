@@ -1,7 +1,8 @@
 """annex MCP server (stdio).
 
 Exposes the safe subset of the annex CLI to coding agents: contract, init,
-deploy, list, status, logs, run. `remove` and `secret set` stay human-only.
+deploy, list, status, logs, run, releases, rollback (without data). `remove`,
+`secret set` and `rollback --with-data` stay human-only.
 Paths are resolved against the agent's working directory if relative; prefer
 absolute paths.
 """
@@ -24,9 +25,11 @@ server = MCPServer(
         "Annex deploys small internal web tools and jobs behind the client's login. "
         "Call annex_contract first and follow it. Workflow: annex_init a template into an empty folder, "
         "edit the code, annex_deploy the folder, then check the returned URL with annex_status/annex_logs. "
-        "If a deploy fails, the error says exactly what to fix: fix it and deploy again. "
-        "Never write login code, Docker labels or database credentials. Secrets and app removal are "
-        "human-only: ask the user to run `annex secret set` or `annex remove`."
+        "If a deploy fails, the error says exactly what to fix: fix it and deploy again. A deploy that fails its "
+        "health check is rolled back automatically; annex_rollback switches back to an earlier release. "
+        "Never write login code, Docker labels or database credentials. Secrets, app removal and restoring "
+        "data are human-only: ask the user to run `annex secret set`, `annex remove` or "
+        "`annex rollback --with-data`."
     ),
 )
 
@@ -68,10 +71,12 @@ async def annex_init(template: str, name: str, directory: str, owner: str) -> st
 @server.tool()
 async def annex_deploy(path: str) -> str:
     """Validate, provision (database, files, gateway access), build, run and register the app in the
-    folder at `path` (absolute). Takes 15-90 seconds. Returns the app's URL and injected environment,
+    folder at `path` (absolute). Takes 15-90 seconds. Each deploy is a numbered release; if the new
+    release fails its health check, Annex switches back to the previous one automatically and the error
+    includes the new release's last log lines. Returns the app's URL, release and injected environment,
     or an error explaining what to fix."""
     steps: list[str] = []
-    res = await _call(ops.deploy, Path(path).expanduser(), steps.append)
+    res = await _call(ops.deploy, Path(path).expanduser(), steps.append, "mcp")
     return _dump({**res, "steps": steps})
 
 
@@ -91,6 +96,22 @@ async def annex_status(app: str) -> str:
 async def annex_logs(app: str, tail: int = 100, since: str | None = None) -> str:
     """An app's recent stdout/stderr. tail: number of lines; since: e.g. '10m' or '2h'."""
     return await _call(ops.logs, app, tail, since)
+
+
+@server.tool()
+async def annex_releases(app: str) -> str:
+    """An app's releases, newest first: result, when, who, git commit, and which can be rolled back to."""
+    return _dump(await _call(ops.releases, app))
+
+
+@server.tool()
+async def annex_rollback(app: str, to_release: int | None = None) -> str:
+    """Switch an app back to an earlier release (default: the one before the current), re-applying that
+    release's manifest (views, storage, schedule). Code and config only: the database and /data are left
+    as they are. Restoring data too is human only (`annex rollback <app> --with-data`)."""
+    steps: list[str] = []
+    res = await _call(ops.rollback, app, to_release, False, steps.append, "mcp")
+    return _dump({**res, "steps": steps})
 
 
 @server.tool()

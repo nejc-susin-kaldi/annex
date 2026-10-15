@@ -6,7 +6,7 @@ how to fix it, because coding agents read them.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import yaml
@@ -61,6 +61,14 @@ class Manifest:
     @property
     def has_jobs(self) -> bool:
         return self.type in ("job", "web+job")
+
+    def to_dict(self) -> dict:
+        """The validated manifest as plain data, as stored with each release."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Manifest:
+        return cls(**{**d, "schedule": [Job(**j) for j in d.get("schedule", [])]})
 
 
 def load(folder: Path) -> Manifest:
