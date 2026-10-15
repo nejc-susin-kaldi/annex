@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import auth, config, db, email, engine, incidents, sends, slack
+from . import auth, config, db, email, engine, incidents, sends, slack, usage
 from .errors import OpsError
 
 
@@ -22,6 +22,7 @@ async def lifespan(_: FastAPI):
     if config.WATCHERS:
         incidents.start_background()
     yield
+    incidents.stop_background()
 
 
 app = FastAPI(title="annex-ops", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -98,6 +99,13 @@ async def me(request: Request):
     grant = await run_in_threadpool(auth.authenticate, request.headers.get("authorization"))
     return {"app": grant.app, "email": grant.email, "slack_channels": grant.slack_channels,
             "slack_connected": config.slack_connected()}
+
+
+@app.get("/tiles/{app_name}")
+async def tile(app_name: str):
+    """The numbers on an app's discovery tile (Homepage calls this from its server): totals and status, never
+    logins. No token: Homepage can't send one, and apps on the edge network can read these totals too (D46)."""
+    return await run_in_threadpool(usage.tile_for, app_name)
 
 
 @app.post("/internal/gatus")

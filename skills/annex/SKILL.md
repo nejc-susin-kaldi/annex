@@ -46,6 +46,7 @@ Prefer a template when the user hasn't asked for a specific stack: it already fo
 - **Memory.** 256 MB by default. Only if the app needs more (it's killed for running out of memory, or the stack needs it, e.g. Next.js), set `resources: {memory: 384m}` or up to `512m`. Don't raise it by default.
 - **Email and Slack** only through Annex, never an SMTP server or a Slack token of your own. Declare `notify: {email: true, slack: ["#channel"]}` in `annex.yaml`, then use the template's helpers (`send_email`, `post_slack`; `sendEmail`, `postSlack` in node). Recipients are logins (`"cm"`) or company addresses; anything else is refused, and one refused recipient means nothing is sent. No attachments: save the file under `/data` and email a link to it in your app. The `notice` template (title, body, link) covers most messages. Errors say what to fix. The deploy warns if Slack isn't connected yet.
 - **Alerts.** The owner is emailed when the app is down, crash-loops, throws 5xx or a job fails. Keep `/healthz` honest and fast, and make jobs **exit non-zero on failure**. `annex_status` shows the health check, any open incident and each job's last run: check it after a deploy. `alerts: {to: [owner, cm, "#channel"]}` adds people.
+- **Usage** is measured by the platform (signed-in page requests; not health checks or static files), so there is nothing to add to the app. Owners see "users in the last 7 days" on their tile and in `annex usage`; logins are never shown.
 - **Pin versions** of libraries, including CDN URLs.
 
 ## Homelab note (M0 prototype)

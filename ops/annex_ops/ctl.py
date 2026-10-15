@@ -6,8 +6,10 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-from . import config, db, directory, incidents, sends
+from . import config, db, digest, directory, incidents, sends, usage
 from .errors import OpsError
 
 
@@ -58,6 +60,17 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--end", action="store_true")
     s.add_argument("--json", action="store_true")
     sub.add_parser("users", help="logins in the user directory").add_argument("--json", action="store_true")
+    s = sub.add_parser("usage", help="usage per app (totals; --by-user adds logins, one app only)")
+    s.add_argument("--app")
+    s.add_argument("--by-user", action="store_true", help="per-login request counts for the last 30 days (admins only)")
+    s.add_argument("--json", action="store_true")
+    sub.add_parser("rollup", help="run the usage rollup now").add_argument("--json", action="store_true")
+    s = sub.add_parser("digest", help="preview the weekly digest, or send it with --send")
+    s.add_argument("--send", action="store_true")
+    s.add_argument("--to", help="only this login's digest")
+    s.add_argument("--dormant-days", type=int)
+    s.add_argument("--min-age-days", type=int)
+    s.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
         if a.cmd == "sends":
@@ -74,6 +87,16 @@ def main(argv: list[str] | None = None) -> int:
                 raise OpsError(400, f"{a.subject!r} is not a subject. Use app:<name>, job:<app>/<job> or platform:<service>")
             data, cols = (incidents.end_maintenance(a.subject) if a.end
                           else incidents.set_maintenance(a.subject, a.minutes)), []
+        elif a.cmd == "usage":
+            if a.by_user and not a.app:
+                raise OpsError(400, "--by-user needs an app: annex usage <app> --by-user")
+            data, cols = (usage.usage_app(a.app, a.by_user) if a.app else usage.usage_table()), []
+        elif a.cmd == "rollup":
+            data, cols = usage.rollup(), []
+        elif a.cmd == "digest":
+            now = datetime.now(ZoneInfo(config.USAGE_TZ))
+            fn = digest.send if a.send else digest.plan
+            data, cols = fn(now, a.to, a.dormant_days, a.min_age_days), []
         elif a.cmd == "users":
             data, cols = sorted(directory.users()), []
         else:
@@ -82,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"error": e.message}) if a.json else f"error: {e.message}", file=sys.stderr)
         return 1
     if a.json:
-        print(json.dumps(data))
+        print(json.dumps(data, default=str))
     elif isinstance(data, dict):
         print("\n".join(f"{k}: {v}" for k, v in data.items()))
     elif a.cmd == "users":

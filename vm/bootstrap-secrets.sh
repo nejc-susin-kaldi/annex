@@ -27,6 +27,7 @@ ensure_key GATEWAY_JWT_SECRET 32
 ensure_key APPDATA_DB_POSTGRES_PASSWORD
 ensure_key APPDATA_DB_METABASE_PASSWORD
 ensure_key APPDATA_DB_OPS_PASSWORD
+ensure_key APPDATA_DB_METABASE_USAGE_PASSWORD
 ensure_key OPS_INTERNAL_TOKEN 32
 for f in session_secret storage_encryption_key reset_password_jwt_secret; do
   [ -s "$S/authelia/$f" ] || { rand 32 > "$S/authelia/$f"; echo "bootstrap: generated authelia/$f"; }

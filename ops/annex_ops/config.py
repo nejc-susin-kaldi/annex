@@ -46,13 +46,11 @@ PORT_SUFFIX = os.environ.get("ANNEX_PORT_SUFFIX", "")
 _tuning_cache: dict = {"mtime": None, "values": {}}
 
 
-def tuning():
-    """The alert thresholds: engine defaults, overridden by OPS_<NAME> environment variables (e.g.
+def _settings(cls):
+    """A settings dataclass: its defaults, overridden by OPS_<NAME> environment variables (e.g.
     OPS_STOPPED_GRACE_S) and, at runtime, by tuning.json (re-read when its mtime changes). Production never
-    has the file; scripts/test-alerts.sh writes a short one."""
+    has the file; the test scripts write a short one."""
     from dataclasses import fields
-
-    from .engine import Tuning
 
     try:
         mtime = os.stat(TUNING_FILE).st_mtime_ns
@@ -67,8 +65,8 @@ def tuning():
             except (OSError, ValueError):
                 values = {}
         _tuning_cache.update(mtime=mtime, values=values)
-    out = Tuning()
-    for f in fields(Tuning):
+    out = cls()
+    for f in fields(cls):
         raw = _tuning_cache["values"].get(f.name, os.environ.get("OPS_" + f.name.upper()))
         if raw is not None:
             try:
@@ -76,6 +74,25 @@ def tuning():
             except (TypeError, ValueError):
                 pass
     return out
+
+
+def tuning():
+    """The alert thresholds (engine.Tuning)."""
+    from .engine import Tuning
+
+    return _settings(Tuning)
+
+
+def usage_settings():
+    """Retention, signal thresholds, rollup interval and digest schedule (usage.UsageSettings)."""
+    from .usage import UsageSettings
+
+    return _settings(UsageSettings)
+
+
+# usage days and weeks are Europe/Ljubljana (the TZ setting's default): the SQL view uses the same zone
+USAGE_TZ = "Europe/Ljubljana"
+METABASE_URL = os.environ.get("ANNEX_URL_METABASE", "")
 
 
 def app_url(app: str) -> str:

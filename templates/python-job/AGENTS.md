@@ -33,6 +33,7 @@ post_slack("#finance-reports", "Report ready: https://...")
 - `name` is the hostname: lowercase letters, digits and `-`.
 - Views must be in the gateway allowlist (see `annex contract`).
 - **A job must exit non-zero when it fails**, so its owner is alerted (a job that catches its own error and exits 0 looks successful). Keep `/healthz` honest and fast: the owner is emailed when it fails.
+- **Usage is counted for you** (signed-in page requests, not health checks or static files): nothing to add to the app. The owner sees totals on its discovery tile and in `annex usage`; never log or display other people's usage yourself.
 
 ## Workflow
 1. Edit the code. The gateway and `DATA_DIR` only exist on the server.

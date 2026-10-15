@@ -15,12 +15,13 @@
 | Is an app healthy? Any open incident? | `./annex status <app>` (health check, open incident, last run of each job) |
 | All incidents, or the open ones | `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl incidents [--open] [--app X]` |
 | Hold alerts while you do planned work | `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl maintenance app:<name> --minutes 30` (`--end` releases it) |
+| Who uses what | `./annex usage` (every app, last 7 days), `./annex usage <app>` (by day), `./annex usage <app> --by-user` (per person: admins only) |
 | Email and Slack sends of an app | `./annex sends <app> [-n 50]` (every attempt, rejections too; never the body) |
 | Set a secret | `./annex secret set <app> KEY=VALUE` |
 | Remove an app | `./annex remove <app> [--keep-data]` |
 | Back up now | `scripts/backup.sh` (nightly at 02:00 anyway; 7 days kept) |
 | Restore one app | `scripts/restore.sh <app> [archive]` (replaces its DB and `/data`) |
-| Checks | `scripts/test-platform.sh` (M0.1), `scripts/test-apps.sh` (M0.2), `scripts/test-jobs.sh` + `scripts/restore-test.sh` (M0.3), `scripts/test-rollback.sh` (M1.1), `scripts/test-notify.sh` (M1.2), `scripts/test-alerts.sh` (M1.3, 12-20 minutes) |
+| Checks | `scripts/test-platform.sh` (M0.1), `scripts/test-apps.sh` (M0.2), `scripts/test-jobs.sh` + `scripts/restore-test.sh` (M0.3), `scripts/test-rollback.sh` (M1.1), `scripts/test-notify.sh` (M1.2), `scripts/test-alerts.sh` (M1.3, 12-20 minutes), `scripts/test-usage.sh` (M1.4) |
 | Add a gateway view | edit `db/product/api_views.sql`, run `scripts/push.sh`, and add it to the table in `cli/src/annex_cli/contract.md` |
 
 `./annex` runs the CLI from the repo through uv. To put `annex` on your PATH, see `docs/setup.md` §6.
@@ -30,7 +31,7 @@
 |---|---|
 | `platform/` | synced copy of the rendered repo bundle (compose, config, db, vm, ops, images); `platform/.env` holds the settings |
 | `secrets/` | `master.env`, per-service env files (`ops.env`; `slack.env` once Slack is connected), `authelia/`, `users.txt`, `apps/<app>/` (db_password, gateway_token, ops_token, secrets.env, runtime.env) |
-| `state/` | Postgres data directories, Authelia's sqlite, `mailpit/` (caught mail), `directory/users.json` (login → name, email, groups, no passwords; read by ops), `gatus/apps/<app>.yaml` (one health check per web app, written by `annex deploy`), `gatus/data` (Gatus's history), `ops/tuning.json` (only during tests) |
+| `state/` | Postgres data directories, Authelia's sqlite, `mailpit/` (caught mail), `directory/users.json` (login → name, email, groups, no passwords; read by ops), `gatus/apps/<app>.yaml` (one health check per web app, written by `annex deploy`), `gatus/data` (Gatus's history), `ops/tuning.json` (only during tests; the usage settings can be overridden there too) |
 | `deploy/<app>/` | app source (`src/`), generated `compose.yaml`, `deploy.json` (what's running now) |
 | `apps/<app>/data` | app files, mounted at `/data`, backed up |
 | `apps/<app>/releases.jsonl` | release history: image, manifest, who, when, git commit, result (backed up) |
@@ -72,3 +73,14 @@
 - **Tuning:** thresholds are defaults in `ops/annex_ops/engine.py` (`Tuning`), overridable by `OPS_<NAME>` environment variables on ops and, at runtime, by `/srv/annex/state/ops/tuning.json` (`stopped_grace_s`, `crash_count`, `crash_window_s`, `crash_stable_s`, `error_window_s`, `error_min`, `error_ratio`, `reminder_first_s`, `reminder_repeat_s`, `tick_s`). Production never has the file; `scripts/test-alerts.sh` writes a short one and removes it. If an alert storm ever needs silencing, put a long `reminder_first_s` there, or open maintenance for the subject.
 - **State:** the `annex_ops` tables `incidents` (with the full history of signals), `job_runs` (90 days), `log_cursors` (where ops stopped reading Traefik's and Ofelia's logs) and `maintenance`. ops restores open incidents at start and re-reads Docker's state, so a push (which recreates ops) doesn't lose or repeat alerts.
 - **Limits:** if the VM itself dies, nothing on it can say so: that needs a check from outside the LAN (production item). Any container on `annex-edge` can read Gatus's API (which apps are up) without logging in.
+
+## Usage stats and the weekly digest (M1.4)
+- **What is counted:** a signed-in page request on an app's router, taken from Traefik's access log, which annex-ops already follows (one follower feeds both the alert engine and usage). Not counted: the app's health path (`com.kaldi.annex.healthcheck` label), static assets (`.js .mjs .css .map .png .jpg .jpeg .gif .svg .ico .webp .woff .woff2 .ttf`), anonymous requests (the login redirects) and platform routers. Apps change nothing.
+- **Where it shows:** the app's discovery tile ("Users 7d" with a trend, and its status; job-only apps show "Last run"), `annex usage`, `annex status`, the **"Annex usage"** Metabase dashboard (collection "Annex"; the "Usage" tile on the discovery page leads to it), and the Monday digest.
+- **Storage:** raw rows in `annex_ops.requests` for 30 days (`usage_retention_days`), never with a query string, deleted by the rollup. Daily and weekly summaries without logins (`usage_daily`, `usage_weekly`) are kept indefinitely; days and ISO weeks (Monday start) are in Europe/Ljubljana. The rollup runs every 10 minutes (`ctl rollup` runs it now). Removed apps disappear from `annex usage`, the tiles and the dashboard's table; their history stays in the summaries (`annex usage <app>` still shows it).
+- **Logins** are in `requests` and nowhere else. They are shown only by `annex usage <app> --by-user` (personal data: admins; in the prototype, CLI access is SSH access). Metabase connects as `metabase_usage`, which can read the summaries and the `usage_apps` view and nothing else (no `requests`, `sends`, `incidents` or `app_grants`). The tile endpoint (`GET /tiles/<app>` on ops, called by Homepage from its own server) has no token and returns totals and status only; apps on the edge network can read it too.
+- **Signals** (rules in `ops/annex_ops/usage.py`, written by the rollup to `app_signals`): *graduation candidate* = the last 4 complete weeks never fell, the latest had at least 5 users and more than the first; *dormant* = no signed-in request for 30 days and Annex first saw the app at least 30 days ago.
+- **The digest:** Mondays at 08:00 (Europe/Ljubljana) by email: admins get every app, each owner their own apps. It covers the last complete week, with the 4-week trend, error rate, p95 and the last 7 days, and lists graduation candidates and dormant apps. It is sent once per week (`annex_ops.digests`), also if ops restarts that day; a fresh install on another weekday does not send one at once. Preview it without sending: `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl digest [--to <login>] [--dormant-days N --min-age-days N]`; add `--send` to send it now.
+- **Settings** (defaults in `ops/annex_ops/usage.py`, `UsageSettings`; override with `OPS_<NAME>` environment variables on ops or in `state/ops/tuning.json`): `usage_retention_days` 30, `graduation_min_users` 5, `graduation_weeks` 4 (2 to 4), `dormant_days` 30, `rollup_s` 600, `digest_weekday` 0, `digest_hour` 8.
+- **Dashboard maintenance:** `push.sh` creates what's missing (connection, collection, cards, dashboard) from `config/metabase/usage-dashboard.json` and leaves existing cards alone. To rebuild them after editing the spec: `ssh annex ANNEX_DATA_DIR=/srv/annex bash /srv/annex/platform/vm/metabase-setup.sh --rebuild-usage`.
+- **Demo history (optional):** `scripts/seed-usage.sh` writes 8 weeks of synthetic history (marked `synthetic`, weeks 3 to 10 back) so the dashboard has lines; `--clear` removes it. See the note in the script about graduation.

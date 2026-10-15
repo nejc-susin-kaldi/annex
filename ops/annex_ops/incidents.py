@@ -309,7 +309,12 @@ def app_status(app: str) -> dict:
     app_inc = next((i for i in open_ if i["subject"] == f"app:{app}"), None)
     failing = {i["subject"].split("/", 1)[1] for i in open_ if i["subject"].startswith("job:")}
     jobs = [{**j, "failing": j["job"] in failing} for j in last_job_runs(app)]
-    return {"app": app, "health_check": health_check(app), "incident": app_inc, "jobs": jobs}
+    from . import usage
+
+    row = next((r for r in usage.usage_rows() if r["app"] == app), None)
+    totals = row and {"users_7d": row["users_7d"], "trend": usage.trend(row["users_7d"], row["users_prev_7d"]),
+                      "requests_7d": row["requests_7d"]}
+    return {"app": app, "health_check": health_check(app), "incident": app_inc, "jobs": jobs, "usage": totals}
 
 
 def set_maintenance(subject: str, minutes: int) -> dict:
@@ -329,27 +334,52 @@ def end_maintenance(subject: str) -> dict:
 _manager: Manager | None = None
 
 
+_ingest = None
+
+
 def start_background() -> Manager:
-    """Start the engine thread, the Docker watcher and the log followers (called once, at app startup)."""
-    global _manager
-    from . import follow_logs, watch_docker
+    """Start the engine thread, the Docker watcher, the log followers and the usage and digest threads (called
+    once, at app startup)."""
+    global _manager, _ingest
+    from . import digest, follow_logs, usage, watch_docker
 
     mgr = _manager = Manager()
     mgr.start()
+    ingest = _ingest = usage.Ingest()
+    usage.Worker(ingest).start()
+    digest.Worker().start()
+
+    def submit(inp) -> None:
+        mgr.submit(inp)
+        if isinstance(inp, (eng.Seen, eng.Start)) and inp.subject.startswith("app:"):
+            try:
+                ingest.touch_app(inp.subject[4:])  # an app that exists but has no traffic still has a first_seen
+            except Exception as e:  # noqa: BLE001
+                log(f"usage: couldn't record {inp.subject}: {type(e).__name__}: {e}")
+
     cursors = follow_logs.CursorStore()
-    watch_docker.Watcher(mgr.submit, lambda: reconcile_gatus(mgr.submit)).start()
-    follow_logs.Follower("annex-traefik-1", traefik_handler(mgr), cursors).start()
+    watch_docker.Watcher(submit, lambda: reconcile_gatus(mgr.submit)).start()
+    follow_logs.Follower("annex-traefik-1", traefik_handler(mgr, ingest), cursors).start()
     follow_logs.Follower(OFELIA, ofelia_handler(mgr), cursors).start()
     return mgr
 
 
-def traefik_handler(mgr: Manager):
+def stop_background() -> None:
+    """At shutdown: write the buffered usage rows, so a restart neither loses nor repeats them."""
+    if _ingest is not None:
+        _ingest.flush()
+
+
+def traefik_handler(mgr: Manager, ingest=None):
+    """One Traefik follower feeds both the alert engine (5xx rate) and usage (who used what)."""
     from . import follow_logs
 
     def handle(ts: float, stream: str, line: str) -> None:
         parsed = follow_logs.parse_traefik(line)
         if parsed:
             mgr.submit(eng.Request(parsed[0], parsed[1], parsed[2]))
+        if ingest is not None:
+            ingest.handle(ts, stream, line)
 
     return handle
 

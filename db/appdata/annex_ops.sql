@@ -1,6 +1,6 @@
 -- The annex-ops service's database (apps' email/Slack grants and the send log).
 -- Idempotent: scripts/push.sh applies it on every push, as postgres, with
---   psql -v ops_pw=<APPDATA_DB_OPS_PASSWORD> -d postgres -f -
+--   psql -v ops_pw=<APPDATA_DB_OPS_PASSWORD> -v usage_pw=<APPDATA_DB_METABASE_USAGE_PASSWORD> -d postgres -f -
 -- It lives here and not in init/, because init/ only runs on a fresh database.
 -- Later milestones append their tables to this file.
 DO $$ BEGIN
@@ -11,6 +11,12 @@ SELECT 'CREATE DATABASE annex_ops OWNER annex_ops' WHERE NOT EXISTS (SELECT FROM
 \gexec
 REVOKE CONNECT ON DATABASE annex_ops FROM PUBLIC;
 GRANT CONNECT ON DATABASE annex_ops TO annex_ops;
+-- Metabase's read-only usage role (M1.4): what it may read is granted at the end of this file
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'metabase_usage') THEN CREATE ROLE metabase_usage LOGIN; END IF;
+END $$;
+ALTER ROLE metabase_usage WITH LOGIN PASSWORD :'usage_pw';
+GRANT CONNECT ON DATABASE annex_ops TO metabase_usage;
 
 \c annex_ops
 SET ROLE annex_ops;
@@ -63,3 +69,70 @@ CREATE INDEX IF NOT EXISTS job_runs_app_job ON annex_ops.job_runs (app, job, fin
 CREATE TABLE IF NOT EXISTS annex_ops.log_cursors (container text PRIMARY KEY, ts timestamptz NOT NULL);
 -- alerts held for a subject until a time (restore and rollback --with-data open one)
 CREATE TABLE IF NOT EXISTS annex_ops.maintenance (subject text PRIMARY KEY, until timestamptz NOT NULL);
+
+-- --- M1.4: usage stats ---------------------------------------------------------------
+-- One row per signed-in page request on an app's router (no health checks or static files), kept 30 days.
+-- Never a query string. Logins are here and nowhere else; only `annex usage <app> --by-user` shows them.
+CREATE TABLE IF NOT EXISTS annex_ops.requests (
+  ts          timestamptz NOT NULL,
+  app         text NOT NULL,
+  login       text NOT NULL,
+  method      text NOT NULL,
+  path        text NOT NULL,          -- no query string, at most 200 characters
+  status      int NOT NULL,
+  duration_ms int NOT NULL
+);
+CREATE INDEX IF NOT EXISTS requests_app_ts ON annex_ops.requests (app, ts);
+CREATE INDEX IF NOT EXISTS requests_ts ON annex_ops.requests (ts);
+-- a restart replays the log lines after the saved cursor: identical rows are dropped (INSERT ... ON CONFLICT DO NOTHING)
+CREATE UNIQUE INDEX IF NOT EXISTS requests_dedupe ON annex_ops.requests (app, ts, login, method, path);
+-- summaries without logins, kept indefinitely (days in Europe/Ljubljana, ISO weeks starting Monday);
+-- `synthetic` rows come from scripts/seed-usage.sh and are never overwritten by the rollup
+CREATE TABLE IF NOT EXISTS annex_ops.usage_daily (
+  day date NOT NULL, app text NOT NULL, users int NOT NULL, requests int NOT NULL,
+  errors int NOT NULL, p95_ms int, synthetic boolean NOT NULL DEFAULT false, PRIMARY KEY (day, app));
+CREATE TABLE IF NOT EXISTS annex_ops.usage_weekly (
+  week date NOT NULL, app text NOT NULL, users int NOT NULL, requests int NOT NULL,
+  synthetic boolean NOT NULL DEFAULT false, PRIMARY KEY (week, app));
+-- when Annex first saw an app, and when it was last used
+CREATE TABLE IF NOT EXISTS annex_ops.app_seen (
+  app text PRIMARY KEY, first_seen timestamptz NOT NULL, last_used timestamptz);
+-- set by the rollup when the app's container is gone (its history stays; the view hides it until it returns)
+ALTER TABLE annex_ops.app_seen ADD COLUMN IF NOT EXISTS removed_at timestamptz;
+-- the weekly digest, once per week even across restarts
+CREATE TABLE IF NOT EXISTS annex_ops.digests (week date PRIMARY KEY, sent_at timestamptz NOT NULL);
+-- the rollup's verdict per app (the rules are Python, in ops/annex_ops/usage.py): graduation or dormant
+CREATE TABLE IF NOT EXISTS annex_ops.app_signals (
+  app text PRIMARY KEY, signal text NOT NULL CHECK (signal IN ('graduation', 'dormant')), since timestamptz NOT NULL DEFAULT now());
+
+-- One row per app: rolling 7/30-day distinct users from the raw rows, the rest from the summaries.
+-- The view runs with its owner's rights (no security_invoker), so Metabase can read it without any access
+-- to `requests`.
+DROP VIEW IF EXISTS annex_ops.usage_apps;
+CREATE VIEW annex_ops.usage_apps AS
+WITH cw AS (SELECT date_trunc('week', now() AT TIME ZONE 'Europe/Ljubljana')::date AS week),
+r7 AS (SELECT app, count(DISTINCT login) AS users, percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)::int AS p95
+         FROM annex_ops.requests WHERE ts > now() - interval '7 days' GROUP BY app),
+rprev AS (SELECT app, count(DISTINCT login) AS users FROM annex_ops.requests
+            WHERE ts > now() - interval '14 days' AND ts <= now() - interval '7 days' GROUP BY app),
+r30 AS (SELECT app, count(DISTINCT login) AS users FROM annex_ops.requests WHERE ts > now() - interval '30 days' GROUP BY app),
+d7 AS (SELECT app, sum(requests)::int AS requests, sum(errors)::int AS errors FROM annex_ops.usage_daily
+         WHERE day > (now() AT TIME ZONE 'Europe/Ljubljana')::date - 7 GROUP BY app),
+wk AS (SELECT w.app,
+         max(w.users) FILTER (WHERE w.week = cw.week - 28) AS week1, max(w.users) FILTER (WHERE w.week = cw.week - 21) AS week2,
+         max(w.users) FILTER (WHERE w.week = cw.week - 14) AS week3, max(w.users) FILTER (WHERE w.week = cw.week - 7) AS week4
+         FROM annex_ops.usage_weekly w, cw WHERE w.week >= cw.week - 28 GROUP BY w.app)
+SELECT s.app, s.first_seen, s.last_used,
+       coalesce(r7.users, 0) AS users_7d, coalesce(rprev.users, 0) AS users_prev_7d, coalesce(r30.users, 0) AS users_30d,
+       coalesce(d7.requests, 0) AS requests_7d, coalesce(d7.errors, 0) AS errors_7d,
+       CASE WHEN coalesce(d7.requests, 0) = 0 THEN 0 ELSE round(d7.errors::numeric / d7.requests, 4) END AS error_rate_7d,
+       r7.p95 AS p95_7d, wk.week1, wk.week2, wk.week3, wk.week4, g.signal
+FROM annex_ops.app_seen s
+LEFT JOIN r7 USING (app) LEFT JOIN rprev USING (app) LEFT JOIN r30 USING (app) LEFT JOIN d7 USING (app)
+LEFT JOIN wk USING (app) LEFT JOIN annex_ops.app_signals g USING (app)
+WHERE s.removed_at IS NULL;
+
+-- Metabase's usage connection: summaries and the view, and nothing else (not requests, sends, incidents or grants)
+REVOKE ALL ON ALL TABLES IN SCHEMA annex_ops FROM metabase_usage;
+GRANT USAGE ON SCHEMA annex_ops TO metabase_usage;
+GRANT SELECT ON annex_ops.usage_daily, annex_ops.usage_weekly, annex_ops.usage_apps TO metabase_usage;

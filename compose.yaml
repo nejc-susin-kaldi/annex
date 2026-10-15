@@ -248,6 +248,7 @@ services:
       # alerts (M1.3): where to post, and what to put in links
       ANNEX_ALERT_SLACK_CHANNEL: ${ANNEX_ALERT_SLACK_CHANNEL}
       ANNEX_URL_STATUS: ${ANNEX_URL_STATUS}
+      ANNEX_URL_METABASE: ${ANNEX_URL_METABASE}
       ANNEX_HOST_PATTERN: ${ANNEX_HOST_PATTERN}
       ANNEX_PORT_SUFFIX: ${ANNEX_PORT_SUFFIX}
     volumes:

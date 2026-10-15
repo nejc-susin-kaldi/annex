@@ -1,0 +1,217 @@
+# M1.5 implementation plan: incoming webhooks
+
+For a build agent. Written 15 Oct 2026, when M1.3 was committed (`0dba5df`) and M1.4 was planned (`docs/plan-m1.4.md`). **Start only once M1.4 is committed:** both milestones change `ops/`, `db/appdata/annex_ops.sql` and `compose_for`. The milestone comes from Nejc's M1 plan, section "6. Incoming webhooks"; this file is the how, and is complete on its own.
+
+**Read first:** `CLAUDE.md`, `docs/brief.md` (ground rules), `docs/decisions.md` (all of it; D39–D45 describe the alert engine you extend), the M1.4 commit, and this whole file. Do only M1.5. Stop when it's done and report to Nejc.
+
+## Goal
+External services (Trello, Stripe, GitHub, Slack, or anything with a shared secret) can call a tool, while the tool itself stays behind login:
+- **One public hostname**, `hooks.<domain>`, with no login in front of it. It accepts only paths that some app's manifest declares: `https://hooks.<domain>/h/<app>/<hook>`.
+- **annex-ops checks the provider's signature**, then stores the event, answers the provider at once, and forwards the event to the app's internal endpoint with a per-app token the app checks.
+- **Durable delivery:** if the app is down, the event is retried with backoff and delivered once it's back. Events are kept for 7 days and can be replayed.
+- In production this hostname is the only internet-facing endpoint. **In the prototype (LAN only) no real provider can reach it:** senders are simulated with signed `curl` requests from the Mac, through the SSH tunnel. No tunnels to the internet.
+
+## Done when (acceptance, from the M1 plan)
+1. A correctly signed simulated Trello event reaches the app.
+2. A badly signed one is rejected and logged, and never reaches the app.
+3. An event sent while the app is stopped is delivered once the app is back, exactly once.
+4. `scripts/test-hooks.sh` passes, and so do all earlier suites (`test-platform.sh`, `test-apps.sh`, `test-jobs.sh`, `restore-test.sh`, `test-rollback.sh`, `test-notify.sh`, `test-alerts.sh`, `test-usage.sh`).
+
+## Decisions already made for you
+Defaults chosen when this plan was written. Log each in `docs/decisions.md` (what, why, alternatives), continuing the numbering.
+1. **The hooks route goes to ops, and only for `/h/`.** Traefik routes `Host(hooks.<domain>) && PathPrefix(/h/)` to ops on port 8000. ops also refuses any request whose `Host` is the hooks host unless its path starts with `/h/`, so a routing mistake can't expose `/v1/email`, `/internal/gatus` or the tiles. Two layers, because this is the one route without a login.
+2. **No login, but identity headers are still stripped.** The entrypoint-wide middlewares (`strip-identity`, then `authelia`; D5) stay. Authelia gets a `bypass` rule for the hooks host, placed before every other rule. Requests on the hooks host therefore never carry trusted `Remote-*` headers.
+3. **Abuse limits at Traefik:** a rate limit (average 20, burst 40 per source) and a 1 MB body cap (`buffering.maxRequestBodyBytes`) on the hooks router. In ops: 60 events per minute per hook (429 beyond), and the same 1 MB limit.
+4. **Provider signing secrets are app secrets.** A webhook names a secret declared under `secrets:` (set by a human with `annex secret set`). `annex_vm.py provision` copies those values into `/srv/annex/secrets/hooks/<app>.json` (owned by uid 10001, mode 600), which ops mounts read-only. The secrets stay under `/srv/annex/secrets`, never in the database.
+5. **ops → app authentication** uses a new per-app token, `ANNEX_HOOK_TOKEN`, injected into the app and also written to the hooks file. The app checks the `X-Annex-Hook-Token` header with the runtime helper. (`ANNEX_OPS_TOKEN` can't be reused: ops stores only its hash, D35.)
+6. **Answer first, deliver after.** Once the signature checks out, the event is stored and the provider gets a 200 straight away; a worker thread delivers it. Delivery is at least once: the app dedupes by `X-Annex-Hook-Event`.
+7. **Retries:** after 10 s, 30 s, 1 min, 5 min, 15 min, then hourly, until the event is 7 days old; then it's `failed`. Within one hook, events are delivered oldest first: a failing event holds back newer ones of the same hook, so the app never sees them out of order.
+8. **Bodies are stored for 7 days** (needed for retries and replay) and are in the nightly database dump for those 7 days. Rejected requests are logged **without** their body. Bodies are never printed except by the human-only `annex hooks show`.
+9. **Alerting:** if a hook's oldest pending event has been failing for more than 15 minutes, the app's incident gets a `webhook` signal (M1.3 engine), cleared when it's delivered.
+10. **Human-only:** `annex hooks <app>` (list, metadata only) and `annex hooks replay` are CLI only; nothing new over MCP in M1.5.
+11. **Providers:** `trello`, `stripe`, `github`, `slack` and `shared-secret`. Exact formats below.
+
+## Ground rules that bite here
+- **System changes are Nejc's.** The `/etc/hosts` entry for `hooks.annex.home.arpa` goes into `docs/setup.md` with its undo; ask Nejc to run it. Test through `curl --connect-to` like the other suites.
+- **LAN only.** No tunnel or port forward to the internet; no real provider is ever pointed at the VM. Every test event is signed on the Mac.
+- **Pin everything;** no new images or Python packages are needed (`hmac`, `hashlib`, `base64`, `urllib`).
+- **Don't run** `scripts/wipe-vm.sh` or `scripts/reset-demo.sh`; don't touch the app `vibe-leads`.
+- **Ask Nejc** before adding a component or changing the contract beyond `webhooks:` as specified here.
+- Messages must say what's wrong and how to fix it, **except to the internet**: responses on the hooks host stay terse (`{"error": "signature check failed"}`). The details go to the log and `annex hooks`.
+
+## How the pieces fit
+```
+provider ─HTTPS─▶ Traefik (hooks.<domain>, PathPrefix /h/; strip-identity → authelia bypass → ratelimit → 1 MB cap)
+          ─▶ ops:8000 /h/<app>/<hook>  check Host+path, look up hooks/<app>.json, verify signature
+             ├─ bad   → 401, logged as rejected (no body)
+             └─ good  → INSERT hook_events (pending) → 200 to the provider (Slack url_verification: the challenge)
+ops delivery worker (thread) ─▶ http://annex-app-<app>:<port><path>   headers: X-Annex-Hook, -Event, -Attempt, -Token
+                               2xx → delivered; else → next_attempt_at by backoff; failing > 15 min → engine `webhook` signal
+annex hooks [replay|show] ─ssh─▶ docker exec annex-ops-1 python -m annex_ops.ctl hooks ...
+annex deploy ─▶ annex_vm.py provision ─▶ secrets/hooks/<app>.json {token, hooks: {name: {verify, secret, port, path}}}
+```
+
+## Step 0. Spikes
+Write the results in the decisions.
+1. **Authelia `bypass` through forward-auth** for a host other than Authelia's own: a request to `hooks.<domain>` with no session reaches the backend (no 302 or 401), and `Remote-*` headers sent by the client arrive empty (strip-identity ran). Remember D41: Authelia's answer can depend on the `Accept` header, so test with and without one.
+2. **Traefik labels on ops:** a router with `Host(...) && PathPrefix(\`/h/\`)` plus router-level `ratelimit` and `buffering` middlewares, on top of the entrypoint middlewares. Check that `/v1/me` on the hooks host is a 404 from Traefik, and that a 2 MB body is refused (413).
+3. **Signatures:** confirm each provider's current format from its documentation, and pin a known test vector per provider in the unit tests. GitHub publishes one: secret `It's a Secret to Everybody`, payload `Hello, World!` → `sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17`.
+
+## Signature formats (verify in spike 3)
+| `verify` | Request headers | Check |
+|---|---|---|
+| `github` | `X-Hub-Signature-256: sha256=<hex>` | HMAC-SHA256(secret, raw body) |
+| `stripe` | `Stripe-Signature: t=<unix>,v1=<hex>[,v1=...]` | HMAC-SHA256(secret, `"<t>." + body`) matches any `v1`; `t` within 300 s |
+| `slack` | `X-Slack-Signature: v0=<hex>`, `X-Slack-Request-Timestamp` | HMAC-SHA256(secret, `"v0:<ts>:" + body`); `ts` within 300 s. A verified `{"type": "url_verification"}` body is answered with its `challenge` and not delivered |
+| `trello` | `X-Trello-Webhook: <base64>` | base64(HMAC-SHA1(secret, body + callback URL)); the callback URL is `ANNEX_URL_HOOKS + /h/<app>/<hook>` exactly as registered. Trello's `HEAD` on registration gets 200 for a declared hook |
+| `shared-secret` | `X-Annex-Hook-Secret: <secret>` | equal to the secret |
+
+Compare with `hmac.compare_digest` throughout. All of these sign the **raw** body bytes: read `await request.body()` before anything parses it.
+
+## Step 1. Manifest and contract
+```yaml
+type: web                       # webhooks need a web app
+secrets: [TRELLO_SECRET]
+webhooks:                       # optional, at most 10
+  - name: trello                # 2-32 chars, like app names; part of the public URL
+    path: /hooks/trello         # the app's internal endpoint (POST)
+    verify: trello              # trello | stripe | github | slack | shared-secret
+    secret: TRELLO_SECRET       # a name from secrets:, set with `annex secret set`
+```
+- Validation, with fix-it errors: web or web+job only; unique names; `path` starts with `/` and isn't the health path; `verify` in the list; `secret` listed under `secrets:`.
+- New `Manifest.webhooks: list[Webhook] = field(default_factory=list)`. **It needs a default** (rollback loads older manifests, D30), and `from_dict` must rebuild `Webhook` objects, as it does for `Job`.
+- Injected: `ANNEX_HOOK_TOKEN` (env file) and `ANNEX_HOOKS_URL=https://hooks.<domain>[:port]/h/<app>` (environment), when `webhooks` isn't empty. Add both to `INJECTED_ENV`.
+- **`contract.md`:** a "Webhooks" section with:
+  - the manifest block and the public URL scheme;
+  - what Annex verifies, and that the app must check the token with the helper;
+  - "answer 2xx quickly, and dedupe by `X-Annex-Hook-Event`";
+  - retries and the 7 days;
+  - "human only: `annex hooks replay`".
+
+  Update the skill and the templates' `AGENTS.md` the same way.
+
+## Step 2. Provisioning and settings
+- **`scripts/render.py`:** add `hooks` to `PLATFORM_SERVICES` (`ANNEX_HOST_HOOKS`, `ANNEX_URL_HOOKS`). The port suffix matters for Trello's callback URL.
+- **`vm/bootstrap-secrets.sh`:** `mkdir -p $S/hooks`.
+- **`vm/annex_vm.py provision`:** new argument `--hooks '<json>'`, a list of `{name, verify, secret, path}` plus the app's port (validate everything again; stdlib only).
+  - If not empty: `secret_file(sdir / "hook_token", 32)`, put `ANNEX_HOOK_TOKEN` in the env file, and write `secrets/hooks/<app>.json` with `{"token", "port", "hooks": {name: {"verify", "secret": <value from secrets.env>, "path"}}}`. Write it atomically (temp file plus rename), then `as_root(["chown", "-R", "10001:10001", <hooks dir>])` and mode 600, since ops runs as uid 10001.
+  - If empty: delete the app's hooks file and token.
+  - `deprovision`: delete them too.
+  - Never print secret values.
+- **`cli/src/annex_cli/ops.py`:** pass the hooks to provision from the manifest (in `_activate`) and from `deploy.json` (in `secret_set`, with `.get(..., [])` for older records). `annex secret set` therefore refreshes the hooks file when a signing secret changes. The deploy result and `annex status` list each hook's public URL.
+
+## Step 3. ops: receiving
+- **`ops/annex_ops/hooks_verify.py`** (pure): one function per provider, `(secret, headers, body, callback_url, now) -> None`, which raises on failure with the reason; plus `parse_slack_challenge`. Unit tests with fixed vectors for each provider, good and bad, including stale timestamps.
+- **`ops/annex_ops/hooks_config.py`:** loads `/annex/hooks/<app>.json` and re-reads it when its mtime changes, like `directory.py`. A missing app or hook is a 404.
+- **`app.py`:**
+  - **Host guard middleware:** when `Host` (without the port) equals `ANNEX_HOST_HOOKS`, only paths under `/h/` are served; everything else is a 404 `{"error": "not found"}`.
+  - **`POST /h/{app}/{hook}`:**
+    1. read the raw body (1 MB cap → 413);
+    2. config lookup (404);
+    3. rate check (429);
+    4. verify (401, logged as `rejected` with the reason, body not stored);
+    5. Slack challenge → answer it;
+    6. insert `pending` with an allowlist of headers (`Content-Type`, `User-Agent`, `X-GitHub-Event`, `X-GitHub-Delivery`, `X-Slack-Retry-Num`) → 200 `{"ok": true, "id": <id>}`. Signature headers aren't stored or forwarded: Annex has already checked them.
+  - **`HEAD /h/{app}/{hook}`:** 200 if declared (Trello's check), else 404.
+  - Bodies may be any content type: store bytes, never parse except for the Slack challenge.
+- **`compose.yaml`**, ops:
+  - Traefik labels: `traefik.enable`, router `hooks` with rule `Host(\`${ANNEX_HOST_HOOKS}\`) && PathPrefix(\`/h/\`)`, service port 8000, router middlewares `hooks-ratelimit` and `hooks-limit` (define both on the same container);
+  - mount `${ANNEX_DATA_DIR}/secrets/hooks:/annex/hooks:ro`;
+  - environment `ANNEX_HOST_HOOKS` and `ANNEX_URL_HOOKS`.
+- **`config/authelia/configuration.yml.tmpl`:** `- domain: "{{ANNEX_HOST_HOOKS}}"` with `policy: bypass`, first in `rules`.
+
+## Step 4. ops: storage, delivery, alerts
+Append to `db/appdata/annex_ops.sql`:
+```sql
+CREATE TABLE IF NOT EXISTS annex_ops.hook_events (
+  id              bigserial PRIMARY KEY,
+  app             text NOT NULL,
+  hook            text NOT NULL,
+  received_at     timestamptz NOT NULL DEFAULT now(),
+  status          text NOT NULL CHECK (status IN ('pending', 'delivered', 'failed', 'rejected')),
+  content_type    text,
+  headers         jsonb NOT NULL DEFAULT '{}',   -- the allowlisted provider headers only
+  body            bytea,                         -- null for rejected requests
+  attempts        int NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz,
+  delivered_at    timestamptz,
+  last_error      text,
+  replay_of       bigint                         -- set on events created by `annex hooks replay`
+);
+CREATE INDEX IF NOT EXISTS hook_events_due ON annex_ops.hook_events (next_attempt_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS hook_events_app ON annex_ops.hook_events (app, received_at DESC);
+```
+- **`ops/annex_ops/hooks_delivery.py`:** a worker thread started in the `lifespan` with the other threads (respect `OPS_WATCHERS=0`).
+  - Every 2 s it takes due events, oldest first, with at most one in flight per `(app, hook)`, and skips a hook whose older event is still pending (decision 7).
+  - It POSTs the stored body to `http://annex-app-<app>:<port><path>` with a 10 s timeout and headers `Content-Type` (stored), the allowlisted provider headers, `X-Annex-Hook: <hook>`, `X-Annex-Hook-Event: <id, or replay_of when set>`, `X-Annex-Hook-Attempt: <n>` and `X-Annex-Hook-Token: <token>`.
+  - A 2xx means `delivered`. Anything else sets `last_error` (status code and the first 200 characters, or the connection error) and the next attempt by backoff. Once an event is 7 days old it's `failed`.
+  - The backoff and the 7 days come from `Tuning` (`hook_backoff_s`, `hook_max_age_s`, `hook_alert_after_s`), overridable by `tuning.json` like M1.3's thresholds.
+- **Alerts:** new engine inputs `HookFailing(app, hook, since)` and `HookOk(app, hook)` produce the signal `webhook` on `app:<app>` (decision 9). The worker submits them to the M1.3 manager queue; it doesn't write incidents itself. Unit tests in `test_engine.py`, as for the other signals.
+- **Housekeeping** (daily, in the worker): delete events older than 7 days (`received_at`). Events for an app whose hooks file is gone (removed app) become `failed` with "app removed".
+
+## Step 5. CLI and ctl
+- **`ctl hooks [--app X] [--status S] [--limit N] --json`:** metadata only (id, time, app, hook, status, attempts, last error, delivered_at). **`ctl hooks show <id>`:** headers and body (truncated to 64 KB). **`ctl hooks replay <app> [--id N | --failed | --since 1h]`:** inserts copies with `replay_of` set, as `pending`.
+- **`annex hooks <app>`:** the table. **`annex hooks show <id>`** and **`annex hooks replay <app> [--id N|--failed|--since 1h]`:** human only, CLI only, and `replay` asks for confirmation (the app will process the events again).
+- **Runtime helpers.** In every copy of `annex_runtime.py` (keep them identical; check with `diff`):
+  ```python
+  def hook_event(headers) -> HookEvent   # raises HookError(401) unless X-Annex-Hook-Token matches ANNEX_HOOK_TOKEN
+  ```
+  It compares with `hmac.compare_digest` and returns `.hook`, `.event_id` and `.attempt`. Add a JavaScript `hookEvent(req)` to `annex_runtime.js`.
+
+## Step 6. Tests
+- **Fixture `tests/hook-probe/`:** a standard-library Python web app (no pip), owner `sam`, `storage.files: true`, with secrets `TRELLO_SECRET`, `GH_SECRET` and `PLAIN_SECRET`. Three webhooks: `trello` → `/hooks/trello` (`verify: trello`), `gh` → `/hooks/gh` (`verify: github`) and `plain` → `/hooks/plain` (`verify: shared-secret`).
+  - Each endpoint checks the token with `hook_event()` (401 otherwise) and appends `{hook, event_id, attempt, body, remote_user_header}` to `/data/events.jsonl`.
+  - `/healthz` returns 200.
+- **`scripts/test-hooks.sh`**, in the style of the other suites (tunnel, `curl --connect-to`, signatures computed on the Mac with `python3 -c` and `hmac`):
+  1. **Setup:**
+     - `annex secret set hook-probe TRELLO_SECRET=... GH_SECRET=... PLAIN_SECRET=...` with random test values generated by the script and kept only in memory (never printed);
+     - deploy `tests/hook-probe`;
+     - shorten the backoff in `tuning.json` (e.g. 3 s, 5 s, 10 s), restoring it on exit with a `trap`.
+  2. **Trello:**
+     - `HEAD` → 200;
+     - a correctly signed event (callback URL `ANNEX_URL_HOOKS/h/hook-probe/trello`) → 200, and it appears once in `/data/events.jsonl` with `hook: trello`;
+     - `annex hooks hook-probe` shows it `delivered`.
+  3. **Bad signature:** → 401 `signature check failed`, logged as `rejected` with a reason, nothing appended in the app.
+  4. **GitHub and shared-secret:** one good event each → delivered. A Slack-style challenge isn't needed in the fixture, because unit tests cover it.
+  5. **App stopped:**
+     - `docker stop annex-app-hook-probe`, send a signed event → 200 (stored), and `annex hooks` shows it `pending` with attempts > 0;
+     - `docker start` → delivered **exactly once** (count lines with that event id).
+  6. **Replay:** `annex hooks replay hook-probe --id <id> --yes` → delivered again, with the same `X-Annex-Hook-Event` and `attempt` 1.
+  7. **The route is tight:**
+     - on the hooks host, `/v1/me`, `/healthz`, `/internal/gatus` and `/tiles/client-lookup` → 404;
+     - an undeclared hook → 404;
+     - `Remote-User: kaldi-admin` sent with a signed event reaches the app empty;
+     - a request without a session is **not** redirected to login.
+  8. **Limits:** a 2 MB body → 413. Optionally, a burst over the rate limit → 429 (skip if it makes the suite flaky, and say so).
+  9. **Rollback revokes:** deploy a copy of the fixture without `webhooks:` → the hooks file and token are gone and a signed event gets 404. Then redeploy the fixture.
+  10. **Alert:** stop the app longer than `hook_alert_after_s` (tuned short) with a pending event → one `webhook` alert to `sam`. Start it → one "resolved". This is the same Mailpit counting as `test-alerts.sh`; the stop itself also raises `stopped` and `down` on the same incident, so expect **one** alert and one "resolved" in total.
+  11. **Teardown:** `annex remove hook-probe --yes`.
+
+Then run every suite. **Known flake:** wait for Ofelia to be healthy before `test-platform.sh`.
+
+## Step 7. Docs and wrap-up
+- **`docs/decisions.md`:**
+  - decisions 1–11 and the spike results;
+  - the production note: this is the only internet-facing route and will need a WAF or provider IP allowlists, plus its own monitoring;
+  - a resource record. No new containers are expected; note the database size.
+- **`docs/setup.md`:** the `/etc/hosts` line for `hooks.annex.home.arpa` (tagged `# annex`), for Nejc.
+- **`docs/operations.md`:**
+  - the hooks host and URL scheme;
+  - `annex hooks` (list, show, replay);
+  - retention, retries and alerts;
+  - how to rotate a signing secret (`annex secret set`, which refreshes the hooks file).
+- **`README.md`:** the hooks host in "What runs" and `test-hooks.sh` in the scripts table. **`CLAUDE.md`** layout: `tests/hook-probe`.
+- **Commit** once everything passes, in the style of the earlier milestone commits, e.g. `M1.5: incoming webhooks (hooks host, verified, stored, retried)`.
+
+## Pitfalls
+- **Read the raw body before anything parses it.** Every provider signs the bytes, and FastAPI would happily parse JSON for you.
+- **Trello signs the body plus the callback URL,** so the URL must match exactly, including the `:8443` port suffix while testing through the tunnel.
+- **This route has no login:** never let ops serve anything else on this host, and keep responses there terse.
+- **New manifest fields need defaults**, and `from_dict` must rebuild nested objects (D30).
+- **Secrets never go in the database,** the logs, `ctl` output or deploy output. The hooks file is the only copy outside `secrets/apps/<app>`.
+- **`docker restart` doesn't re-read env files;** recreate with `docker compose up -d --force-recreate <svc>`.
+- **`as_root` and `chown` are needed** because ops runs as uid 10001 and the secrets folder belongs to the `annex` user.
+- **Deliveries are at least once.** The fixture has to dedupe or count by event id, and so do real apps.
+
+## Out of scope (later)
+Outgoing webhooks, webhook management in the console (M2.4), provider-specific helpers beyond verification, IP allowlists per provider, and any real provider registration (LAN only).

@@ -80,9 +80,9 @@ class Follower(threading.Thread):
 
 
 # --- Traefik ---------------------------------------------------------------------
-def parse_traefik(line: str):
-    """(app, epoch seconds, status) for an access-log entry of an app's router, else None. Traefik's own log
-    lines share stdout; the access log is JSON, and `RouterName` is `app-<name>@docker` for apps."""
+def access_entry(line: str) -> dict | None:
+    """The parsed access-log entry of an app's router, else None. Traefik's own log lines share stdout; the
+    access log is JSON, and `RouterName` is `app-<name>@docker` for apps."""
     if not line.startswith("{"):
         return None
     try:
@@ -92,11 +92,27 @@ def parse_traefik(line: str):
     router = e.get("RouterName") or ""
     if not router.startswith("app-") or not router.endswith("@docker"):
         return None
+    return e
+
+
+def entry_app(entry: dict) -> str:
+    return entry["RouterName"][4:-len("@docker")]
+
+
+def entry_ts(entry: dict) -> float | None:
+    return docker_api.parse_ts(str(entry["StartUTC"]).replace("+00:00", "Z")) if entry.get("StartUTC") else None
+
+
+def parse_traefik(line: str):
+    """(app, epoch seconds, status) for an access-log entry of an app's router, else None (the alert engine's view)."""
+    e = access_entry(line)
+    if e is None:
+        return None
     status = e.get("DownstreamStatus", e.get("OriginStatus"))
-    ts = docker_api.parse_ts(str(e.get("StartUTC", "")).replace("+00:00", "Z")) if e.get("StartUTC") else None
+    ts = entry_ts(e)
     if not isinstance(status, int) or ts is None:
         return None
-    return router[4:-len("@docker")], ts, status
+    return entry_app(e), ts, status
 
 
 # --- Ofelia ----------------------------------------------------------------------

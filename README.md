@@ -32,7 +32,7 @@ The app contract is in [docs/app-contract.md](docs/app-contract.md), or run `./a
 | Mailpit (caught outgoing email) | `mail` | admins |
 | Gatus (status page and uptime checks) | `status` | everyone signed in |
 
-Plus annex-ops (`ops/`: email and Slack for apps, incidents and alerts, no public route), product-db and appdata-db (Postgres 16), Ofelia (jobs), offen backup (nightly, 7 days) and two Docker socket proxies. Hostnames come from `ANNEX_HOST_PATTERN`, `{name}.annex.home.arpa` by default.
+Plus annex-ops (`ops/`: email and Slack for apps, incidents and alerts, usage stats and the weekly digest, no public route), product-db and appdata-db (Postgres 16), Ofelia (jobs), offen backup (nightly, 7 days) and two Docker socket proxies. Hostnames come from `ANNEX_HOST_PATTERN`, `{name}.annex.home.arpa` by default.
 
 ## Scripts
 | Script | Does |
@@ -47,6 +47,8 @@ Plus annex-ops (`ops/`: email and Slack for apps, incidents and alerts, no publi
 | `scripts/test-apps.sh`, `test-jobs.sh`, `restore-test.sh` | M0.2/M0.3 checks |
 | `scripts/test-rollback.sh` | M1.1 checks: automatic rollback, `annex rollback`, `--with-data` |
 | `scripts/test-notify.sh` | M1.2 checks: email through Mailpit, Slack allowlist, send log, grants |
+| `scripts/test-usage.sh` | M1.4 checks: a scripted session shows the same numbers in `annex usage`, the tiles and Metabase; privacy, retention, restart, digest |
+| `scripts/seed-usage.sh [--clear]` | optional demo prep: 8 weeks of synthetic usage history for the dashboard |
 | `scripts/test-alerts.sh` | M1.3 checks: stop, crash loop, 500 burst, failing job and platform outage each give one alert and one "resolved" (12-20 minutes) |
 | `scripts/reset-demo.sh` | clean demo state: example apps redeployed, other apps removed, checks run (see docs/demo.md) |
 | `scripts/wipe-vm.sh` | removes everything Annex from the VM (asks first) |

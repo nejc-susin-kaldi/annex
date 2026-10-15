@@ -102,6 +102,20 @@ def _tar(folder: Path) -> bytes:
     return buf.getvalue()
 
 
+def _tile_labels(m: mf.Manifest, fields: list[tuple[str, str, str | None]]) -> dict[str, str]:
+    """Homepage's customapi widget on the app's discovery tile: annex-ops answers /tiles/<app> with totals and
+    status (never logins), and Homepage calls it from its own server. (label, field, extra field shown beside it)"""
+    labels = {"homepage.widget.type": "customapi", "homepage.widget.url": f"http://ops:8000/tiles/{m.name}",
+              "homepage.widget.refreshInterval": "60000"}
+    for i, (label, field, extra) in enumerate(fields):
+        labels[f"homepage.widget.mappings[{i}].label"] = label
+        labels[f"homepage.widget.mappings[{i}].field"] = field
+        if extra:
+            labels[f"homepage.widget.mappings[{i}].additionalField.field"] = extra
+            labels[f"homepage.widget.mappings[{i}].additionalField.color"] = "adaptive"
+    return labels
+
+
 def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
     data_dir = r.data
     url = r.url_for(m.name)
@@ -144,10 +158,14 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
             f"traefik.http.routers.app-{m.name}.rule": f"Host(`{r.host_for(m.name)}`)",
             f"traefik.http.services.app-{m.name}.loadbalancer.server.port": str(m.port),
             "homepage.href": url,
+            # annex-ops excludes the health path from usage counts
+            "com.kaldi.annex.healthcheck": m.healthcheck,
         })
+        labels.update(_tile_labels(m, [("Users 7d", "users_7d", "trend"), ("Status", "status", None)]))
     else:
         # job-only apps idle between runs; jobs are executed inside this container
         svc["command"] = ["sleep", "infinity"]
+        labels.update(_tile_labels(m, [("Last run", "last_run", None), ("Status", "status", None)]))
     if m.postgres:
         networks.append("appdata")
     if m.files:
@@ -474,8 +492,20 @@ def _ops_ctl(r: Remote, *args: str) -> dict | list:
         return json.loads(res.stdout.decode().strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError):
         detail = (res.stderr or res.stdout).decode(errors="replace").strip()[-300:]
+        try:  # ctl reports its own errors (an unknown app, a bad option) as {"error": ...} on stderr
+            raise AnnexError(json.loads(detail.splitlines()[-1])["error"]) from None
+        except (IndexError, json.JSONDecodeError, KeyError, TypeError):
+            pass
         raise AnnexError(f"annex-ops isn't answering ({detail or 'is the container running?'}). "
                          f"Check it with: ssh {r.host} docker logs {OPS_CONTAINER}") from None
+
+
+def usage(app: str | None = None, by_user: bool = False) -> dict | list:
+    """Usage of every app (totals), or of one app by day. by_user adds per-login request counts: personal data,
+    for admins (in the prototype, CLI access is SSH access, which is admin)."""
+    if by_user and not app:
+        raise AnnexError("--by-user needs an app: annex usage <app> --by-user")
+    return _ops_ctl(Remote(), "usage", *(["--app", app] if app else []), *(["--by-user"] if by_user else []))
 
 
 def sends(app: str | None = None, limit: int = 50) -> list[dict]:
@@ -653,6 +683,7 @@ def status(app: str) -> dict:
         health = _ops_ctl(r, "app-status", app)
     except AnnexError:
         health = {"health_check": {"state": "unknown", "detail": "annex-ops can't be reached"}, "incident": None, "jobs": []}
+    info["usage"] = health.get("usage")
     info["health_check"] = health["health_check"]
     info["incident"] = health["incident"]
     runs = {j["job"]: j for j in health["jobs"]}

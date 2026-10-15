@@ -72,6 +72,7 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `mail`, `ops`, `s
   - 5xx responses spike (at least 10 in 5 minutes and at least 5 % of requests).
 
   There is one alert per problem however many signals notice it, a reminder after an hour and then daily, and a "resolved" message when it recovers. So keep `/healthz` honest and fast (it must not depend on slow calls), and make a job **exit non-zero when it fails**: a job that catches its own error and exits 0 looks successful. Redeploys and rollbacks don't alert. `annex status <app>` shows the health check, any open incident and the last run of each job; everyone signed in can see every app's up/down on the status page (`status.` host, also a tile on the discovery page). Slack channels in `alerts.to` only work once Slack is connected.
+- **Usage** is counted for you from the front door's access log; the app does nothing. What counts: signed-in page requests to the app. Not counted: health checks, static files (`.js`, `.css`, images, fonts), anonymous requests, and anything a person did not request. Owners see totals on the app's discovery tile ("Users 7d" with a trend, status) and with `annex usage [app]`; Kaldi and the client see all apps in the "Annex usage" Metabase dashboard and a weekly email digest, which flags tools that are rising (graduation candidates) and ones nobody uses (dormant). Logins are never shown there: per-person counts exist only for admins (`annex usage <app> --by-user`), and raw request records, which never contain query strings, are deleted after 30 days.
 - **Secrets** arrive as environment variables at runtime. Never put them in code, the repo or the image.
 - **Never publish ports.** Only Annex's front door does.
 - **Log to stdout/stderr.** Read logs with `annex logs <app>`.
@@ -139,6 +140,7 @@ All data is synthetic. Adding a view is a reviewed change by the platform team, 
 | `annex status <app>` | an app's state, health check, open incident, last job runs, config and recent logs |
 | `annex logs <app> [-n 100] [-f]` | an app's logs |
 | `annex run <app> <job>` | trigger a job now |
+| `annex usage [app]` | users, requests, errors and response times per app (totals; with an app, by day) |
 | `annex sends [app] [-n 50]` | email and Slack send log: every attempt, rejections too, no bodies |
 | `annex releases <app>` | an app's releases, and which can be rolled back to |
 | `annex rollback <app> [--to rN]` | switch back to an earlier release (default: the one before), with that release's manifest |

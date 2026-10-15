@@ -68,6 +68,9 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("-n", "--tail", type=int, default=100)
     s.add_argument("-f", "--follow", action="store_true")
     s.add_argument("--since", help="e.g. 10m, 2h")
+    s = sub.add_parser("usage", help="who uses what: users, requests, errors and response times per app")
+    s.add_argument("app", nargs="?", help="one app, by day (default: every app)")
+    s.add_argument("--by-user", action="store_true", help="per-person request counts (admins only; needs an app)")
     s = sub.add_parser("sends", help="email and Slack send log (every attempt, no message bodies)")
     s.add_argument("app", nargs="?", help="only this app (default: all)")
     s.add_argument("-n", "--limit", type=int, default=50)
@@ -126,6 +129,8 @@ def main(argv: list[str] | None = None) -> None:
                         v = _health_line(v)
                     elif k == "incident":
                         v = _incident_line(v)
+                    elif k == "usage":
+                        v = "not recorded" if not v else f"{v['users_7d']} user(s) in the last 7 days ({v['trend']}), {v['requests_7d']} requests"
                     print(f"{k:12} {v}")
                 for j in jobs:
                     print(f"{'job ' + j['job']:12} {_job_line(j)}")
@@ -134,6 +139,32 @@ def main(argv: list[str] | None = None) -> None:
             if a.follow:
                 sys.exit(ops.follow_logs(a.app, a.tail))
             print(ops.logs(a.app, a.tail, a.since), end="")
+        elif a.cmd == "usage":
+            res = ops.usage(a.app, a.by_user)
+            if emit:
+                emit(res)
+            elif not a.app:
+                for x in res:
+                    x["users 7d"], x["requests 7d"] = str(x["users_7d"]), str(x["requests_7d"])
+                    x["errors"] = f"{x['error_rate_7d'] * 100:.1f}%"
+                    x["p95"] = f"{x['p95_7d']} ms" if x["p95_7d"] is not None else "-"
+                print(_table(res, ["app", "users 7d", "trend", "requests 7d", "errors", "p95", "signal"]))
+                print("Last 7 days. Per app by day: annex usage <app>")
+            else:
+                app = res["app"]
+                if app:
+                    print(f"{a.app}: {app['users_7d']} user(s) in the last 7 days ({app['trend']}), {app['users_30d']} in 30 days, "
+                          f"{app['requests_7d']} requests, signal: {app['signal'] or 'none'}")
+                elif res["removed"]:
+                    print(f"{a.app} has been removed; its history is kept.")
+                for d in res["days"]:
+                    d["users"], d["requests"], d["errors"] = str(d["users"]), str(d["requests"]), str(d["errors"])
+                    d["p95"] = f"{d['p95_ms']} ms" if d["p95_ms"] is not None else "-"
+                    d["day"] = d["day"] + (" (synthetic)" if d["synthetic"] else "")
+                print(_table(res["days"], ["day", "users", "requests", "errors", "p95"]))
+                if a.by_user:
+                    print("\nPer-person usage is personal data: for admins only, don't share it. Last 30 days:")
+                    print(_table([{"login": u["login"], "requests": str(u["requests"])} for u in res["by_user"]], ["login", "requests"]))
         elif a.cmd == "sends":
             rows = ops.sends(a.app, a.limit)
             if emit:
