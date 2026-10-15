@@ -100,7 +100,7 @@ Without this, Annex works but Slack posts return a clear "Slack isn't connected"
    ```bash
    scripts/push.sh --extras
    ```
-   If the push doesn't restart ops (it doesn't when nothing else changed), run `ssh annex docker restart annex-ops-1`.
+   Compose recreates ops when the token file appears. If `ctl info` (next step) still says `False`, force it with `ssh annex 'cd /srv/annex/platform && docker compose up -d --force-recreate ops'`. A plain `docker restart` does **not** re-read the env file.
 5. Check: `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl info` should say `slack_connected: True`, and `scripts/test-notify.sh` then posts for real to `#finance-reports`.
 
 Undo (Annex goes back to "not connected"):
@@ -108,6 +108,6 @@ Undo (Annex goes back to "not connected"):
 ssh annex rm /srv/annex/secrets/slack.env
 ```
 ```bash
-ssh annex docker restart annex-ops-1
+ssh annex 'cd /srv/annex/platform && docker compose up -d --force-recreate ops'
 ```
 Then delete the Slack app in the workspace (*Basic Information* → *Delete App*), or the test workspace. See `docs/teardown.md`.
