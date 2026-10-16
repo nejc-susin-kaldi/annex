@@ -51,3 +51,35 @@ class Sql(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Audit(unittest.TestCase):
+    """The audit rows made from releases.jsonl lines (M2.5)."""
+
+    def test_a_deploy(self):
+        a = vm.release_audit("x", LIVE)
+        self.assertEqual((a["action"], a["actor"], a["app"], a["ts"]), ("deploy", "sam@mac", "x", "2026-10-16T12:20:00+0200"))
+        self.assertEqual(a["details"], {"release": 3, "via": "cli", "git": "abc"})
+        self.assertEqual(a["ref"], "release:x:2026-10-16T12:20:00+0200:3")
+
+    def test_a_failed_deploy_says_why_and_where_it_went_back_to(self):
+        a = vm.release_audit("x", {**LIVE, "result": "failed", "error": "GET /healthz did not return 200", "rolled_back_to": 2})
+        self.assertEqual(a["action"], "deploy.failed")
+        self.assertEqual((a["details"]["error"], a["details"]["rolled_back_to"]), ("GET /healthz did not return 200", 2))
+
+    def test_a_rollback_with_data_and_a_failed_one(self):
+        a = vm.release_audit("x", {**LIVE, "via": "mcp", "rollback": {"from": 5, "to": 3, "with_data": True}})
+        self.assertEqual((a["action"], a["details"]["from"], a["details"]["to"], a["details"]["with_data"], a["details"]["via"]), ("rollback", 5, 3, True, "mcp"))
+        self.assertEqual(vm.release_audit("x", {**LIVE, "result": "failed", "rollback": {"from": 5, "to": 3, "with_data": False}})["action"], "rollback.failed")
+
+    def test_a_line_without_the_essentials_has_no_audit_row(self):
+        self.assertIsNone(vm.release_audit("x", {"release": 1}))
+
+    def test_the_insert_is_idempotent_and_quotes_safely(self):
+        sql = vm.audit_sql([vm.audit_row("secret.set", "sam@mac", "x", {"names": ["A", "$annexjson$; DROP"]})])
+        self.assertIn("ON CONFLICT (ref) DO NOTHING", sql)
+        self.assertNotIn("$annexjson$[", sql)
+
+    def test_secret_values_have_no_place_in_the_row(self):
+        row = vm.audit_row("secret.set", "sam@mac", "x", {"names": ["API_KEY"]})
+        self.assertEqual(row["details"], {"names": ["API_KEY"]})

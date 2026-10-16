@@ -216,3 +216,13 @@ def test_a_long_python_stack_keeps_its_end_where_it_was_raised_and_node_keeps_it
     node = "Error: x\n" + "    at fn (/app/a.js:1:1)\n" * 1000
     q = ls.parse_app_line(json.dumps({"level": "error", "msg": "m", "stack": node}))
     assert q.fields["stack"].startswith("Error: x") and q.fields["stack"].endswith("[truncated]")
+
+
+def test_authelia_at_debug_keeps_only_successful_sign_ins():
+    ok = 'time="x" level=debug msg="Successful 1FA authentication attempt made by user \'sam\'" method=POST path=/api/firstfactor remote_ip=172.21.0.1'
+    mark = 'time="x" level=debug msg="Mark 1FA authentication attempt made by user \'sam\'" method=POST path=/api/firstfactor'
+    chatter = ['time="x" level=debug msg="Checking the authentication backend for an updated profile for user" username=sam',
+               'time="x" level=debug msg="Check authorization of subject username=sam groups=builders ip=127.0.0.1 and object https://x/ (method GET)."']
+    kept = ls.parse_authelia_line(ok)
+    assert kept is not None and kept.level == "debug" and "user 'sam'" in kept.msg
+    assert ls.parse_authelia_line(mark) is None and all(ls.parse_authelia_line(c) is None for c in chatter)

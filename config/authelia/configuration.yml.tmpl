@@ -15,7 +15,9 @@ server:
           - period: 1h
             requests: 100
 log:
-  level: info
+  # debug, because Authelia logs a successful sign-in only at debug ("Successful 1FA authentication attempt made by user");
+  # annex-ops ships only the sign-in lines from it (M2.5, D71). Failed attempts and errors are logged at any level.
+  level: debug
 ntp:
   disable_startup_check: true
 totp:

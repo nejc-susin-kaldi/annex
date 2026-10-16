@@ -97,6 +97,13 @@ def log_settings():
     return _settings(LogSettings)
 
 
+def audit_settings():
+    """Audit trail: scan interval, gateway bucket, retention (audit.AuditSettings)."""
+    from .audit import AuditSettings
+
+    return _settings(AuditSettings)
+
+
 def error_settings():
     """Error groups: scan interval, quiet period, emails per hour (errors_run.ErrorSettings)."""
     from .errors_run import ErrorSettings

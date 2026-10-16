@@ -274,3 +274,30 @@ GRANT SELECT ON annex_ops.logs, annex_ops.releases, annex_ops.error_groups, anne
   annex_ops.usage_apps, annex_ops.app_seen, annex_ops.app_signals TO annex_console;
 GRANT SELECT (id, app, hook, received_at, status, content_type, attempts, next_attempt_at, delivered_at, last_error, replay_of)
   ON annex_ops.hook_events TO annex_console;
+
+-- --- M2.5: the audit trail ---------------------------------------------------------------------------------
+-- Who did what, to which app, and which data it read. Kept audit_retention_days (365). Written by annex_vm.py (deploys,
+-- rollbacks, restores, secrets set (names only), apps removed, user accounts) and by annex-ops (sign-ins from Authelia's
+-- log, gateway reads as aggregates of the stored gateway lines, webhook events: metadata only). Email and Slack sends are
+-- not copied: the view below reads them from `sends`. `ref` makes a copy idempotent (a re-read of a source adds nothing).
+CREATE TABLE IF NOT EXISTS annex_ops.audit_events (
+  id      bigserial PRIMARY KEY,
+  ts      timestamptz NOT NULL DEFAULT now(),
+  actor   text,                          -- a login, user@host (the CLI: not verified, D58), app:<name>, webhook:<hook>
+  app     text,
+  action  text NOT NULL,
+  details jsonb NOT NULL DEFAULT '{}',
+  ref     text UNIQUE                    -- the source row this was made from, if any
+);
+CREATE INDEX IF NOT EXISTS audit_events_ts ON annex_ops.audit_events (ts DESC);
+CREATE INDEX IF NOT EXISTS audit_events_app_ts ON annex_ops.audit_events (app, ts DESC);
+CREATE INDEX IF NOT EXISTS audit_events_action_ts ON annex_ops.audit_events (action, ts DESC);
+-- the timeline: the audit rows and every email and Slack send (never a body)
+CREATE OR REPLACE VIEW annex_ops.audit_timeline AS
+SELECT ts, actor, app, action, details FROM annex_ops.audit_events
+UNION ALL
+SELECT ts, CASE WHEN app = '_platform' THEN 'annex-ops' ELSE 'app:' || app END, NULLIF(app, '_platform'),
+       channel || '.' || status,
+       jsonb_strip_nulls(jsonb_build_object('recipients', recipients, 'subject', subject, 'error', error))
+FROM annex_ops.sends;
+GRANT SELECT ON annex_ops.audit_events, annex_ops.audit_timeline TO annex_console;

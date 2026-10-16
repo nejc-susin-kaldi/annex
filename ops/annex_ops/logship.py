@@ -171,6 +171,7 @@ LOGFMT = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|\S*)')
 SIGNIN = re.compile(r"authentication|1FA|2FA|identity verification|password|reset|forbidden to user|details for user|TOTP|"
                     r"WebAuthn|session|sign", re.I)
 AUTHELIA_NOISE = re.compile(r"<anonymous>|Reloaded successfully|Watching file for changes")
+AUTHELIA_DEBUG_KEPT = re.compile(r"^Successful (?:1FA|2FA) authentication attempt")  # the only debug lines wanted: successful sign-ins
 
 
 def parse_logfmt(line: str) -> dict[str, str]:
@@ -181,15 +182,18 @@ def parse_logfmt(line: str) -> dict[str, str]:
 
 
 def parse_authelia_line(raw: str) -> Parsed | None:
-    """Authelia's sign-in lines: failed attempts, unknown users, access denied to a known user, password resets,
-    and every warning or error. Not the 'not authorized to user <anonymous>' line Gatus's front-door check
+    """Authelia's sign-in lines: successful and failed attempts, unknown users, access denied to a known user,
+    password resets, and every warning or error. Not the 'not authorized to user <anonymous>' line Gatus's front-door check
     causes every minute, nor the user file reloads."""
     kv = parse_logfmt(clean(raw))
     msg = kv.get("msg")
     if not msg or AUTHELIA_NOISE.search(msg):
         return None
     level = normalise_level(kv.get("level"))
-    if level not in ("warn", "error") and not SIGNIN.search(msg):
+    if level == "debug":  # Authelia runs at debug to log successful sign-ins (M2.5); everything else at that level is noise
+        if not AUTHELIA_DEBUG_KEPT.match(msg):
+            return None
+    elif level not in ("warn", "error") and not SIGNIN.search(msg):
         return None
     fields = {k: v for k, v in kv.items() if k not in ("time", "level", "msg")}
     return Parsed(level, truncate(scrub_text(msg), MAX_MSG), None, bound_fields(scrub_value(fields)))

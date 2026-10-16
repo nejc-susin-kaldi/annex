@@ -12,7 +12,7 @@ if [ -z "$yes" ]; then
   read -r -p "Replace $app's database and files with ${archive:-the newest backup}? Type the app name: " answer
   [ "$answer" = "$app" ] || { echo "Aborted."; exit 1; }
 fi
-vm "python3 $DATA/platform/vm/annex_vm.py restore $app ${archive:+--archive $archive}" | python3 -c '
+vm "python3 $DATA/platform/vm/annex_vm.py restore $app --actor \"${ANNEX_USER:-$(whoami)@$(hostname -s)}\" ${archive:+--archive $archive}" | python3 -c '
 import json, sys
 r = json.load(sys.stdin)
 if not r.get("ok"): sys.exit("restore failed: " + r.get("error", ""))

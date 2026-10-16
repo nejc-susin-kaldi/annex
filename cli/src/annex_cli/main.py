@@ -117,6 +117,12 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("errors", help="the kinds of error seen in logs (server, browser, jobs): active, or quiet since a fix")
     s.add_argument("app", nargs="?", help="one app (default: all)")
     s.add_argument("--state", choices=["active", "quiet"])
+    s = sub.add_parser("audit", help="the audit trail: who deployed, what data was read, what was sent, who changed a secret or an account (admins)")
+    s.add_argument("--app")
+    s.add_argument("--since", help="e.g. 30m, 2h, 7d")
+    s.add_argument("--action", help="deploy, rollback, secret, app, user, signin, gateway, email, slack, webhook or data (a prefix of the action)")
+    s.add_argument("--actor")
+    s.add_argument("-n", "--limit", type=int, default=100)
     s = sub.add_parser("usage", help="who uses what: users, requests, errors and response times per app")
     s.add_argument("app", nargs="?", help="one app, by day (default: every app)")
     s.add_argument("--by-user", action="store_true", help="per-person request counts (admins only; needs an app)")
@@ -246,6 +252,16 @@ def main(argv: list[str] | None = None) -> None:
                 print(_table(res, ["app", "state", "kind", "title", "seen", "release", "user"]))
                 for g in res[:3]:
                     print(f"  e.g. {g['sample']}" + (f"   (annex logs {g['app']} --request {g['request_id']})" if g["request_id"] else ""))
+        elif a.cmd == "audit":
+            res = ops.audit(a.app, a.since, a.action, a.actor, a.limit)
+            if emit:
+                emit(res)
+            else:
+                for r in res:
+                    r["when"] = r["ts"][:19].replace("T", " ")
+                    r["what"] = " ".join(f"{k}={v if isinstance(v, str) else json.dumps(v)}" for k, v in (r["details"] or {}).items())
+                print(_table(res, ["when", "actor", "app", "action", "what"]))
+                print("Admins only: the trail holds logins and the recipients of emails. Times are UTC.")
         elif a.cmd == "usage":
             res = ops.usage(a.app, a.by_user)
             if emit:

@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from . import config, db, digest, directory, errors_run, hooks_store, incidents, logship, logstore, sends, usage
+from . import audit, config, db, digest, directory, errors_run, hooks_store, incidents, logship, logstore, sends, usage
 from .errors import OpsError
 
 
@@ -125,6 +125,13 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--state", choices=["active", "quiet"])
     s.add_argument("--limit", type=int, default=100)
     s.add_argument("--json", action="store_true")
+    s = sub.add_parser("audit", help="the audit trail, newest first: deploys, rollbacks, secrets, accounts, sign-ins, gateway reads, sends")
+    s.add_argument("--app")
+    s.add_argument("--since", help="e.g. 30m, 2h, 7d")
+    s.add_argument("--action", help="e.g. deploy, rollback, secret, user, signin, gateway, email, webhook (a prefix of the action)")
+    s.add_argument("--actor")
+    s.add_argument("--limit", type=int, default=100)
+    s.add_argument("--json", action="store_true")
     s = sub.add_parser("logs-drain", help="store a container's unread log lines now (before Docker replaces it)")
     s.add_argument("container")
     s.add_argument("--timeout", type=float, default=5.0)
@@ -165,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
             data, cols = logs_query(a), []
         elif a.cmd == "errors":
             data, cols = errors_run.list_groups(a.app, a.state, a.limit), []
+        elif a.cmd == "audit":
+            data, cols = audit.timeline(a.app, parse_since(a.since) if a.since else None, a.action, a.actor, a.limit), []
         elif a.cmd == "logs-drain":
             data, cols = logship.drain(a.container, a.timeout), []
         elif a.cmd == "logs-stats":

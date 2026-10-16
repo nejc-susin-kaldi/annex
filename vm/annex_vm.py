@@ -351,6 +351,7 @@ def cmd_secret_set(a: argparse.Namespace) -> None:
         current[k] = v
         keys.append(k)
     write_kv(path, current)
+    audit("secret.set", a.actor, a.app, {"names": keys})  # names only, never values
     out({"ok": True, "set": keys, "all_keys": sorted(current)})
 
 
@@ -383,6 +384,7 @@ def cmd_deprovision(a: argparse.Namespace) -> None:
         removed += ["database", "files", "release history", "snapshots", "secrets"]
     shutil.rmtree(DATA / "deploy" / app, ignore_errors=True)
     removed.append("deploy files")
+    audit("app.removed", a.actor, app, {"kept_data": a.keep_data})
     out({"ok": True, "removed": removed, "kept_data": a.keep_data})
 
 
@@ -449,6 +451,7 @@ def cmd_restore(a: argparse.Namespace) -> None:
         subprocess.run(["docker", "start", f"annex-app-{app}"], capture_output=True)
         shutil.rmtree(staging, ignore_errors=True)
         maintenance(app, None)
+    audit("data.restored", a.actor, app, {"archive": archive.name, "database": have_dump, "files": n_files})
     out({"ok": True, "app": app, "archive": archive.name, "database": have_dump, "files": n_files})
 
 
@@ -586,28 +589,74 @@ def releases_sql(rows: list[dict]) -> str:
 
 def cmd_release_record(a: argparse.Namespace) -> None:
     """One releases.jsonl line on stdin."""
-    row = release_row(a.app, json.loads(sys.stdin.read()))
+    rel = json.loads(sys.stdin.read())
+    row = release_row(a.app, rel)
     if row is None:
         raise Fail("release-record: the line has no release, image, result or deployed_at")
     if not ops_db_exists():
         raise Fail("annex-ops isn't set up on this server: run scripts/bootstrap.sh and scripts/push.sh")
-    psql(APPDATA_DB, OPS_DB, releases_sql([row]))
+    psql(APPDATA_DB, OPS_DB, releases_sql([row]) + "\n" + audit_sql([release_audit(a.app, rel)]))  # one call: the release and its audit row
     out({"ok": True, "recorded": 1})
 
 
 def cmd_release_backfill(_: argparse.Namespace) -> None:
-    rows = []
+    rows, events = [], []
     for f in sorted((DATA / "apps").glob("*/releases.jsonl")):
         for line in f.read_text().splitlines():
             if line.strip():
-                row = release_row(f.parent.name, json.loads(line))
+                rel = json.loads(line)
+                row = release_row(f.parent.name, rel)
                 if row:
                     rows.append(row)
+                    events.append(release_audit(f.parent.name, rel))
     if rows:
         if not ops_db_exists():
             raise Fail("annex-ops isn't set up on this server: run scripts/bootstrap.sh and scripts/push.sh")
-        psql(APPDATA_DB, OPS_DB, releases_sql(rows))
+        psql(APPDATA_DB, OPS_DB, releases_sql(rows) + "\n" + audit_sql(events))
     out({"ok": True, "found": len(rows)})
+
+
+# --- the audit trail (M2.5) ----------------------------------------------------------------------------------------
+# annex_ops.audit_events: who did what. Written here for everything this script does, best effort (an unreachable audit
+# table must not stop a deploy or an admin's change: it is said on stderr), and by annex-ops for the rest.
+def audit_row(action: str, actor: str | None, app: str | None = None, details: dict | None = None, ts: str | None = None,
+              ref: str | None = None) -> dict:
+    return {"ts": ts, "actor": actor, "app": app, "action": action, "details": details or {}, "ref": ref}
+
+
+def release_audit(app: str, rel: dict) -> dict | None:
+    """The audit row of one releases.jsonl line (pure): deploy, deploy.failed, rollback or rollback.failed."""
+    row = release_row(app, rel)
+    if row is None:
+        return None
+    rb = rel.get("rollback")
+    failed = rel["result"] == "failed"
+    action = ("rollback" if rb else "deploy") + (".failed" if failed else "")
+    git = (rel.get("git") or {}).get("sha")
+    details = {"release": rel["release"], "via": rel.get("via"), "git": git}
+    if rb:
+        details.update({"from": rb["from"], "to": rb["to"], "with_data": bool(rb.get("with_data"))})
+    if failed:
+        details["error"] = (rel.get("error") or "")[:300]
+        if rel.get("rolled_back_to") is not None:
+            details["rolled_back_to"] = rel["rolled_back_to"]
+    return audit_row(action, rel.get("deployed_by"), app, {k: v for k, v in details.items() if v is not None}, rel["deployed_at"],
+                     f"release:{app}:{rel['deployed_at']}:{rel['release']}")
+
+
+def audit_sql(rows: list[dict]) -> str:
+    return ("INSERT INTO annex_ops.audit_events (ts, actor, app, action, details, ref) SELECT coalesce(r.ts, now()), r.actor, r.app, "
+            "r.action, r.details, r.ref FROM jsonb_to_recordset(" + dollar_quote(json.dumps(rows)) +
+            "::jsonb) AS r(ts timestamptz, actor text, app text, action text, details jsonb, ref text) ON CONFLICT (ref) DO NOTHING;")
+
+
+def audit(action: str, actor: str | None, app: str | None = None, details: dict | None = None) -> None:
+    """Record one audit event; never raises (the operation it describes has already happened)."""
+    try:
+        if ops_db_exists():
+            psql(APPDATA_DB, OPS_DB, audit_sql([audit_row(action, actor or "unknown", app, details)]))
+    except Exception as e:  # noqa: BLE001
+        print(f"annex_vm: couldn't write the audit event {action}: {e}", file=sys.stderr)
 
 
 # --- Annex's own user accounts (Authelia's file backend, D57) ----------------------------------------------------
@@ -795,6 +844,7 @@ def cmd_users_add(a: argparse.Namespace) -> None:
         users[a.login] = {"disabled": False, "displayname": a.name, "email": a.email, "password": digest,
                           "groups": groups}
         save_users(users)
+    audit("user.added", a.actor, None, {"login": a.login, "groups": groups, "invited": not a.print_password})
     res = {"ok": True, "user": public_user(a.login, users[a.login])}
     if a.print_password:
         res["password"] = password  # human-only, printed once by the CLI (the only secret this script prints)
@@ -828,6 +878,9 @@ def cmd_users_set(a: argparse.Namespace) -> None:
         if a.enable:
             u["disabled"] = False
         save_users(users)
+    audit("user.changed", a.actor, None, {"login": a.login, "set": [k for k in ("name", "email", "groups") if getattr(a, k) is not None]
+                                          + (["disabled"] if a.disable else []) + (["enabled"] if a.enable else []),
+                                          **({"groups": groups} if groups is not None else {})})
     out({"ok": True, "user": public_user(a.login, users[a.login])})
 
 
@@ -838,6 +891,7 @@ def cmd_users_remove(a: argparse.Namespace) -> None:
             raise Fail(f"no user {a.login!r}. See: annex users list")
         del users[a.login]
         save_users(users)
+    audit("user.removed", a.actor, None, {"login": a.login})
     out({"ok": True, "removed": a.login,
          "note": "apps they own keep running; give them a new owner in annex.yaml and deploy again"})
 
@@ -854,9 +908,11 @@ def cmd_users_reset(a: argparse.Namespace) -> None:
             password, u["password"] = random_password()
             save_users(users)
             demo = update_demo_password(a.login, password)
+            audit("user.reset", a.actor, None, {"login": a.login, "how": "password printed once"})
             out({"ok": True, "login": a.login, "password": password, "demo_password_updated": demo})
             return
     send_reset_email(a.login)
+    audit("user.reset", a.actor, None, {"login": a.login, "how": "reset link emailed"})
     out({"ok": True, "login": a.login, "reset_sent_to": u.get("email", "")})
 
 
@@ -883,17 +939,20 @@ def main() -> None:
     s.set_defaults(fn=cmd_provision)
     s = sub.add_parser("secret-set")
     s.add_argument("app")
+    s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
     s.set_defaults(fn=cmd_secret_set)
     s = sub.add_parser("secret-keys")
     s.add_argument("app")
     s.set_defaults(fn=cmd_secret_keys)
     s = sub.add_parser("deprovision")
     s.add_argument("app")
+    s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
     s.add_argument("--keep-data", action="store_true")
     s.set_defaults(fn=cmd_deprovision)
     sub.add_parser("backup-now").set_defaults(fn=cmd_backup_now)
     s = sub.add_parser("restore")
     s.add_argument("app")
+    s.add_argument("--actor", default=os.environ.get("ANNEX_ACTOR", "unknown"), help="who is doing this, for the audit trail")
     s.add_argument("--archive")
     s.set_defaults(fn=cmd_restore)
     s = sub.add_parser("snapshot")
@@ -921,6 +980,7 @@ def main() -> None:
     sub.add_parser("users-sync").set_defaults(fn=cmd_users_sync)
     s = sub.add_parser("users-add")
     s.add_argument("login")
+    s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
     s.add_argument("--name", required=True)
     s.add_argument("--email", required=True)
     s.add_argument("--groups", default="users")
@@ -928,6 +988,7 @@ def main() -> None:
     s.set_defaults(fn=cmd_users_add)
     s = sub.add_parser("users-set")
     s.add_argument("login")
+    s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
     s.add_argument("--name")
     s.add_argument("--email")
     s.add_argument("--groups")
@@ -936,9 +997,11 @@ def main() -> None:
     s.set_defaults(fn=cmd_users_set)
     s = sub.add_parser("users-remove")
     s.add_argument("login")
+    s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
     s.set_defaults(fn=cmd_users_remove)
     s = sub.add_parser("users-reset")
     s.add_argument("login")
+    s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
     s.add_argument("--print-password", action="store_true")
     s.set_defaults(fn=cmd_users_reset)
     a = p.parse_args()

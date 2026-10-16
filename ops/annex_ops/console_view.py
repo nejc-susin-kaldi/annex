@@ -98,8 +98,8 @@ footer{max-width:70rem;margin:2rem auto;padding:0 1rem;color:var(--muted);font-s
 
 
 def page(title: str, who: Who, body: str, active: str = "") -> str:
-    nav = "".join(f'<a href="{href}"{" style=\"font-weight:700\"" if name == active else ""}>{label}</a>'
-                  for name, href, label in (("fleet", "/", "Apps"), ("status", "/status", "Status")))
+    links = [("fleet", "/", "Apps"), ("status", "/status", "Status")] + ([("audit", "/audit", "Audit")] if who.admin else [])
+    nav = "".join(f'<a href="{href}"{" style=\"font-weight:700\"" if name == active else ""}>{label}</a>' for name, href, label in links)
     role = "admin" if who.admin else "signed in"
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
             f"<title>{e(title)} · Annex console</title><style>{STYLE}</style></head><body>"
@@ -273,3 +273,24 @@ def logs_page(who: Who, app: str, rows: list[dict], f: dict, older: str | None) 
     cmd = "annex logs " + app + "".join(f" --{k} {v}" for k, v in f.items() if v and k not in ("source",) and not (k == "since" and not v))
     body.append(readonly_note(cmd))
     return page(f"{app} logs", who, "".join(body), "fleet")
+
+
+def audit_page(who: Who, rows: list[dict], f: dict) -> str:
+    """The audit trail (admins only): who did what, to which app, which data it read, what was sent."""
+    sel = lambda cur, opts: "".join(f'<option value="{o}"{" selected" if o == cur else ""}>{o or "any"}</option>' for o in opts)  # noqa: E731
+    form = (f'<form class="filters" method="get" action="/audit"><input name="app" placeholder="app" value="{e(f.get("app") or "")}" size="14">'
+            f'<select name="action">{sel(f.get("action") or "", ["", "deploy", "rollback", "secret", "app", "user", "signin", "gateway", "email", "slack", "webhook", "data"])}</select>'
+            f'<input name="actor" placeholder="actor" value="{e(f.get("actor") or "")}" size="16">'
+            f'<select name="since">{sel(f.get("since") or "", ["", "1h", "1d", "7d", "30d", "365d"])}</select><button>Show</button></form>')
+
+    def detail(d: dict) -> str:
+        return " ".join(f"{k}={_j(x) if not isinstance(x, str) else x}" for k, x in (d or {}).items())
+
+    trs = [[r["ts"][:19].replace("T", " ") + "Z", r["actor"] or "", r["app"] or "", badge(r["action"]) if r["action"].endswith(("failed", "rejected")) else r["action"],
+            detail(r["details"])] for r in rows]
+    body = ["<h1>Audit trail</h1>",
+            '<p class="muted">Who did what, to which app, which data it read, what was sent. Kept a year. For admins: it holds logins and the recipients of emails. '
+            "Times are UTC. A CLI actor is user@host as the CLI reports it (not verified yet, D58); gateway reads are summed per app, view and hour.</p>",
+            form, table(["When", "Actor", "App", "Action", "Details"], trs, "nothing matches"),
+            readonly_note("annex audit --since 7d", "annex audit --app <app> --action deploy")]
+    return page("Audit", who, "".join(map(str, body)), "audit")

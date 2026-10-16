@@ -566,6 +566,16 @@ def errors(app: str | None = None, state: str | None = None) -> list[dict]:
     return _ops_ctl(Remote(), "errors", *([app] if app else []), *(["--state", state] if state else []))
 
 
+def audit(app: str | None = None, since: str | None = None, action: str | None = None, actor: str | None = None,
+          limit: int = 100) -> list[dict]:
+    """The audit trail, newest first: deploys, rollbacks, restores, secrets set (names only), apps removed, accounts,
+    sign-ins, reads of product data (per app, view and hour), emails, Slack posts and webhook events. Admins, by
+    convention (in the prototype CLI access is SSH access)."""
+    return _ops_ctl(Remote(), "audit", *(["--app", app] if app else []), *(["--since", since] if since else []),
+                    *(["--action", action] if action else []), *(["--actor", actor] if actor else []),
+                    "--limit", str(max(1, min(int(limit), 2000))))
+
+
 def hooks(app: str | None = None, status: str | None = None, limit: int = 50) -> list[dict]:
     """Incoming webhook events, newest first: metadata only (never a body)."""
     return _ops_ctl(Remote(), "hooks", "list", *(["--app", app] if app else []), *(["--status", status] if status else []),
@@ -855,7 +865,7 @@ def secret_set(app: str, pairs: list[str]) -> dict:
         if not sep or not mf.KEY_RE.match(k):
             raise AnnexError(f"{k!r}: use KEY=VALUE with an UPPER_SNAKE_CASE key")
     r = Remote()
-    res = r.vm("secret-set", app, input="\n".join(pairs) + "\n")
+    res = r.vm("secret-set", app, "--actor", _who(), input="\n".join(pairs) + "\n")
     record = _record(r, app)
     if record:
         undeclared = [k for k in res["set"] if k not in record.get("secrets", [])]
@@ -888,7 +898,7 @@ def remove(app: str, keep_data: bool = False) -> dict:
     r.run(f"if [ -f {d}/compose.yaml ]; then cd {d} && docker compose down --remove-orphans 2>&1; "
           f"else docker rm -f {container(app)} >/dev/null 2>&1 || true; fi; "
           f"docker image ls -q annex-app/{app} | xargs -r docker rmi -f >/dev/null 2>&1 || true")
-    res = r.vm("deprovision", app, *(["--keep-data"] if keep_data else []))
+    res = r.vm("deprovision", app, "--actor", _who(), *(["--keep-data"] if keep_data else []))
     if record and record.get("schedule"):
         r.run(f"docker restart {OFELIA} >/dev/null")
     return res
@@ -897,7 +907,7 @@ def remove(app: str, keep_data: bool = False) -> dict:
 def users(action: str, login: str | None = None, **opts) -> dict:
     """Annex's own user accounts (human only, not over MCP; D57). action: list, add, set, remove or reset.
     Options are passed on as flags: name="x" -> --name x, print_password=True -> --print-password."""
-    args = [f"users-{action}", *([login] if login else [])]
+    args = [f"users-{action}", *([login] if login else []), *(["--actor", _who()] if action not in ("list", "sync") else [])]
     for key, value in opts.items():
         if value is None or value is False:
             continue

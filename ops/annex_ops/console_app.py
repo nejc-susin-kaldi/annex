@@ -9,6 +9,7 @@ Slack token and no secret of any app, and no route changes anything.
   GET /                  the apps you own (admins: all, with flags and the platform)
   GET /apps/<app>        status, releases, usage, errors, warnings, config: the owner and admins
   GET /apps/<app>/logs   search the stored logs: the owner and admins
+  GET /audit             the audit trail: admins only
 """
 import re
 from datetime import datetime
@@ -17,7 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import console_data as data, console_view as v, db
+from . import audit, console_data as data, console_view as v, db
 from .errors import OpsError
 
 app = FastAPI(title="annex-console", docs_url=None, redoc_url=None, openapi_url=None)
@@ -122,3 +123,16 @@ def logs(name: str, request: Request):
         from urllib.parse import urlencode
         older = f"/apps/{name}/logs?{urlencode(params)}"
     return reply(v.logs_page(who, name, rows, q, older))
+
+
+@app.get("/audit")
+def audit_page(request: Request):
+    who = signed_in(request)
+    if who is None:
+        return NOT_SIGNED_IN
+    if not who.admin:
+        return reply(v.forbidden(who, "the audit trail"), 403)
+    q = {k: request.query_params.get(k, "").strip()[:100] for k in ("app", "action", "actor", "since")}
+    secs = {"1h": 3600, "1d": 86400, "7d": 604800, "30d": 2592000, "365d": 31536000}.get(q["since"])
+    rows = audit.timeline(q["app"] or None, secs, q["action"] or None, q["actor"] or None, 300)
+    return reply(v.audit_page(who, rows, q))

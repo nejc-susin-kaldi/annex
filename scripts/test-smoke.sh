@@ -60,6 +60,8 @@ hasnt "no search text in the app's log" "novak" "$lines"
 stored=""
 for _ in 1 2 3 4 5 6 7 8; do stored=$("$ANNEX" logs client-lookup --request "$rid" 2>&1) && grep -q "request" <<<"$stored" && break; sleep 2; done
 has "annex logs --request finds the request in the stored logs" " r$(py 'd["release"]' <<<"$("$ANNEX" --json status client-lookup)" | tr -d r) info  request" "$stored"
+# the audit trail (M2.5): the deploy just made is in it, with who did it
+expect "annex audit shows this deploy of client-lookup" True "$("$ANNEX" --json audit --app client-lookup --action deploy --since 15m | py 'len(d) >= 1 and bool(d[0]["actor"])')"
 # error groups (M2.3): the list answers, and the app serves the browser error script
 expect "annex errors answers (a list)" list "$("$ANNEX" --json errors client-lookup | py 'type(d).__name__')"
 has "the app serves /annex-errors.js" "unhandledrejection" "$(c -b "$TMP/cm.jar" "$(url client-lookup)/annex-errors.js")"
