@@ -5,13 +5,9 @@
 # and the admin get exactly ONE alert and ONE "resolved" (and a reminder if it stays open). Mail is read from
 # Mailpit. Takes 12-20 minutes: Gatus checks once a minute, and every scenario waits for its resolve.
 source "$(dirname "$0")/lib.sh"
-render >/dev/null
-"$ROOT/scripts/tunnel.sh" up >/dev/null
+source "$(dirname "$0")/testlib.sh"
+use_tunnel
 
-PORT=${ANNEX_PUBLIC_PORT:-8443}
-CA="$(mkcert -CAROOT)/rootCA.pem"
-HOME_URL=$(setting ANNEX_URL_HOME)
-AUTH_URL=$(setting ANNEX_URL_AUTH)
 MAIL_URL=$(setting ANNEX_URL_MAIL)
 PATTERN=$(setting ANNEX_HOST_PATTERN)
 APP=alert-probe
@@ -21,27 +17,12 @@ SAM=sam@annex.example
 ADMIN=admin@annex.example
 TUNING=$DATA/state/ops/tuning.json
 SETTLE=14   # seconds to wait after an expected message, to prove no second one follows (ticks are 5 s)
-TMP=$(mktemp -d)
 cleanup() {
   rm -rf "$TMP"
   vm "rm -f $TUNING; docker start annex-gateway-1 >/dev/null 2>&1; docker start $C_APP >/dev/null 2>&1" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT
+on_exit cleanup
 
-pass=0 fail=0
-ok()  { pass=$((pass + 1)); printf '  \033[32mok\033[0m   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  \033[31mFAIL\033[0m %s (%s)\n' "$1" "$2"; }
-expect() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected $2, got $3"; fi; }
-has() { if grep -qF -- "$2" <<<"$3"; then ok "$1"; else bad "$1" "missing '$2' in: $(head -c 300 <<<"$3")"; fi; }
-c() { curl -sS --cacert "$CA" --connect-to "::127.0.0.1:$PORT" "$@"; }
-code() { c -o /dev/null -w '%{http_code}' "$@"; }
-password() { vm "awk -v u='$1' '\$1 == u {print \$2}' $DATA/secrets/users.txt"; }
-login() {
-  local pw; pw=$(password "$1")
-  c -c "$TMP/$1.jar" -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
-    --data "{\"username\":\"$1\",\"password\":\"$pw\",\"keepMeLoggedIn\":false,\"targetURL\":\"$HOME_URL/\"}" "$AUTH_URL/api/firstfactor"
-}
-as() { local u=$1; shift; c -b "$TMP/$u.jar" "$@"; }
 
 # --- mail helpers (Mailpit, as kaldi-admin) ---------------------------------------------
 mail_count() { # mail_count RECIPIENT SUBJECT_PREFIX
@@ -201,7 +182,4 @@ expect "no 'resolved' or any other message after the removal" 1 "$(mail_total)"
 expect "its Gatus check file is gone" "" "$(vm "ls $DATA/state/gatus/apps | grep -x '$APP.yaml' || true")"
 expect "its incident is closed" "[]" "$(vm "docker exec annex-ops-1 python -m annex_ops.ctl incidents --open --app $APP --json")"
 took
-
-echo
-echo "passed $pass, failed $fail"
-[ "$fail" -eq 0 ]
+finish

@@ -33,6 +33,7 @@ ensure_key APPDATA_DB_METABASE_PASSWORD
 ensure_key APPDATA_DB_OPS_PASSWORD
 ensure_key APPDATA_DB_METABASE_USAGE_PASSWORD
 ensure_key OPS_INTERNAL_TOKEN 32
+ensure_key APPDATA_DB_HOOKS_PASSWORD
 for f in session_secret storage_encryption_key reset_password_jwt_secret; do
   [ -s "$S/authelia/$f" ] || { rand 32 > "$S/authelia/$f"; echo "bootstrap: generated authelia/$f"; }
 done
@@ -60,6 +61,10 @@ cat > "$S/ops.env" <<VARS
 OPS_DATABASE_URL=postgres://annex_ops:$APPDATA_DB_OPS_PASSWORD@appdata-db:5432/annex_ops
 OPS_INTERNAL_TOKEN=$OPS_INTERNAL_TOKEN
 VARS
+# the webhook receiver (its own container): a role that may only insert events
+cat > "$S/hooks-receiver.env" <<VARS
+OPS_DATABASE_URL=postgres://annex_hooks:$APPDATA_DB_HOOKS_PASSWORD@appdata-db:5432/annex_ops
+VARS
 # Gatus authenticates its alert webhook to ops with this token
 cat > "$S/gatus.env" <<VARS
 OPS_INTERNAL_TOKEN=$OPS_INTERNAL_TOKEN
@@ -67,25 +72,13 @@ VARS
 # ops reads runtime tuning (state/ops/tuning.json) as uid 10001; the file only exists during tests
 chmod 755 "$D/state/ops"
 
-# Demo users: login, display name, email, groups
+# Demo users, created on the first run only: login, display name, email, groups. More users: `annex users add`.
 USERS=(
   "sam|Sam Novak|sam@annex.example|builders"
   "cm|Maja Horvat|cm@annex.example|users"
   "kaldi-admin|Kaldi Admin|admin@annex.example|admins,builders"
 )
-# The user directory for annex-ops (login -> name, email, groups). No password hashes. It's mounted as a
-# directory, because replacing the file would leave a single-file bind mount on the old inode (D7), and
-# it must be readable by the ops container (uid 10001), unlike everything under secrets/.
-users_json=$(for u in "${USERS[@]}"; do
-  IFS='|' read -r login name email groups <<<"$u"
-  jq -n --arg l "$login" --arg n "$name" --arg e "$email" --arg g "$groups" \
-    '{($l): {name: $n, email: $e, groups: ($g | split(","))}}'
-done | jq -s 'add')
-chmod 755 "$D/state/directory"
-echo "$users_json" > "$D/state/directory/users.json.tmp"
-chmod 644 "$D/state/directory/users.json.tmp"
-mv "$D/state/directory/users.json.tmp" "$D/state/directory/users.json"
-
+wrote_users=
 if [ ! -s "$S/users.txt" ]; then
   : > "$S/users.txt"
   for u in "${USERS[@]}"; do echo "${u%%|*} $(password)" >> "$S/users.txt"; done
@@ -108,6 +101,22 @@ if [ ! -s "$S/authelia/users.yml" ]; then
     done
   } > "$S/authelia/users.yml.tmp"
   mv "$S/authelia/users.yml.tmp" "$S/authelia/users.yml"
+  wrote_users=1
   echo "bootstrap: wrote authelia/users.yml"
+fi
+# The user directory for annex-ops (login -> name, email, groups; no password hashes). Written here only on the
+# first run: after that, users are managed with `annex users` (annex_vm.py), which rewrites it from users.yml,
+# so a re-run of bootstrap must not overwrite added users. Mounted as a directory (a replaced single-file bind
+# mount keeps the old inode, D7) and readable by the ops container (uid 10001), unlike everything under secrets/.
+chmod 755 "$D/state/directory"
+if [ -n "$wrote_users" ] || [ ! -s "$D/state/directory/users.json" ]; then
+  users_json=$(for u in "${USERS[@]}"; do
+    IFS='|' read -r login name email groups <<<"$u"
+    jq -n --arg l "$login" --arg n "$name" --arg e "$email" --arg g "$groups" \
+      '{($l): {name: $n, email: $e, groups: ($g | split(","))}}'
+  done | jq -s 'add')
+  echo "$users_json" > "$D/state/directory/users.json.tmp"
+  chmod 644 "$D/state/directory/users.json.tmp"
+  mv "$D/state/directory/users.json.tmp" "$D/state/directory/users.json"
 fi
 echo "bootstrap: secrets ready in $S"

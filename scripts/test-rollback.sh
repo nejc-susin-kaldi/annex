@@ -7,23 +7,14 @@
 # Variants are built from copies of the examples in .build/test-rollback.
 # Leaves both apps running their example versions.
 source "$(dirname "$0")/lib.sh"
-render >/dev/null
-"$ROOT/scripts/tunnel.sh" up >/dev/null
+source "$(dirname "$0")/testlib.sh"
+use_tunnel
 
-PORT=${ANNEX_PUBLIC_PORT:-8443}
-CA="$(mkcert -CAROOT)/rootCA.pem"
-AUTH_URL=$(setting ANNEX_URL_AUTH)
 CL_URL="https://$(setting ANNEX_HOST_PATTERN | sed 's/{name}/client-lookup/')$(setting ANNEX_PORT_SUFFIX)"
 ANNEX="$ROOT/annex"
 WORK=$ROOT/.build/test-rollback
 rm -rf "$WORK" && mkdir -p "$WORK"
 
-pass=0 fail=0
-ok()  { pass=$((pass + 1)); printf '  \033[32mok\033[0m   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  \033[31mFAIL\033[0m %s (%s)\n' "$1" "$2"; }
-expect() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected '$2', got '$3'"; fi; }
-has() { if grep -q -- "$2" <<<"$3"; then ok "$1"; else bad "$1" "missing: $2"; fi; }
-c() { curl -sS --cacert "$CA" --connect-to "::127.0.0.1:$PORT" "$@"; }
 pw=$(vm "awk '\$1 == \"sam\" {print \$2}' $DATA/secrets/users.txt")
 c -c "$WORK/sam.jar" -o /dev/null -H 'Content-Type: application/json' \
   --data "{\"username\":\"sam\",\"password\":\"$pw\",\"keepMeLoggedIn\":false}" "$AUTH_URL/api/firstfactor"
@@ -92,6 +83,4 @@ for app in client-lookup monthly-report; do
 done
 
 rm -rf "$WORK"
-echo
-echo "passed $pass, failed $fail"
-[ "$fail" -eq 0 ]
+finish

@@ -5,33 +5,13 @@
 # without a body, and Mailpit's UI is for admins only.
 # Deploys examples/monthly-report (notify: email + Slack) and examples/client-lookup (no notify).
 source "$(dirname "$0")/lib.sh"
-render >/dev/null
-"$ROOT/scripts/tunnel.sh" up >/dev/null
+source "$(dirname "$0")/testlib.sh"
+use_tunnel
 
-PORT=${ANNEX_PUBLIC_PORT:-8443}
-CA="$(mkcert -CAROOT)/rootCA.pem"
-HOME_URL=$(setting ANNEX_URL_HOME)
-AUTH_URL=$(setting ANNEX_URL_AUTH)
 MAIL_URL=$(setting ANNEX_URL_MAIL)
 APP=monthly-report
 OTHER=client-lookup
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
 
-pass=0 fail=0
-ok()  { pass=$((pass + 1)); printf '  \033[32mok\033[0m   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  \033[31mFAIL\033[0m %s (%s)\n' "$1" "$2"; }
-expect() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected $2, got $3"; fi; }
-has() { if grep -qF -- "$2" <<<"$3"; then ok "$1"; else bad "$1" "missing '$2' in: $(head -c 300 <<<"$3")"; fi; }
-c() { curl -sS --cacert "$CA" --connect-to "::127.0.0.1:$PORT" "$@"; }
-code() { c -o /dev/null -w '%{http_code}' "$@"; }
-password() { vm "awk -v u='$1' '\$1 == u {print \$2}' $DATA/secrets/users.txt"; }
-login() {
-  local pw; pw=$(password "$1")
-  c -c "$TMP/$1.jar" -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
-    --data "{\"username\":\"$1\",\"password\":\"$pw\",\"keepMeLoggedIn\":false,\"targetURL\":\"$HOME_URL/\"}" "$AUTH_URL/api/firstfactor"
-}
-as() { local u=$1; shift; c -b "$TMP/$u.jar" "$@"; }
 mail_count() { as kaldi-admin "$MAIL_URL/api/v1/messages" | python3 -c 'import json,sys; print(json.load(sys.stdin)["total"])'; }
 
 echo "Deploy"
@@ -150,7 +130,4 @@ if grep -qx "$OTHER" <<<"$grants"; then bad "$OTHER has no grant" "it has one"; 
 echo "Mailpit UI"
 expect "sam is forbidden" 403 "$(login sam >/dev/null; code -b "$TMP/sam.jar" "$MAIL_URL/")"
 expect "kaldi-admin gets Mailpit" 200 "$(code -b "$TMP/kaldi-admin.jar" "$MAIL_URL/")"
-
-echo
-echo "passed $pass, failed $fail"
-[ "$fail" -eq 0 ]
+finish

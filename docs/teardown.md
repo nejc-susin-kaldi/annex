@@ -42,6 +42,7 @@ virsh -c qemu:///system undefine annex --snapshots-metadata --remove-all-storage
     ```bash
     sudo sed -i '' '/# annex$/d' /etc/hosts
     ```
+  - The wildcard resolver, if you set it up (setup.md §3): see the undo commands there (`/etc/resolver/annex.home.arpa`, the `dnsmasq` service and its config line).
   - MCP server and skill:
     ```bash
     claude mcp remove --scope user annex

@@ -1,4 +1,5 @@
 """A small Docker Engine API client over HTTP, for the read-only socket proxy (socket-ro). Standard library only."""
+import base64
 import http.client
 import json
 import re
@@ -28,6 +29,22 @@ def _get(path: str, timeout: float | None):
         conn.close()
         raise DockerError(resp.status, body.strip())
     return conn, resp
+
+
+def path_stat(container: str, path: str, timeout: float = 10) -> dict:
+    """Stat a path inside a container without reading it (HEAD .../archive: name, size, mode, mtime). The
+    read-only proxy allows it; used for the backup folder's mtime, so ops never sees the archives themselves."""
+    conn = _conn(timeout)
+    try:
+        conn.request("HEAD", f"/containers/{urllib.parse.quote(container)}/archive?path={urllib.parse.quote(path)}")
+        resp = conn.getresponse()
+        resp.read()
+        if resp.status != 200:
+            raise DockerError(resp.status, f"stat {container}:{path}")
+        header = resp.getheader("X-Docker-Container-Path-Stat") or ""
+        return json.loads(base64.b64decode(header)) if header else {}
+    finally:
+        conn.close()
 
 
 def get_json(path: str, timeout: float = 10):

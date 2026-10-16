@@ -46,6 +46,35 @@ Incoming webhooks (M1.5) need `hooks.annex.home.arpa`, again as its own line wit
 ```bash
 echo '127.0.0.1 hooks.annex.home.arpa # annex' | sudo tee -a /etc/hosts
 ```
+**Optional, recommended before a demo: a wildcard resolver instead of a line per name.** `/etc/hosts` has no wildcards, so every new app name (e.g. one an AI picks during the live build) needs a line. A local `dnsmasq` answering `*.annex.home.arpa` with 127.0.0.1 removes that. macOS sends only that domain to it (`/etc/resolver`); everything else resolves as before. Entries in `/etc/hosts` keep working and take precedence.
+```bash
+brew install dnsmasq
+```
+```bash
+echo 'address=/annex.home.arpa/127.0.0.1 # annex' >> "$(brew --prefix)/etc/dnsmasq.conf"
+```
+```bash
+sudo brew services start dnsmasq
+```
+```bash
+sudo mkdir -p /etc/resolver && echo 'nameserver 127.0.0.1' | sudo tee /etc/resolver/annex.home.arpa
+```
+Check (any name should give 127.0.0.1): `dscacheutil -q host -a name anything.annex.home.arpa`.
+Undo:
+```bash
+sudo rm /etc/resolver/annex.home.arpa
+```
+```bash
+sudo brew services stop dnsmasq
+```
+```bash
+sed -i '' '/# annex$/d' "$(brew --prefix)/etc/dnsmasq.conf"
+```
+```bash
+brew uninstall dnsmasq
+```
+(Skip the last two if you used dnsmasq before Annex.)
+
 Then, with no system change:
 ```bash
 scripts/tunnel.sh up

@@ -3,14 +3,28 @@ from datetime import datetime
 
 # the phrase for an app's headline, by the signal that opened the incident (a stopped container is down to users)
 PHRASE = {"down": "is down", "stopped": "is down", "crash-loop": "is crash-looping", "unhealthy": "is unhealthy",
-          "oom": "ran out of memory", "errors": "is returning server errors", "webhook": "can't receive its webhooks"}
+          "oom": "ran out of memory", "errors": "is returning server errors", "webhook": "can't receive its webhooks",
+          "disk": "is nearly full", "memory": "is running low", "backup": "is overdue"}
 WORD = {"down": "down", "stopped": "down", "crash-loop": "crash-looping", "unhealthy": "unhealthy",
-        "oom": "out of memory", "errors": "returning errors", "job-failed": "failing", "webhook": "not receiving webhooks"}
+        "oom": "out of memory", "errors": "returning errors", "job-failed": "failing", "webhook": "not receiving webhooks",
+        "disk": "nearly full", "memory": "low", "backup": "overdue"}
 EXPLAIN = {"down": "the health check is failing", "stopped": "the container is not running",
            "crash-loop": "the app keeps exiting with an error", "unhealthy": "the container's health check fails",
            "oom": "the app used more memory than its limit", "errors": "a spike of server errors (5xx)",
            "webhook": "events from a provider are waiting for the app and can't be delivered",
-           "job-failed": "a scheduled job exited with an error"}
+           "job-failed": "a scheduled job exited with an error",
+           "disk": "the VM's disk is filling up", "memory": "the VM is short of memory",
+           "backup": "the nightly backup hasn't written a new archive"}
+# what an admin can do about a host-level problem (these subjects have no container of their own)
+HOST_HINTS = {
+    "disk": ["Check: ssh annex df -h / && docker system df",
+             "Usual suspects: old images and build cache (docker image prune, docker builder prune), backups older "
+             "than 7 days, large app /data folders under /srv/annex/apps"],
+    "memory": ["Check: ssh annex docker stats --no-stream",
+               "Metabase is the largest; scripts/extras.sh off frees about 1.3 GB"],
+    "backup": ["Logs: ssh annex docker logs annex-backup-1",
+               "Run one now: scripts/backup.sh (from the Mac)"],
+}
 
 
 def parse_subject(subject: str) -> tuple[str, str, str | None]:
@@ -85,6 +99,8 @@ def body(kind: str, subject: str, signals: dict, opened_at: float, duration_s: f
         lines.append(f"Status page: {status_url}")
     if k in ("app", "job"):
         lines.append(f"Logs: annex logs {name}")
+    elif k == "platform" and name in HOST_HINTS:
+        lines += HOST_HINTS[name]
     elif k == "platform" and name != "front-door":
         lines.append(f"Logs: ssh annex docker logs annex-{name}-1 (or Dozzle, for admins)")
     return "\n".join(lines).strip()

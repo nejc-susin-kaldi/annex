@@ -24,6 +24,7 @@ from . import manifest as mf
 from .remote import REPO, AnnexError, Remote
 
 TEMPLATES = REPO / "templates"
+RUNTIME = REPO / "runtime"  # the one source of annex_runtime.py/.js; scripts/sync-runtime.sh copies it
 CONTRACT = Path(__file__).with_name("contract.md")
 APP_UID = 10001
 TRAEFIK = "annex-traefik-1"
@@ -459,7 +460,7 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
     _append_release(r, m.name, {**rel, "result": "live"})
     _cleanup(r, m.name)
     progress("Done")
-    warnings = _warnings(r, m)
+    warnings = _warnings(r, m, folder)
     return {**record, "warnings": warnings, "webhooks": _webhook_urls(r, m.name, m.webhooks), "previous_release": live and live["release"], "snapshot": rel["snapshot"],
             "injected_env": sorted({"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", *prov["injected"],
                                     *(["DATA_DIR"] if m.files else []),
@@ -469,9 +470,15 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
                                   - ({"PORT"} if not m.is_web else set()))}
 
 
-def _warnings(r: Remote, m: mf.Manifest) -> list[str]:
+def _warnings(r: Remote, m: mf.Manifest, folder: Path | None = None) -> list[str]:
     """Things a successful deploy should still tell the builder. More are added here by later milestones."""
     out = []
+    for name in ("annex_runtime.py", "annex_runtime.js"):
+        mine, current = (folder / name if folder else None), RUNTIME / name
+        if mine and mine.is_file() and current.is_file() and mine.read_bytes() != current.read_bytes():
+            out.append(f"{name} differs from the platform's current helper, so some helpers may be missing or "
+                       f"outdated. Unless you changed it on purpose, replace it with the copy from a new "
+                       f"`annex init` folder (templates are kept up to date)")
     if m.memory_mb > mf.MEMORY_DEFAULT_MB:
         out.append(f"{m.name} runs with {m.memory_mb}m of memory instead of the default {mf.MEMORY_DEFAULT_MB}m. "
                    "That's fine if it needs it; the platform team sees raised limits in annex list")
@@ -796,3 +803,15 @@ def remove(app: str, keep_data: bool = False) -> dict:
     if record and record.get("schedule"):
         r.run(f"docker restart {OFELIA} >/dev/null")
     return res
+
+
+def users(action: str, login: str | None = None, **opts) -> dict:
+    """Annex's own user accounts (human only, not over MCP; D57). action: list, add, set, remove or reset.
+    Options are passed on as flags: name="x" -> --name x, print_password=True -> --print-password."""
+    args = [f"users-{action}", *([login] if login else [])]
+    for key, value in opts.items():
+        if value is None or value is False:
+            continue
+        flag = "--" + key.replace("_", "-")
+        args += [flag] if value is True else [flag, str(value)]
+    return Remote().vm(*args)

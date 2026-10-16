@@ -94,7 +94,8 @@ services:
       AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE: /secrets/reset_password_jwt_secret
     volumes:
       - ./config/authelia:/etc/annex:ro
-      - ${ANNEX_DATA_DIR}/secrets/authelia:/secrets:ro
+      # read-write: password resets and changes rewrite users.yml (in place, so it stays the annex user's 600 file)
+      - ${ANNEX_DATA_DIR}/secrets/authelia:/secrets
       - ${ANNEX_DATA_DIR}/state/authelia:/data
     networks: [platform]
     # argon2 verification needs ~64 MB per concurrent login
@@ -249,8 +250,7 @@ services:
       ANNEX_ALERT_SLACK_CHANNEL: ${ANNEX_ALERT_SLACK_CHANNEL}
       ANNEX_URL_STATUS: ${ANNEX_URL_STATUS}
       ANNEX_URL_METABASE: ${ANNEX_URL_METABASE}
-      # incoming webhooks (M1.5): the public hostname (the only one served without a login) and its URL
-      ANNEX_HOST_HOOKS: ${ANNEX_HOST_HOOKS}
+      # incoming webhooks (M1.5): the public URL (receiving is the hooks container's job; ops delivers)
       ANNEX_URL_HOOKS: ${ANNEX_URL_HOOKS}
       ANNEX_HOST_PATTERN: ${ANNEX_HOST_PATTERN}
       ANNEX_PORT_SUFFIX: ${ANNEX_PORT_SUFFIX}
@@ -259,7 +259,7 @@ services:
       - ${ANNEX_DATA_DIR}/state/directory:/annex/directory:ro
       # runtime tuning of the alert thresholds (tuning.json, only present during tests)
       - ${ANNEX_DATA_DIR}/state/ops:/annex/state:ro
-      # each app's webhook signing secrets, one file per app (the directory, not a file: D7)
+      # each app's hooks file (delivery needs its token, port and paths; the directory, not a file: D7)
       - ${ANNEX_DATA_DIR}/secrets/hooks:/annex/hooks:ro
     # edge: apps reach it, and it reaches Slack; platform: Mailpit's SMTP and Gatus; appdata: its database;
     # socket-ro: Docker events and logs, read-only
@@ -278,10 +278,43 @@ services:
       timeout: 3s
       start_period: 20s
       start_interval: 2s
+
+  # The webhook receiver (M1.5, D55): the only route without a login, in its own container. Same image as ops,
+  # different command; it gets only the hooks files and a database role that may only insert events: no SMTP,
+  # Slack token, user directory or Docker access, no background threads. Delivery and retries stay in ops.
+  hooks:
+    <<: *base
+    image: annex-ops:local
+    pull_policy: never  # built by the ops service
+    command: ["uvicorn", "annex_ops.hooks_app:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: ${ANNEX_DATA_DIR}/secrets/hooks-receiver.env
+    environment:
+      <<: *tz
+      OPS_WATCHERS: "0"
+      ANNEX_HOST_HOOKS: ${ANNEX_HOST_HOOKS}
+      ANNEX_URL_HOOKS: ${ANNEX_URL_HOOKS}
+    volumes:
+      - ${ANNEX_DATA_DIR}/secrets/hooks:/annex/hooks:ro
+    # edge: Traefik routes to it; appdata: its database. Not on platform or socket-ro.
+    networks: [edge, appdata]
+    user: "10001:10001"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    mem_limit: 96m
+    depends_on:
+      appdata-db: {condition: service_healthy}
+      ops: {condition: service_started}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      start_interval: 2s
     labels:
       com.kaldi.annex: "true"
-      # the hooks host: the only route without a login. Traefik sends only /h/ here (with a rate limit and a 1 MB
-      # body cap) and ops refuses everything else on that host, so a routing mistake can't expose /v1/ or /internal/.
+      # Traefik sends only /h/ here (with a rate limit and a 1 MB body cap), and the receiver refuses everything
+      # else, so a routing mistake can't expose anything (D51).
       traefik.enable: "true"
       traefik.docker.network: annex-edge
       traefik.http.routers.hooks.rule: Host(`${ANNEX_HOST_HOOKS}`) && PathPrefix(`/h/`)

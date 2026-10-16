@@ -3,17 +3,34 @@
 theme: auto
 server:
   address: tcp://:9091/
+  endpoints:
+    rate_limits:
+      # `annex users add/reset` sends every invitation from the VM's own address, so the default (5 per 10 min
+      # per address) would stop an admin inviting a team; still limited, against email bombing (D57)
+      reset_password_start:
+        enable: true
+        buckets:
+          - period: 10m
+            requests: 30
+          - period: 1h
+            requests: 100
 log:
   level: info
 ntp:
   disable_startup_check: true
 totp:
   issuer: Annex
+identity_validation:
+  reset_password:
+    # `annex users add` invites a user with the reset link, so it lives longer than Authelia's 5-minute default
+    jwt_lifespan: 24h
 authentication_backend:
+  # Annex's own accounts (no company SSO needed): users reset a forgotten password by email and change it
+  # themselves; admins manage accounts with `annex users` (D57)
   password_reset:
-    disable: true
+    disable: false
   password_change:
-    disable: true
+    disable: false
   file:
     path: /secrets/users.yml
     watch: true
@@ -49,6 +66,15 @@ regulation:
 storage:
   local:
     path: /data/db.sqlite3
+password_policy:
+  standard:
+    enabled: true
+    min_length: 12
+    max_length: 0
 notifier:
-  filesystem:
-    filename: /data/notification.txt
+  # reset and invitation emails go out like every other platform email: to Mailpit in the prototype
+  smtp:
+    address: "smtp://mailpit:1025"
+    sender: "Annex <{{ANNEX_EMAIL_FROM}}>"
+    subject: "[Annex] {title}"
+    disable_require_tls: true

@@ -163,6 +163,7 @@ All data is synthetic. Adding a view is a reviewed change by the platform team, 
 | `annex rollback <app> --with-data` | **human only**: also restore the database and `/data` from that release's time; writes since are lost |
 | `annex secret set <app> KEY=VALUE` | **human only**: store a secret on the server |
 | `annex remove <app> [--keep-data]` | **human only**: remove an app |
+| `annex users list\|add\|set\|remove\|reset` | **human only**: Annex's own user accounts (an app's `owner` must be one of them) |
 | `annex contract` | print this contract |
 
 Add `--json` before the command for machine-readable output. When a deploy fails, the error says what to fix. Fix it and deploy again.

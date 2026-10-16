@@ -181,9 +181,9 @@ class Manager(threading.Thread):
         if kind == "job":
             key = f"{name}-{job}"
             return [ANSI.sub("", ln) for ln in docker_api.tail_logs(OFELIA, 400) if f'"{key}"' in ln][-20:]
-        if name != "front-door":
-            return docker_api.tail_logs(f"annex-{name}-1", 20)
-        return []
+        if name in ("disk", "memory", "front-door"):  # no container of their own
+            return []
+        return docker_api.tail_logs(f"annex-{name}-1", 20)
 
     def notify(self, kind: str, a: eng.Action) -> None:
         k, name, _ = messages.parse_subject(a.subject)
@@ -341,7 +341,7 @@ def start_background() -> Manager:
     """Start the engine thread, the Docker watcher, the log followers and the usage and digest threads (called
     once, at app startup)."""
     global _manager, _ingest
-    from . import digest, follow_logs, hooks_delivery, usage, watch_docker
+    from . import digest, follow_logs, hooks_delivery, host, usage, watch_docker
 
     mgr = _manager = Manager()
     mgr.start()
@@ -349,6 +349,7 @@ def start_background() -> Manager:
     usage.Worker(ingest).start()
     digest.Worker().start()
     hooks_delivery.Worker(mgr.submit).start()
+    host.Sampler(mgr.submit).start()
 
     def submit(inp) -> None:
         mgr.submit(inp)

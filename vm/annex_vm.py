@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""VM-side app operations for the annex CLI.
+"""VM-side app and user operations for the annex CLI.
 
-Runs ON THE VM with the stock python3 (stdlib only), called over SSH by the
-CLI. Database passwords and gateway tokens are generated and kept here, in
-/srv/annex/secrets/apps/<app>/. Every command prints one JSON object; secret
-values are never printed.
+Runs ON THE VM with the stock python3 (stdlib only; the user commands also use Ubuntu's python3-yaml), called
+over SSH by the CLI. Database passwords and gateway tokens are generated and kept here, in
+/srv/annex/secrets/apps/<app>/. Every command prints one JSON object; secret values are never printed, with
+one exception: `users-add/users-reset --print-password` returns the new password once, for a human.
 """
 from __future__ import annotations
 
 import argparse
 import base64
+import fcntl
 import hashlib
 import hmac
 import json
@@ -538,6 +539,261 @@ def cmd_prune_snapshots(a: argparse.Namespace) -> None:
         shutil.rmtree(p, ignore_errors=True)
     out({"ok": True, "removed": [p.name for p in old], "kept": [p.name for p in snaps[len(old):]]})
 
+# --- Annex's own user accounts (Authelia's file backend, D57) ----------------------------------------------------
+# Source of truth: secrets/authelia/users.yml, which Authelia also rewrites when a user resets or changes their
+# password. The user directory (state/directory/users.json: no hashes) is derived from it for annex-ops.
+USERS_YML = SECRETS / "authelia" / "users.yml"
+DIRECTORY = DATA / "state" / "directory" / "users.json"
+AUTHELIA = "annex-authelia-1"
+LOGIN_RE = re.compile(r"^[a-z][a-z0-9._-]{1,31}$")
+GROUP_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+EMAIL_RE = re.compile(r"^[^@\s'\"]+@[^@\s'\"]+\.[A-Za-z]{2,}$")
+
+
+def _yaml():
+    try:
+        import yaml  # Ubuntu's python3-yaml (a cloud-init dependency, so on every cloud image)
+    except ImportError:
+        raise Fail("managing users needs PyYAML on the server (Ubuntu package python3-yaml). "
+                   "Ask the platform team to install it") from None
+    return yaml
+
+
+def validate_user(login: str | None = None, name: str | None = None, email: str | None = None,
+                  groups: list[str] | None = None) -> list[str]:
+    """Problems with the given fields, each saying how to fix it (pure; unit-tested)."""
+    p = []
+    if login is not None and not LOGIN_RE.match(login):
+        p.append(f"login {login!r}: use 2-32 lowercase letters, digits, '.', '_' or '-', starting with a letter")
+    if name is not None and (not name.strip() or len(name) > 80 or any(c in name for c in "\n\r\"")):
+        p.append("name: give a display name of up to 80 characters, e.g. --name 'Ana Kovač'")
+    if email is not None and not EMAIL_RE.match(email):
+        p.append(f"email {email!r} is not an address, e.g. --email ana@company.com")
+    if groups is not None:
+        bad = [g for g in groups if not GROUP_RE.match(g)]
+        if bad:
+            p.append(f"groups {', '.join(bad)}: use lowercase names, e.g. --groups users or --groups admins,builders")
+        if not groups:
+            p.append("groups: give at least one, e.g. --groups users (admins, builders and users are the usual ones)")
+    return p
+
+
+def directory_entries(users: dict) -> dict:
+    """What annex-ops may know about users: no hashes, no disabled accounts."""
+    return {login: {"name": u.get("displayname") or login, "email": u.get("email", ""),
+                    "groups": list(u.get("groups") or [])}
+            for login, u in sorted(users.items()) if not u.get("disabled")}
+
+
+def active_admins(users: dict) -> list[str]:
+    return sorted(login for login, u in users.items() if "admins" in (u.get("groups") or []) and not u.get("disabled"))
+
+
+def public_user(login: str, u: dict) -> dict:
+    return {"login": login, "name": u.get("displayname", ""), "email": u.get("email", ""),
+            "groups": list(u.get("groups") or []), "disabled": bool(u.get("disabled"))}
+
+
+def load_users() -> dict:
+    return (_yaml().safe_load(USERS_YML.read_text()) or {}).get("users") or {}
+
+
+def save_users(users: dict) -> None:
+    if not active_admins(users):
+        raise Fail("that would leave no active admin. Make another user an admin first, "
+                   "e.g. annex users set <login> --groups admins,builders")
+    text = _yaml().safe_dump({"users": users}, sort_keys=False, default_flow_style=False, allow_unicode=True,
+                             width=1000)
+    # atomically (a new file renamed over the old one): Authelia's watcher reloads on every change, and an in-place
+    # rewrite let it read a half-written file and keep the old accounts (found by scripts/test-users.sh)
+    _replace_users_file(text)
+    # Authelia skips a change that comes within about a second of its previous reload, and doesn't catch up later
+    # (two quick `annex users` calls left a disabled user able to sign in). Writing the same content again after
+    # a pause makes sure the latest state gets its own reload; a reload costs milliseconds.
+    time.sleep(1.5)
+    _replace_users_file(text)
+    write_directory(users)
+
+
+def _replace_users_file(text: str) -> None:
+    tmp = USERS_YML.with_name(".users.yml.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    tmp.replace(USERS_YML)
+
+
+def write_directory(users: dict) -> None:
+    tmp = DIRECTORY.with_suffix(".tmp")
+    tmp.write_text(json.dumps(directory_entries(users), indent=1) + "\n")
+    os.chmod(tmp, 0o644)
+    tmp.replace(DIRECTORY)  # the directory is mounted, not the file (D7), so a rename is seen
+
+
+class users_lock:
+    def __enter__(self):
+        self.f = open(SECRETS / "authelia" / ".users.lock", "a")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        self.f.close()
+
+
+def random_password() -> tuple[str, str]:
+    """(password, argon2id digest) from Authelia's own tool, so the hash matches its settings."""
+    image = subprocess.run(["docker", "inspect", "-f", "{{.Config.Image}}", AUTHELIA], capture_output=True, text=True)
+    if image.returncode != 0:
+        raise Fail("Authelia isn't running; start the platform with scripts/push.sh")
+    r = subprocess.run(["docker", "run", "--rm", "--network", "none", image.stdout.strip(), "authelia", "crypto",
+                        "hash", "generate", "argon2", "--random", "--random.length", "24"], capture_output=True, text=True)
+    pw = re.search(r"^Random Password: (\S+)$", r.stdout, re.M)
+    digest = re.search(r"^Digest: (\S+)$", r.stdout, re.M)
+    if r.returncode != 0 or not pw or not digest:
+        raise Fail("couldn't generate a password with Authelia's tool: " + (r.stderr or r.stdout).strip()[-300:])
+    return pw.group(1), digest.group(1)
+
+
+def platform_setting(name: str) -> str:
+    return read_kv(DATA / "platform" / ".env").get(name, "")
+
+
+def send_reset_email(login: str) -> None:
+    """Ask Authelia to email the user its reset link (also used as the invitation). Authelia only accepts the
+    request on its exact public URL (port included), so it goes through Traefik with that Host."""
+    auth = platform_setting("ANNEX_URL_AUTH")  # e.g. https://auth.annex.home.arpa:8443
+    m = re.match(r"^(https?)://([^/:]+)(?::(\d+))?$", auth)
+    if not m:
+        raise Fail(f"ANNEX_URL_AUTH is {auth!r}; run scripts/push.sh")
+    scheme, host, port = m.group(1), m.group(2), m.group(3) or ("443" if m.group(1) == "https" else "80")
+    target = "127.0.0.1:443" if platform_setting("ANNEX_TLS_MODE") == "local" else "127.0.0.1:80"
+    r = subprocess.run(["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "20",
+                        "--connect-to", f"{host}:{port}:{target}", "-H", "Content-Type: application/json",
+                        "-d", json.dumps({"username": login}), f"{auth}/api/reset-password/identity/start"],
+                       capture_output=True, text=True)
+    if r.stdout.strip() == "429":
+        raise Fail("Authelia limits how many reset and invitation emails go out (30 per 10 minutes from the "
+                   "server). Try again in a few minutes, or use --print-password")
+    if r.stdout.strip() != "200":
+        raise Fail(f"Authelia didn't accept the reset request (HTTP {r.stdout.strip() or r.stderr.strip()}). "
+                   "Use --print-password instead, and check: docker logs annex-authelia-1")
+
+
+def update_demo_password(login: str, password: str) -> bool:
+    """users.txt holds the demo users' passwords (a demo convenience, D12): keep it right when one is reset."""
+    path = SECRETS / "users.txt"
+    if not path.exists():
+        return False
+    lines = path.read_text().splitlines()
+    hit = [i for i, line in enumerate(lines) if line.split(" ", 1)[0] == login]
+    for i in hit:
+        lines[i] = f"{login} {password}"
+    if hit:
+        path.write_text("\n".join(lines) + "\n")
+    return bool(hit)
+
+
+def email_outside_domains(email: str) -> bool:
+    domains = [d.strip().lower() for d in platform_setting("ANNEX_EMAIL_DOMAINS").split(",") if d.strip()]
+    allow = [a.strip().lower() for a in platform_setting("ANNEX_EMAIL_ALLOW").split(",") if a.strip()]
+    return bool(domains) and email.lower().split("@")[-1] not in domains and email.lower() not in allow
+
+
+def cmd_users_list(_: argparse.Namespace) -> None:
+    out({"ok": True, "users": [public_user(login, u) for login, u in sorted(load_users().items())]})
+
+
+def _groups(text: str | None) -> list[str] | None:
+    return None if text is None else [g.strip() for g in text.split(",") if g.strip()]
+
+
+def cmd_users_add(a: argparse.Namespace) -> None:
+    groups = _groups(a.groups)
+    problems = validate_user(a.login, a.name, a.email, groups)
+    if problems:
+        raise Fail("; ".join(problems))
+    with users_lock():
+        users = load_users()
+        if a.login in users:
+            raise Fail(f"{a.login} already exists. Change it with: annex users set {a.login} ...")
+        if any((u.get("email") or "").lower() == a.email.lower() for u in users.values()):
+            raise Fail(f"another user already has {a.email}; each account needs its own address")
+        password, digest = random_password()
+        users[a.login] = {"disabled": False, "displayname": a.name, "email": a.email, "password": digest,
+                          "groups": groups}
+        save_users(users)
+    res = {"ok": True, "user": public_user(a.login, users[a.login])}
+    if a.print_password:
+        res["password"] = password  # human-only, printed once by the CLI (the only secret this script prints)
+    else:
+        send_reset_email(a.login)
+        res["invited"] = a.email
+    if email_outside_domains(a.email):
+        res["warning"] = (f"{a.email} isn't in ANNEX_EMAIL_DOMAINS, so Annex's own emails (alerts, digests, app "
+                          "emails) won't reach it; the invitation does, because Authelia sends that itself")
+    out(res)
+
+
+def cmd_users_set(a: argparse.Namespace) -> None:
+    groups = _groups(a.groups)
+    problems = validate_user(None, a.name, a.email, groups)
+    if problems:
+        raise Fail("; ".join(problems))
+    with users_lock():
+        users = load_users()
+        if a.login not in users:
+            raise Fail(f"no user {a.login!r}. See: annex users list")
+        u = users[a.login]
+        if a.name is not None:
+            u["displayname"] = a.name
+        if a.email is not None:
+            u["email"] = a.email
+        if groups is not None:
+            u["groups"] = groups
+        if a.disable:
+            u["disabled"] = True
+        if a.enable:
+            u["disabled"] = False
+        save_users(users)
+    out({"ok": True, "user": public_user(a.login, users[a.login])})
+
+
+def cmd_users_remove(a: argparse.Namespace) -> None:
+    with users_lock():
+        users = load_users()
+        if a.login not in users:
+            raise Fail(f"no user {a.login!r}. See: annex users list")
+        del users[a.login]
+        save_users(users)
+    out({"ok": True, "removed": a.login,
+         "note": "apps they own keep running; give them a new owner in annex.yaml and deploy again"})
+
+
+def cmd_users_reset(a: argparse.Namespace) -> None:
+    with users_lock():
+        users = load_users()
+        u = users.get(a.login)
+        if u is None:
+            raise Fail(f"no user {a.login!r}. See: annex users list")
+        if u.get("disabled"):
+            raise Fail(f"{a.login} is disabled. Enable it first: annex users set {a.login} --enable")
+        if a.print_password:
+            password, u["password"] = random_password()
+            save_users(users)
+            demo = update_demo_password(a.login, password)
+            out({"ok": True, "login": a.login, "password": password, "demo_password_updated": demo})
+            return
+    send_reset_email(a.login)
+    out({"ok": True, "login": a.login, "reset_sent_to": u.get("email", "")})
+
+
+def cmd_users_sync(_: argparse.Namespace) -> None:
+    users = load_users()
+    write_directory(users)
+    out({"ok": True, "directory": len(directory_entries(users))})
+
 
 def main() -> None:
     p = argparse.ArgumentParser(prog="annex_vm")
@@ -585,6 +841,30 @@ def main() -> None:
     s.add_argument("app")
     s.add_argument("--keep", type=int, default=3)
     s.set_defaults(fn=cmd_prune_snapshots)
+    sub.add_parser("users-list").set_defaults(fn=cmd_users_list)
+    sub.add_parser("users-sync").set_defaults(fn=cmd_users_sync)
+    s = sub.add_parser("users-add")
+    s.add_argument("login")
+    s.add_argument("--name", required=True)
+    s.add_argument("--email", required=True)
+    s.add_argument("--groups", default="users")
+    s.add_argument("--print-password", action="store_true")
+    s.set_defaults(fn=cmd_users_add)
+    s = sub.add_parser("users-set")
+    s.add_argument("login")
+    s.add_argument("--name")
+    s.add_argument("--email")
+    s.add_argument("--groups")
+    s.add_argument("--disable", action="store_true")
+    s.add_argument("--enable", action="store_true")
+    s.set_defaults(fn=cmd_users_set)
+    s = sub.add_parser("users-remove")
+    s.add_argument("login")
+    s.set_defaults(fn=cmd_users_remove)
+    s = sub.add_parser("users-reset")
+    s.add_argument("login")
+    s.add_argument("--print-password", action="store_true")
+    s.set_defaults(fn=cmd_users_reset)
     a = p.parse_args()
     if hasattr(a, "app") and not NAME_RE.match(a.app):
         out({"ok": False, "error": f"invalid app name {a.app!r}"})

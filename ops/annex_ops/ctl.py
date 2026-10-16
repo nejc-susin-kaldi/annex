@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -96,6 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--since", help="replay: events received within this long, e.g. 30m, 1h, 2d")
     s.add_argument("--json", action="store_true")
     sub.add_parser("rollup", help="run the usage rollup now").add_argument("--json", action="store_true")
+    sub.add_parser("host", help="the VM's disk, memory and newest backup, as the alert engine sees them").add_argument(
+        "--json", action="store_true")
     s = sub.add_parser("digest", help="preview the weekly digest, or send it with --send")
     s.add_argument("--send", action="store_true")
     s.add_argument("--to", help="only this login's digest")
@@ -126,6 +129,15 @@ def main(argv: list[str] | None = None) -> int:
             data, cols = hooks_action(a), []
         elif a.cmd == "rollup":
             data, cols = usage.rollup(), []
+        elif a.cmd == "host":
+            from . import host
+            h, t = host.sample(), config.tuning()
+            data, cols = {"disk_used_pct": h.disk_used_pct and round(h.disk_used_pct, 1),
+                          "disk_free_gb": h.disk_free_gb and round(h.disk_free_gb, 1),
+                          "mem_available_mb": h.mem_available_mb and round(h.mem_available_mb),
+                          "backup_age_h": h.backup_at and round((time.time() - h.backup_at) / 3600, 1),
+                          "alert_at": f"disk >= {t.disk_alert_pct:g} %, memory < {t.mem_alert_mb:g} MB for "
+                                      f"{t.mem_alert_s:g} s, backup older than {t.backup_max_age_s / 3600:g} h"}, []
         elif a.cmd == "digest":
             now = datetime.now(ZoneInfo(config.USAGE_TZ))
             fn = digest.send if a.send else digest.plan

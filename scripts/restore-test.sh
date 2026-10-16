@@ -3,15 +3,12 @@
 # app's database and /data, back up, destroy both, restore, verify.
 # Only touches monthly-report's own data.
 source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/testlib.sh"
 APP=monthly-report
 DB=app_monthly_report
 C=annex-app-$APP
 MARK="restore-test-$(date +%Y%m%d%H%M%S)-$RANDOM"
 
-pass=0 fail=0
-ok()  { pass=$((pass + 1)); printf '  \033[32mok\033[0m   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  \033[31mFAIL\033[0m %s (%s)\n' "$1" "$2"; }
-expect() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected '$2', got '$3'"; fi; }
 sql() { vm "docker exec annex-appdata-db-1 psql -q -U postgres -d $DB -Atc \"SET ROLE $DB; $1\""; }
 
 "$ROOT/annex" status "$APP" >/dev/null 2>&1 || "$ROOT/annex" deploy "$ROOT/examples/$APP" >/dev/null
@@ -49,6 +46,4 @@ out=$("$ROOT/annex" run "$APP" monthly 2>&1) && ok "job still runs after restore
 
 sql "DROP TABLE restore_marker;" >/dev/null
 vm "docker exec $C rm -f /data/restore-marker.txt"
-echo
-echo "passed $pass, failed $fail"
-[ "$fail" -eq 0 ]
+finish

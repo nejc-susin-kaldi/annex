@@ -17,7 +17,7 @@ Annex runs small internal tools on the client's own server, behind their login, 
 | `annex_run(app, job)` | Run a scheduled job now |
 | `annex_releases(app)`, `annex_rollback(app, to_release)` | See releases; switch back to an earlier one (code and config only) |
 
-Removing apps, setting secrets and restoring data are **human only**: tell the user the command (`annex remove <app>`, `annex secret set <app> KEY=VALUE`, `annex rollback <app> --with-data`).
+Removing apps, setting secrets, restoring data and managing user accounts are **human only**: tell the user the command (`annex remove <app>`, `annex secret set <app> KEY=VALUE`, `annex rollback <app> --with-data`, `annex users add <login> --name … --email …`).
 
 ## Pick a template
 | The user wants | Template |

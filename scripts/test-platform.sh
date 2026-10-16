@@ -5,42 +5,22 @@
 # Needs the extras profile running (scripts/extras.sh on) for the Metabase and
 # Dozzle checks; they are skipped otherwise.
 source "$(dirname "$0")/lib.sh"
-render >/dev/null
-"$ROOT/scripts/tunnel.sh" up >/dev/null
+source "$(dirname "$0")/testlib.sh"
+use_tunnel
 
-PORT=${ANNEX_PUBLIC_PORT:-8443}
-CA="$(mkcert -CAROOT)/rootCA.pem"
-HOME_URL=$(setting ANNEX_URL_HOME)
-AUTH_URL=$(setting ANNEX_URL_AUTH)
 LOGS_URL=$(setting ANNEX_URL_LOGS)
 MB_URL=$(setting ANNEX_URL_METABASE)
 GW_URL=$(setting ANNEX_URL_GATEWAY)
 MAIL_URL=$(setting ANNEX_URL_MAIL)
 STATUS_URL=$(setting ANNEX_URL_STATUS)
 PATTERN=$(setting ANNEX_HOST_PATTERN)
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"; vm "docker rm -f annex-test-echo >/dev/null 2>&1" || true' EXIT
+on_exit 'vm "docker rm -f annex-test-echo >/dev/null 2>&1"' 
 
-pass=0 fail=0
-ok()  { pass=$((pass + 1)); printf '  \033[32mok\033[0m   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  \033[31mFAIL\033[0m %s (%s)\n' "$1" "$2"; }
-expect() { # expect DESC EXPECTED ACTUAL
-  if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected $2, got $3"; fi
-}
-# curl through the tunnel: every host:port is sent to 127.0.0.1:$PORT
-c() { curl -sS --cacert "$CA" --connect-to "::127.0.0.1:$PORT" "$@"; }
-code() { c -o /dev/null -w '%{http_code}' "$@"; }
-password() { vm "awk -v u='$1' '\$1 == u {print \$2}' $DATA/secrets/users.txt"; }
-login() { # login USER -> cookie jar $TMP/USER.jar, prints HTTP status
-  local pw; pw=$(password "$1")
-  c -c "$TMP/$1.jar" -o "$TMP/$1.login" -w '%{http_code}' -H 'Content-Type: application/json' \
-    --data "{\"username\":\"$1\",\"password\":\"$pw\",\"keepMeLoggedIn\":false,\"targetURL\":\"$HOME_URL/\"}" \
-    "$AUTH_URL/api/firstfactor"
-}
-as() { local u=$1; shift; c -b "$TMP/$u.jar" "$@"; }
 extras=$(vm "cd $DATA/platform && docker compose ps --status running --services" | grep -cx -e metabase -e dozzle || true)
 
 echo "Health"
+# a deploy just before this suite may have restarted Ofelia (D18): let healthchecks settle first
+wait_healthy 90 >/dev/null || true
 unhealthy=$(vm "docker ps --filter label=com.kaldi.annex=true --format '{{.Names}} {{.Status}}'" | grep -v '(healthy)' || true)
 if [ -z "$unhealthy" ]; then ok "all Annex containers healthy"; else bad "all Annex containers healthy" "$unhealthy"; fi
 ports=$(vm "docker ps --filter publish=1-65535 --format '{{.Names}} {{.Ports}}'" | grep -v '^annex-traefik-1 ' || true)
@@ -129,7 +109,4 @@ for net in annex-edge annex-appdata; do
   expect "app network $net cannot reach product-db by IP" 2 "$(probe "$net" "$pdb_ip")"
 done
 expect "control: appdata network reaches appdata-db" 0 "$(probe annex-appdata appdata-db)"
-
-echo
-echo "passed $pass, failed $fail"
-[ "$fail" -eq 0 ]
+finish

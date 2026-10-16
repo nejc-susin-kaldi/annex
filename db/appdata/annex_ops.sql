@@ -1,6 +1,7 @@
 -- The annex-ops service's database (apps' email/Slack grants and the send log).
 -- Idempotent: scripts/push.sh applies it on every push, as postgres, with
---   psql -v ops_pw=<APPDATA_DB_OPS_PASSWORD> -v usage_pw=<APPDATA_DB_METABASE_USAGE_PASSWORD> -d postgres -f -
+--   psql -v ops_pw=<APPDATA_DB_OPS_PASSWORD> -v usage_pw=<APPDATA_DB_METABASE_USAGE_PASSWORD>
+--        -v hooks_pw=<APPDATA_DB_HOOKS_PASSWORD> -d postgres -f -
 -- It lives here and not in init/, because init/ only runs on a fresh database.
 -- Later milestones append their tables to this file.
 DO $$ BEGIN
@@ -17,6 +18,12 @@ DO $$ BEGIN
 END $$;
 ALTER ROLE metabase_usage WITH LOGIN PASSWORD :'usage_pw';
 GRANT CONNECT ON DATABASE annex_ops TO metabase_usage;
+-- The webhook receiver's role (its own container, D55): it may only add events; its grants are at the end
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'annex_hooks') THEN CREATE ROLE annex_hooks LOGIN; END IF;
+END $$;
+ALTER ROLE annex_hooks WITH LOGIN PASSWORD :'hooks_pw';
+GRANT CONNECT ON DATABASE annex_ops TO annex_hooks;
 
 \c annex_ops
 SET ROLE annex_ops;
@@ -158,3 +165,11 @@ CREATE TABLE IF NOT EXISTS annex_ops.hook_events (
 );
 CREATE INDEX IF NOT EXISTS hook_events_due ON annex_ops.hook_events (next_attempt_at) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS hook_events_app ON annex_ops.hook_events (app, received_at DESC);
+
+-- The webhook receiver (annex_hooks) may insert events and read back the new id (RETURNING id), nothing else:
+-- no bodies, no other tables. Delivery, retries and `annex hooks` run in annex-ops as annex_ops.
+REVOKE ALL ON ALL TABLES IN SCHEMA annex_ops FROM annex_hooks;
+GRANT USAGE ON SCHEMA annex_ops TO annex_hooks;
+GRANT INSERT ON annex_ops.hook_events TO annex_hooks;
+GRANT SELECT (id) ON annex_ops.hook_events TO annex_hooks;
+GRANT USAGE ON SEQUENCE annex_ops.hook_events_id_seq TO annex_hooks;

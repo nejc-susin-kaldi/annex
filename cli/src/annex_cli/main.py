@@ -41,6 +41,46 @@ def _job_line(j: dict) -> str:
             + (f" ({j['error']})" if j.get("error") else ""))
 
 
+def _users(a: argparse.Namespace, emit) -> None:
+    c = a.users_cmd
+    if c == "list":
+        res = ops.users("list")
+        if emit:
+            return emit(res["users"])
+        rows = [{**u, "groups": ",".join(u["groups"]), "disabled": "disabled" if u["disabled"] else ""}
+                for u in res["users"]]
+        return print(_table(rows, ["login", "name", "email", "groups", "disabled"]))
+    if c == "remove" and not a.yes:
+        if input(f"Remove the account {a.login}? They can't sign in any more. Type the login to confirm: ") != a.login:
+            sys.exit("Aborted.")
+    opts = {k: getattr(a, k) for k in ("name", "email", "groups", "print_password", "disable", "enable") if hasattr(a, k)}
+    res = ops.users(c, a.login, **opts)
+    if emit:
+        return emit(res)
+    if c == "add":
+        u = res["user"]
+        print(f"added {u['login']} ({u['name']}, {u['email']}), groups: {', '.join(u['groups'])}")
+        if res.get("password"):
+            print(f"password (shown once; give it to them privately): {res['password']}")
+        else:
+            print(f"invitation sent to {res['invited']}: the link lets them set their own password (valid 24 hours)")
+        print("Metabase has its own accounts (D9): add one there too if they need it.")
+    elif c == "set":
+        u = res["user"]
+        print(f"{u['login']}: {u['name']}, {u['email']}, groups: {', '.join(u['groups'])}"
+              + (", DISABLED" if u["disabled"] else ""))
+    elif c == "remove":
+        print(f"removed {res['removed']}. {res['note']}")
+    elif c == "reset":
+        if res.get("password"):
+            print(f"new password for {res['login']} (shown once): {res['password']}"
+                  + ("\n(the demo password list, scripts/show-users.sh, is updated too)" if res.get("demo_password_updated") else ""))
+        else:
+            print(f"a reset link was emailed to {res['reset_sent_to']} (valid 24 hours)")
+    if res.get("warning"):
+        print(f"warning: {res['warning']}")
+
+
 def _release(v: str) -> int:
     try:
         return int(v.lower().removeprefix("r"))
@@ -103,6 +143,30 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("app")
     s.add_argument("--keep-data", action="store_true", help="keep its database, files and secrets")
     s.add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    s = sub.add_parser("users", help="Annex's own user accounts: list, add, set, remove, reset (human only)")
+    us = s.add_subparsers(dest="users_cmd", required=True)
+    us.add_parser("list", help="every account, with groups and whether it's disabled")
+    s = us.add_parser("add", help="create an account and email the person an invitation to set a password")
+    s.add_argument("login")
+    s.add_argument("--name", required=True, help="display name, e.g. 'Ana Kovač'")
+    s.add_argument("--email", required=True)
+    s.add_argument("--groups", default="users", help="comma-separated: users, builders, admins (default users)")
+    s.add_argument("--print-password", action="store_true",
+                   help="print a random password once instead of emailing an invitation")
+    s = us.add_parser("set", help="change name, email or groups, or disable/enable an account")
+    s.add_argument("login")
+    s.add_argument("--name")
+    s.add_argument("--email")
+    s.add_argument("--groups", help="replaces the groups, comma-separated")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--disable", action="store_true", help="the person can't sign in any more (reversible)")
+    g.add_argument("--enable", action="store_true")
+    s = us.add_parser("remove", help="delete an account")
+    s.add_argument("login")
+    s.add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    s = us.add_parser("reset", help="email the person a link to set a new password (or --print-password)")
+    s.add_argument("login")
+    s.add_argument("--print-password", action="store_true")
     sub.add_parser("contract", help="print the app contract (for agents)")
 
     a = p.parse_args(argv)
@@ -256,6 +320,8 @@ def main(argv: list[str] | None = None) -> None:
             res = ops.secret_set(a.app, a.pairs)
             emit(res) if emit else print(f"set {', '.join(res['set'])} for {a.app}: {res['applied']}"
                                          + (f"\nwarning: {res['warning']}" if res.get("warning") else ""))
+        elif a.cmd == "users":
+            _users(a, emit)
         elif a.cmd == "remove":
             if not a.yes:
                 what = "container and image" if a.keep_data else "container, image, database, files and secrets"

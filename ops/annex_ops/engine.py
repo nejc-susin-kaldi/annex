@@ -32,6 +32,14 @@ class Tuning:
     hook_backoff_s: str = "10,30,60,300,900,3600"
     hook_max_age_s: float = 604800
     hook_alert_after_s: float = 900
+    # the host and backups (D56): disk, memory and the age of the newest backup, sampled every host_sample_s
+    host_sample_s: float = 60
+    disk_alert_pct: float = 85         # alert at this much of the disk used ...
+    disk_clear_pct: float = 80         # ... and clear below this (no flapping around one number)
+    mem_alert_mb: float = 256          # alert when less than this is available ...
+    mem_alert_s: float = 300           # ... for this long ...
+    mem_clear_mb: float = 400          # ... and clear once this much is available again
+    backup_max_age_s: float = 93600    # the newest backup may be 26 h old (nightly at 02:00, plus slack)
 
 
 # --- inputs ------------------------------------------------------------------
@@ -140,6 +148,14 @@ class HookOk:  # the hook's events are being delivered again
 
 
 @dataclass
+class HostSample:  # the VM itself, every host_sample_s (host.py); None = couldn't be measured this time
+    disk_used_pct: float | None
+    disk_free_gb: float | None
+    mem_available_mb: float | None
+    backup_at: float | None  # when the newest backup was written (the archive folder's mtime)
+
+
+@dataclass
 class Restore:  # open incidents loaded from the database at startup
     incidents: list[dict]  # {subject, opened_at, last_notified_at, reminders, signals: {name: {since, detail, cid}}}
 
@@ -201,6 +217,7 @@ class Engine:
         self.maint: dict[str, float] = {}
         self.hooks_failing: dict[str, dict[str, float]] = {}  # app -> hook -> when it was last reported failing
         self.webhook_restored: dict[str, float] = {}           # apps whose webhook signal came from the database
+        self.mem_low_since: float | None = None                # memory below mem_alert_mb since then
 
     # --- plumbing ----------------------------------------------------------
     def _in_maintenance(self, subject: str, now: float) -> bool:
@@ -324,6 +341,8 @@ class Engine:
                         f"webhook {inp.hook!r}: its events can't be delivered to the app (pending for {_mins(now - inp.since)})", out)
         elif isinstance(inp, HookOk):
             self._hook_ok(now, inp.app, inp.hook, out)
+        elif isinstance(inp, HostSample):
+            self._host(now, inp, out)
         elif isinstance(inp, Maintenance):
             if inp.until is None:
                 self.maint.pop(inp.subject, None)
@@ -345,6 +364,34 @@ class Engine:
         if not hooks:
             self.hooks_failing.pop(app, None)
             self._clear(now, f"app:{app}", "webhook", out)
+
+    def _host(self, now: float, h: HostSample, out: list[Action]) -> None:
+        """Disk, memory and backups: platform problems (admins only), with a gap between the alert and the clear
+        thresholds so a value hovering around one number doesn't flap."""
+        t = self.tuning
+        if h.disk_used_pct is not None:
+            if h.disk_used_pct >= t.disk_alert_pct:
+                free = f", {h.disk_free_gb:.1f} GB free" if h.disk_free_gb is not None else ""
+                self._raise(now, "platform:disk", "disk", f"the VM's disk is {h.disk_used_pct:.0f} % full{free}", out)
+            elif h.disk_used_pct < t.disk_clear_pct:
+                self._clear(now, "platform:disk", "disk", out)
+        if h.mem_available_mb is not None:
+            if h.mem_available_mb < t.mem_alert_mb:
+                self.mem_low_since = self.mem_low_since if self.mem_low_since is not None else now
+                if now - self.mem_low_since >= t.mem_alert_s:
+                    self._raise(now, "platform:memory", "memory", f"only {h.mem_available_mb:.0f} MB of memory "
+                                f"available for {_mins(now - self.mem_low_since)}", out)
+            else:
+                self.mem_low_since = None
+                if h.mem_available_mb >= t.mem_clear_mb:
+                    self._clear(now, "platform:memory", "memory", out)
+        if h.backup_at is not None:
+            age = now - h.backup_at
+            if age > t.backup_max_age_s:
+                self._raise(now, "platform:backup", "backup", f"the newest backup is {_mins(age)} old "
+                            f"(expected nightly at 02:00)", out)
+            else:
+                self._clear(now, "platform:backup", "backup", out)
 
     def _seen(self, now: float, ev: Seen, out: list[Action]) -> None:
         c = self._ctr(ev)

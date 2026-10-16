@@ -5,13 +5,9 @@
 # Deploys tests/hook-probe, an app that records what Annex forwards to it. Shortens the retry delays through
 # state/ops/tuning.json (removed on exit). About 8-10 minutes.
 source "$(dirname "$0")/lib.sh"
-render >/dev/null
-"$ROOT/scripts/tunnel.sh" up >/dev/null
+source "$(dirname "$0")/testlib.sh"
+use_tunnel
 
-PORT=${ANNEX_PUBLIC_PORT:-8443}
-CA="$(mkcert -CAROOT)/rootCA.pem"
-HOME_URL=$(setting ANNEX_URL_HOME)
-AUTH_URL=$(setting ANNEX_URL_AUTH)
 MAIL_URL=$(setting ANNEX_URL_MAIL)
 HOOKS_URL=$(setting ANNEX_URL_HOOKS)
 APP=hook-probe
@@ -19,28 +15,13 @@ C_APP=annex-app-$APP
 SAM=sam@annex.example
 ADMIN=admin@annex.example
 TUNING=$DATA/state/ops/tuning.json
-TMP=$(mktemp -d)
 WORK=$ROOT/.build/test-hooks
 cleanup() {
   rm -rf "$TMP" "$WORK"
   vm "rm -f $TUNING; docker start $C_APP >/dev/null 2>&1" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT
+on_exit cleanup
 
-pass=0 fail=0
-ok()  { pass=$((pass + 1)); printf '  \033[32mok\033[0m   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  \033[31mFAIL\033[0m %s (%s)\n' "$1" "$2"; }
-expect() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected $2, got $3"; fi; }
-has() { if grep -qF -- "$2" <<<"$3"; then ok "$1"; else bad "$1" "missing '$2' in: $(head -c 300 <<<"$3")"; fi; }
-hasnt() { if grep -qF -- "$2" <<<"$3"; then bad "$1" "found '$2'"; else ok "$1"; fi; }
-c() { curl -sS --cacert "$CA" --connect-to "::127.0.0.1:$PORT" "$@"; }
-code() { c -o /dev/null -w '%{http_code}' "$@"; }
-password() { vm "awk -v u='$1' '\$1 == u {print \$2}' $DATA/secrets/users.txt"; }
-login() {
-  local pw; pw=$(password "$1")
-  c -c "$TMP/$1.jar" -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
-    --data "{\"username\":\"$1\",\"password\":\"$pw\",\"keepMeLoggedIn\":false,\"targetURL\":\"$HOME_URL/\"}" "$AUTH_URL/api/firstfactor"
-}
 
 # --- signing (on the Mac; the secret goes in through the environment, not the command line) ----------------------
 sign() { # sign KIND SECRET FILE [CALLBACK_URL] -> the signature header value
@@ -259,16 +240,35 @@ expect "exactly one alert reached the admin" 1 "$(mail_count $ADMIN "$ALERT is")
 expect "exactly one 'resolved' reached sam" 1 "$(mail_count $SAM "[Annex] resolved: $APP")"
 expect "the event reached the app exactly once" 1 "$(event_count "$AID")"
 
+# --- the receiver is its own, minimal container (D55) -------------------------------------------------------------------------------------
+echo "The receiver is isolated"
+R=annex-hooks-1
+renv=$(vm "docker exec $R printenv" 2>/dev/null | cut -d= -f1)
+for v in SLACK_BOT_TOKEN OPS_INTERNAL_TOKEN ANNEX_EMAIL_FROM OPS_SMTP_HOST; do
+  hasnt "the receiver has no $v" "$v" "$renv"
+done
+rnets=$(vm "docker inspect -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}} {{end}}' $R")
+expect "the receiver is only on annex-edge and annex-appdata" "annex-appdata annex-edge" "$(tr ' ' '\n' <<<"$rnets" | grep . | sort | tr '\n' ' ' | sed 's/ $//')"
+expect "the receiver has no user directory mounted" "" "$(vm "docker exec $R ls /annex/directory 2>/dev/null || true")"
+rsql() { vm "docker exec $R python -c \"import os, psycopg
+try:
+    with psycopg.connect(os.environ['OPS_DATABASE_URL']) as c: c.execute('$1'); print('allowed')
+except psycopg.errors.InsufficientPrivilege: print('denied')\""; }
+expect "its database role can't read event bodies" denied "$(rsql 'SELECT body FROM annex_ops.hook_events LIMIT 1')"
+expect "  ...or the send log" denied "$(rsql 'SELECT 1 FROM annex_ops.sends LIMIT 1')"
+expect "  ...or the app grants" denied "$(rsql 'SELECT 1 FROM annex_ops.app_grants LIMIT 1')"
+expect "  ...or change events" denied "$(rsql 'UPDATE annex_ops.hook_events SET attempts = 0 WHERE false')"
+
 # --- secrets stay out of everything -----------------------------------------------------------------------------------------------------------------------
 echo "Secrets"
 leak=0
 for s in "$TRELLO_SECRET" "$GH_SECRET" "$PLAIN_SECRET"; do
   out="$deploy_out$("$ROOT/annex" status "$APP" 2>&1)$("$ROOT/annex" hooks "$APP" -n 100 2>&1)$("$ROOT/annex" hooks show "$SID" 2>&1)"
   grep -qF "$s" <<<"$out" && leak=1
-  grep -qF "$s" <<<"$(vm "docker logs annex-ops-1 2>&1")" && leak=1
+  grep -qF "$s" <<<"$(vm "docker logs annex-ops-1 2>&1; docker logs annex-hooks-1 2>&1")" && leak=1
   [ "$(vm "docker exec annex-appdata-db-1 psql -U postgres -d annex_ops -Atc \"SELECT count(*) FROM annex_ops.hook_events WHERE headers::text LIKE '%$s%' OR last_error LIKE '%$s%'\"")" != 0 ] && leak=1
 done
-expect "no signing secret appears in CLI output, ops logs or the database" 0 "$leak"
+expect "no signing secret appears in CLI output, ops or receiver logs, or the database" 0 "$leak"
 
 # --- 11. teardown ----------------------------------------------------------------------------------------------------------------------------------------------
 echo "Teardown"
@@ -276,7 +276,4 @@ echo "Teardown"
 expect "its hooks file is gone" "" "$(vm "ls $DATA/secrets/hooks | grep -x '$APP.json' || true")"
 trello_event t8 "gone-$RANDOM"
 expect "its URL is a 404 now" 404 "$CODE"
-
-echo
-echo "passed $pass, failed $fail"
-[ "$fail" -eq 0 ]
+finish

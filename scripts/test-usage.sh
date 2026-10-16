@@ -5,13 +5,9 @@
 # nothing personal leaks; raw rows are deleted after 30 days; a restart neither loses nor repeats rows; the
 # weekly digest flags a dormant app. Deploys two throwaway static apps (usage-probe, usage-idle) and removes them.
 source "$(dirname "$0")/lib.sh"
-render >/dev/null
-"$ROOT/scripts/tunnel.sh" up >/dev/null
+source "$(dirname "$0")/testlib.sh"
+use_tunnel
 
-PORT=${ANNEX_PUBLIC_PORT:-8443}
-CA="$(mkcert -CAROOT)/rootCA.pem"
-HOME_URL=$(setting ANNEX_URL_HOME)
-AUTH_URL=$(setting ANNEX_URL_AUTH)
 MB_URL=$(setting ANNEX_URL_METABASE)
 MAIL_URL=$(setting ANNEX_URL_MAIL)
 PATTERN=$(setting ANNEX_HOST_PATTERN)
@@ -19,23 +15,7 @@ SUFFIX=${ANNEX_PUBLIC_PORT:+:$ANNEX_PUBLIC_PORT}
 PROBE=usage-probe IDLE=usage-idle LOOKUP=client-lookup
 url() { echo "https://${PATTERN//\{name\}/$1}$SUFFIX"; }
 WORK=$ROOT/.build/test-usage
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
 
-pass=0 fail=0
-ok()  { pass=$((pass + 1)); printf '  \033[32mok\033[0m   %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  \033[31mFAIL\033[0m %s (%s)\n' "$1" "$2"; }
-expect() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected $2, got $3"; fi; }
-has() { if grep -qF -- "$2" <<<"$3"; then ok "$1"; else bad "$1" "missing '$2' in: $(head -c 300 <<<"$3")"; fi; }
-c() { curl -sS --cacert "$CA" --connect-to "::127.0.0.1:$PORT" "$@"; }
-code() { c -o /dev/null -w '%{http_code}' "$@"; }
-password() { vm "awk -v u='$1' '\$1 == u {print \$2}' $DATA/secrets/users.txt"; }
-login() {
-  local pw; pw=$(password "$1")
-  c -c "$TMP/$1.jar" -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
-    --data "{\"username\":\"$1\",\"password\":\"$pw\",\"keepMeLoggedIn\":false,\"targetURL\":\"$HOME_URL/\"}" "$AUTH_URL/api/firstfactor"
-}
-as() { local u=$1; shift; c -b "$TMP/$u.jar" "$@"; }
 ctl() { vm "docker exec annex-ops-1 python -m annex_ops.ctl $* --json"; }
 sql() { vm "docker exec annex-appdata-db-1 psql -U postgres -d annex_ops -Atc \"$1\" 2>&1"; }
 hits() { # hits USER APP PATH COUNT: signed-in requests
@@ -197,7 +177,4 @@ names=$(ctl usage | python3 -c 'import json,sys; print(" ".join(r["app"] for r i
 if grep -qE "$PROBE|$IDLE" <<<"$names"; then bad "removed apps are hidden from annex usage" "$names"; else ok "removed apps are hidden from annex usage"; fi
 has "their history stays (usage-probe by day)" "removed" "$("$ROOT/annex" usage $PROBE 2>&1)"
 rm -rf "$WORK"
-
-echo
-echo "passed $pass, failed $fail"
-[ "$fail" -eq 0 ]
+finish
