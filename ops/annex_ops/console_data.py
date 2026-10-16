@@ -4,13 +4,13 @@ Almost everything is a function that already exists for `annex status`, `annex u
 (usage.usage_app, incidents.list_incidents, errors_run.list_groups, logstore.query_logs), so a number on a page and the
 same number from the CLI come from the same query. What's new here: the apps and their owners (from the release
 records, `annex_ops.releases`, read for an app's latest life: removing an app restarts numbering, D65), the status
-view (Gatus's API until M2.6) and the warnings.
+view (the health checker's results, `annex_ops.health_checks`) and the warnings.
 """
 import os
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import config, console_view as v, db, errors_run, host, incidents, logstore, usage
+from . import config, console_view as v, db, errors_run, health, host, incidents, logstore, usage
 from .errors import OpsError
 
 NO_RECORD = "deployed before releases were recorded"
@@ -50,24 +50,24 @@ def apps() -> list[dict]:
     return out
 
 
-def gatus_states() -> dict[str, dict]:
-    """Gatus's latest verdict per endpoint key (`apps_<app>`, `platform_front-door`); {} if Gatus can't be reached."""
+def health_states() -> dict[str, dict]:
+    """The health checker's newest result per check, keyed `app:<name>` and `platform:front-door`: {"up": bool, "detail": ...}.
+    A result older than the checker's freshness limit is left out (it isn't running, or the app is new); {} if the table can't be read."""
     try:
-        statuses = incidents.gatus_statuses()
-    except Exception:  # noqa: BLE001: a Gatus outage must not break the console
+        rows = health.latest()
+    except OpsError:
         return {}
-    out = {}
-    for ep in statuses:
-        results = ep.get("results") or []
-        if results:
-            last = results[-1]
-            out[f"{ep.get('group')}_{ep.get('name')}"] = {"up": bool(last.get("success")), "detail": "; ".join(last.get("errors") or [])}
+    now, out = time.time(), {}
+    for key, row in rows.items():
+        st = health.state_of(row, now, config.tuning().check_interval_s)
+        if st["state"] != "unknown":
+            out[key] = {"up": st["state"] == "up", "detail": st.get("detail", "")}
     return out
 
 
-def app_health(app: str, manifest: dict | None, gatus: dict, open_incidents: list[dict]) -> tuple[str, str]:
-    """(state, detail): down if Gatus says so or an incident is open on the app; no check (job-only apps) is ok unless an incident is open."""
-    g = gatus.get(f"apps_{app}")
+def app_health(app: str, manifest: dict | None, states: dict, open_incidents: list[dict]) -> tuple[str, str]:
+    """(state, detail): down if the health check fails or an incident is open on the app; no check (job-only apps) is ok unless an incident is open."""
+    g = states.get(f"app:{app}")
     if g is not None and not g["up"]:
         return "down", g["detail"] or "the health check fails"
     own = [i for i in open_incidents if i["subject"] == f"app:{app}"]
@@ -77,19 +77,19 @@ def app_health(app: str, manifest: dict | None, gatus: dict, open_incidents: lis
         return "up", ""
     if manifest and manifest.get("type") == "job":
         return ("down", "a job is failing") if open_incidents else ("ok", "job-only: no health check")
-    return "unknown", "no check result yet" if gatus else "the health checker isn't answering"
+    return "unknown", "no check result yet" if states else "the health checker isn't answering"
 
 
 def status_view() -> tuple[list[dict], list[dict]]:
     """(apps, platform): names and up/down for everyone signed in."""
-    gatus = gatus_states()
+    states = health_states()
     open_all = incidents.list_incidents(open_only=True, limit=200)
     out_apps = []
     for a in apps():
-        state, detail = app_health(a["app"], a["manifest"], gatus, [i for i in open_all if i["app"] == a["app"]])
+        state, detail = app_health(a["app"], a["manifest"], states, [i for i in open_all if i["app"] == a["app"]])
         out_apps.append({"app": a["app"], "state": state, "detail": detail})
     platform = []
-    fd = gatus.get("platform_front-door")
+    fd = states.get(health.FRONT_DOOR)
     platform.append({"name": "front door", "state": "unknown" if fd is None else "up" if fd["up"] else "down", "detail": fd["detail"] if fd and not fd["up"] else ""})
     for i in open_all:
         if i["subject"].startswith("platform:") and i["subject"] != "platform:front-door":
@@ -142,14 +142,14 @@ def trend_for(row: dict) -> str:
 def fleet(who: v.Who) -> dict:
     all_apps = apps()
     mine = [a for a in all_apps if v.can_see_app(who, a["owner"])]
-    gatus = gatus_states()
+    states = health_states()
     open_all = incidents.list_incidents(open_only=True, limit=500)
     use = {r["app"]: r for r in usage.usage_rows()}
     groups = errors_run.list_groups(None, "active", 1000)
     rows = []
     for a in mine:
         inc = [i for i in open_all if i["app"] == a["app"]]
-        health = app_health(a["app"], a["manifest"], gatus, inc)
+        health = app_health(a["app"], a["manifest"], states, inc)
         u = use.get(a["app"])
         runs = incidents.last_job_runs(a["app"])
         flags = ([u["signal"]] if u and u["signal"] else []) + (["incident"] if inc else [])
@@ -183,10 +183,10 @@ def app_detail(who: v.Who, app: str) -> dict | None:
     found = next((a for a in apps() if a["app"] == app), None)
     if found is None:
         return None
-    gatus = gatus_states()
+    states = health_states()
     inc = incidents.list_incidents(open_only=True, app=app)
-    health = app_health(app, found["manifest"], gatus, inc)
-    g = gatus.get(f"apps_{app}")
+    health = app_health(app, found["manifest"], states, inc)
+    g = states.get(f"app:{app}")
     runs = incidents.last_job_runs(app)
     try:
         use = usage.usage_app(app, who.admin)

@@ -170,7 +170,7 @@ hasnt "annex hooks <app> never prints a body" "stopped-" "$("$ROOT/annex" hooks 
 
 # --- 7. the route is tight ---------------------------------------------------------------------------------------------------------------------
 echo "The route is tight"
-for p in /v1/me /healthz /internal/gatus /tiles/client-lookup /; do
+for p in /v1/me /healthz /internal/anything /tiles/client-lookup /; do
   expect "hooks host $p is a 404 (GET)" 404 "$(code "$HOOKS_URL$p")"
 done
 expect "hooks host /v1/email is a 404 (POST)" 404 "$(code -X POST -d '{}' "$HOOKS_URL/v1/email")"
@@ -244,7 +244,7 @@ expect "the event reached the app exactly once" 1 "$(event_count "$AID")"
 echo "The receiver is isolated"
 R=annex-hooks-1
 renv=$(vm "docker exec $R printenv" 2>/dev/null | cut -d= -f1)
-for v in SLACK_BOT_TOKEN OPS_INTERNAL_TOKEN ANNEX_EMAIL_FROM OPS_SMTP_HOST; do
+for v in SLACK_BOT_TOKEN ANNEX_EMAIL_FROM OPS_SMTP_HOST; do
   hasnt "the receiver has no $v" "$v" "$renv"
 done
 rnets=$(vm "docker inspect -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}} {{end}}' $R")

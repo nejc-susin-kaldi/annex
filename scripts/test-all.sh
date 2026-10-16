@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run every check, in an order where each suite leaves what the next one needs, and
 # print a summary. Fast set by default (about 30 minutes); --slow adds test-alerts.sh
-# (another 20 minutes: Gatus's 60 s interval and the "exactly one alert" waits).
+# (the "exactly one alert" waits and the scheduled job's minute).
 # This is long: after a push, scripts/test-smoke.sh (under a minute) is the check to run.
 # Usage: scripts/test-all.sh [--slow] [--only name[,name]]
 #   e.g. scripts/test-all.sh --only unit,platform,apps

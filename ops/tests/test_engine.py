@@ -1,4 +1,4 @@
-from annex_ops.engine import (Destroy, Die, Engine, GatusState, Health, JobResult, Maintenance, Oom, ReconcileDone,
+from annex_ops.engine import (Destroy, Die, Engine, HealthState, Health, JobResult, Maintenance, Oom, ReconcileDone,
                               Request, Restore, Seen, Start, Stop, Tuning)
 
 APP = "app:probe"
@@ -21,23 +21,23 @@ def engine(**kw):
     return Engine(Tuning(**kw))
 
 
-def test_stop_noticed_by_docker_and_gatus_is_one_incident():
+def test_stop_noticed_by_docker_and_the_health_checker_is_one_incident():
     e = engine()
     out = run(e, [(0, Stop(**C)), (1, Die(exit_code=137, **C)), (61, "tick"),
-                  (120, GatusState(APP, True, "connection refused")), (130, "tick")])
+                  (120, HealthState(APP, True, "connection refused")), (130, "tick")])
     assert kinds(out) == ["open", ("add_signal", "down")]
     assert out[0].signals.keys() == {"stopped"}
-    out = run(e, [(200, Start(**C)), (210, GatusState(APP, False))])
+    out = run(e, [(200, Start(**C)), (210, HealthState(APP, False))])
     assert kinds(out) == [("clear_signal", "stopped"), ("clear_signal", "down"), "resolve"]
     assert out[-1].duration_s == 210 - 61 and not out[-1].quiet
 
 
 def test_resolve_waits_until_every_signal_has_cleared():
     e = engine()
-    run(e, [(0, Stop(**C)), (61, "tick"), (70, GatusState(APP, True))])
+    run(e, [(0, Stop(**C)), (61, "tick"), (70, HealthState(APP, True))])
     out = run(e, [(100, Start(**C))])
-    assert kinds(out) == [("clear_signal", "stopped")]  # Gatus still says down
-    assert kinds(run(e, [(130, GatusState(APP, False))])) == [("clear_signal", "down"), "resolve"]
+    assert kinds(out) == [("clear_signal", "stopped")]  # the health checker still says down
+    assert kinds(run(e, [(130, HealthState(APP, False))])) == [("clear_signal", "down"), "resolve"]
 
 
 def test_a_deploy_length_stop_alerts_nobody():
@@ -178,7 +178,7 @@ def test_job_incident_is_separate_from_the_app_incident():
 # --- reminders ---------------------------------------------------------------------
 def test_reminders_after_an_hour_then_daily():
     e = engine()
-    run(e, [(0, Start(**C)), (1, GatusState(APP, True))])
+    run(e, [(0, Start(**C)), (1, HealthState(APP, True))])
     assert run(e, [(3600, "tick")]) == []
     assert kinds(run(e, [(3601, "tick")])) == ["remind"]
     assert run(e, [(3602, "tick"), (3700 + 80000, "tick")]) == []
@@ -188,7 +188,7 @@ def test_reminders_after_an_hour_then_daily():
 
 def test_reminder_lists_the_current_signals_and_the_age():
     e = engine()
-    run(e, [(0, Start(**C)), (0, GatusState(APP, True, "x")), (10, Health(healthy=False, **C))])
+    run(e, [(0, Start(**C)), (0, HealthState(APP, True, "x")), (10, Health(healthy=False, **C))])
     out = run(e, [(3601, "tick")])
     assert out[0].signals.keys() == {"down", "unhealthy"} and out[0].duration_s == 3601
 
@@ -223,14 +223,14 @@ def test_app_maintenance_covers_its_jobs():
 
 def test_reminders_are_held_during_maintenance():
     e = engine()
-    run(e, [(0, Start(**C)), (1, GatusState(APP, True)), (3000, Maintenance(APP, 9000))])
+    run(e, [(0, Start(**C)), (1, HealthState(APP, True)), (3000, Maintenance(APP, 9000))])
     assert run(e, [(3700, "tick")]) == []
 
 
 # --- destroy, recreate, reconcile ----------------------------------------------------------
 def test_destroy_closes_the_incident_without_a_message():
     e = engine()
-    run(e, [(0, Start(**C)), (1, Stop(**C)), (62, "tick"), (70, GatusState(APP, True))])
+    run(e, [(0, Start(**C)), (1, Stop(**C)), (62, "tick"), (70, HealthState(APP, True))])
     out = run(e, [(100, Destroy("c1", APP))])
     assert [a.kind for a in out if a.kind != "forget"] == ["clear_signal", "clear_signal", "resolve"]
     assert out[-1].quiet
@@ -245,14 +245,14 @@ def test_destroy_also_closes_the_apps_job_incidents():
     assert out[-1].kind == "resolve" and out[-1].quiet and out[-1].subject == "job:probe/check"
 
 
-def test_gatus_for_an_app_with_no_container_is_ignored():
+def test_a_health_result_for_an_app_with_no_container_is_ignored():
     e = engine()
-    assert run(e, [(0, GatusState("app:ghost", True))]) == []
+    assert run(e, [(0, HealthState("app:ghost", True))]) == []
 
 
 def test_platform_front_door_needs_no_container():
     e = engine()
-    assert kinds(run(e, [(0, GatusState("platform:front-door", True))])) == ["open"]
+    assert kinds(run(e, [(0, HealthState("platform:front-door", True))])) == ["open"]
 
 
 def test_compose_recreate_does_not_alert():

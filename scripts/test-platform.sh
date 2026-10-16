@@ -12,7 +12,7 @@ LOGS_URL=$(setting ANNEX_URL_LOGS)
 MB_URL=$(setting ANNEX_URL_METABASE)
 GW_URL=$(setting ANNEX_URL_GATEWAY)
 MAIL_URL=$(setting ANNEX_URL_MAIL)
-STATUS_URL=$(setting ANNEX_URL_STATUS)
+STATUS_URL=$(setting ANNEX_URL_CONSOLE)/status
 PATTERN=$(setting ANNEX_HOST_PATTERN)
 on_exit 'vm "docker rm -f annex-test-echo >/dev/null 2>&1"' 
 
@@ -44,8 +44,8 @@ done
 echo "Access rules"
 expect "gateway: sam is forbidden" 403 "$(code -b "$TMP/sam.jar" "$GW_URL/")"
 expect "gateway: kaldi-admin passes the front door (PostgREST rejects a call without JWT)" 401 "$(code -b "$TMP/kaldi-admin.jar" "$GW_URL/")"
-expect "status: anonymous is sent to login" 302 "$(code "$STATUS_URL/")"
-expect "status: cm sees the status page" 200 "$(code -b "$TMP/cm.jar" "$STATUS_URL/")"
+expect "status: anonymous is sent to login" 302 "$(code "$STATUS_URL")"
+expect "status: cm sees the status page" 200 "$(code -b "$TMP/cm.jar" "$STATUS_URL")"
 expect "mail: sam is forbidden" 403 "$(code -b "$TMP/sam.jar" "$MAIL_URL/")"
 expect "mail: cm is forbidden" 403 "$(code -b "$TMP/cm.jar" "$MAIL_URL/")"
 expect "mail: kaldi-admin gets Mailpit" 200 "$(code -b "$TMP/kaldi-admin.jar" "$MAIL_URL/")"

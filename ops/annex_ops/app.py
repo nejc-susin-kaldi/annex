@@ -1,7 +1,7 @@
 """The annex-ops HTTP API (apps reach it as ANNEX_OPS_URL on the edge network)."""
-import hmac
 import json
 import sys
+import time
 import traceback
 from contextlib import asynccontextmanager
 
@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import auth, config, db, email, engine, incidents, sends, slack, usage
+from . import auth, config, db, email, health, incidents, sends, slack, usage
 from .errors import OpsError
 
 
@@ -100,29 +100,17 @@ async def me(request: Request):
             "slack_connected": config.slack_connected()}
 
 
+def health_tile() -> dict:
+    return health.tile(health.latest(), time.time(), config.tuning().check_interval_s)
+
+
 @app.get("/tiles/{app_name}")
 async def tile(app_name: str):
     """The numbers on an app's discovery tile (Homepage calls this from its server): totals and status, never
     logins. No token: Homepage can't send one, and apps on the edge network can read these totals too (D46)."""
+    if app_name == "_status":  # the discovery page's Status tile: how many health checks are up and down
+        return await run_in_threadpool(health_tile)
     return await run_in_threadpool(usage.tile_for, app_name)
-
-
-@app.post("/internal/gatus")
-async def gatus_webhook(request: Request):
-    """Gatus's alert webhook (TRIGGERED or RESOLVED). Not for apps: it takes the internal token, not an app token."""
-    token = auth.bearer_token(request.headers.get("authorization"))
-    if not config.INTERNAL_TOKEN or not token or not hmac.compare_digest(token, config.INTERNAL_TOKEN):
-        raise OpsError(401, "this endpoint is for Gatus only (it needs OPS_INTERNAL_TOKEN)")
-    q = request.query_params
-    subject = incidents.gatus_subject(q.get("group", ""), q.get("endpoint", ""))
-    state = q.get("state", "").upper()
-    if not subject or state not in ("TRIGGERED", "RESOLVED"):
-        raise OpsError(400, "expected ?group=apps|platform&endpoint=<name>&state=TRIGGERED|RESOLVED")
-    if incidents._manager is None:
-        raise OpsError(503, "the alert engine isn't running in this annex-ops (OPS_WATCHERS=0)")
-    detail = (await request.body()).decode(errors="replace").strip()[:300]
-    incidents._manager.submit(engine.GatusState(subject, state == "TRIGGERED", detail))
-    return {"ok": True}
 
 
 @app.post("/v1/email")

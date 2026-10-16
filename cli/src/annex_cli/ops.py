@@ -33,7 +33,6 @@ OFELIA = "annex-ofelia-1"
 GATEWAY_URL = "http://gateway:3000"
 OPS_URL = "http://ops:8000"
 OPS_CONTAINER = "annex-ops-1"
-GATUS = "annex-gatus-1"
 HEALTH_TIMEOUT = int(os.environ.get("ANNEX_HEALTH_TIMEOUT", "60"))
 KEEP_RELEASES = 3  # images and data snapshots kept per app
 SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", ".DS_Store", ".pytest_cache", ".mypy_cache"}
@@ -308,33 +307,6 @@ def _webhook_urls(r: Remote, app: str, webhooks) -> list[dict]:
             for w in (x if isinstance(x, dict) else x.__dict__ for x in webhooks)]
 
 
-def gatus_config(m: mf.Manifest) -> str | None:
-    """Gatus's check for a web app (one file per app); job-only apps have none, ops watches their jobs instead."""
-    if not m.is_web:
-        return None
-    return yaml.safe_dump({"endpoints": [{
-        "name": m.name, "group": "apps", "url": f"http://{container(m.name)}:{m.port}{m.healthcheck}",
-        "interval": "60s", "conditions": ["[STATUS] == 200"],
-        "alerts": [{"type": "custom", "failure-threshold": 2, "success-threshold": 2, "send-on-resolved": True,
-                    "description": "health check failing"}]}]}, sort_keys=False)
-
-
-def _gatus_check(r: Remote, m: mf.Manifest) -> None:
-    """Write (or delete) the app's Gatus check. Gatus picks up new files by itself after about 30 s but never
-    notices a deleted one, so it is restarted whenever the file changes (spike, D41); unchanged = no restart."""
-    path = f"{r.data}/state/gatus/apps/{m.name}.yaml"
-    want = gatus_config(m)
-    have = r.run(f"cat {path}", check=False)
-    current = have.stdout.decode() if have.returncode == 0 else None
-    if want == current:
-        return
-    if want is None:
-        r.run(f"rm -f {path}")
-    else:
-        r.run(f"mkdir -p {r.data}/state/gatus/apps && cat > {path}", input=want)
-    r.run(f"docker restart {GATUS} >/dev/null 2>&1", check=False)
-
-
 def _drain(r: Remote, app: str, progress: Progress = _quiet) -> None:
     """Before Docker replaces or removes an app's container, have annex-ops store the lines it hasn't read yet
     (the container's log goes with it). Never blocks the operation: annex-ops being down, slow or confused costs
@@ -372,8 +344,6 @@ def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Pro
     progress(f"Starting r{release} ({image})")
     r.run(f"cd {d} && docker compose up -d --remove-orphans 2>&1")
     failed = _gate(r, m, progress)
-    if not failed:
-        _gatus_check(r, m)  # after the gate: Gatus checks at once when it restarts, and the app is up by now
     if failed or not m.is_web:
         return failed, prov
     progress("Waiting for the route and the container healthcheck")
@@ -891,10 +861,6 @@ def remove(app: str, keep_data: bool = False) -> dict:
         raise AnnexError(f"No app named {app!r}. See deployed apps with: annex list")
     d = f"{r.data}/deploy/{app}"
     _drain(r, app)
-    # the check goes first, so Gatus never sees the stopped container as an outage
-    if r.run(f"test -f {r.data}/state/gatus/apps/{app}.yaml", check=False).returncode == 0:
-        r.run(f"rm -f {r.data}/state/gatus/apps/{app}.yaml")
-        r.run(f"docker restart {GATUS} >/dev/null 2>&1", check=False)
     r.run(f"if [ -f {d}/compose.yaml ]; then cd {d} && docker compose down --remove-orphans 2>&1; "
           f"else docker rm -f {container(app)} >/dev/null 2>&1 || true; fi; "
           f"docker image ls -q annex-app/{app} | xargs -r docker rmi -f >/dev/null 2>&1 || true")

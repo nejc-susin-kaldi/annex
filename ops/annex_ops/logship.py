@@ -3,7 +3,7 @@
 What is shipped (Nejc, 16 Oct): every app container, annex-ops, the webhook receiver, the gateway's request
 lines (from product-db's log), Authelia's sign-in lines, and scheduled jobs' output (jobs run inside the app's
 container through Ofelia, so the output is in Ofelia's log). Not shipped: the two socket proxies, Traefik (its
-access log already feeds usage) and Gatus.
+access log already feeds usage) and the Docker-level health checks.
 
 Everything that decides something is a pure function with a unit test: `parse_app_line` (JSON or plain text),
 `scrub_value` / `scrub_text` (secrets never reach the table), `parse_authelia_line`, `parse_gateway_line`,
@@ -183,7 +183,7 @@ def parse_logfmt(line: str) -> dict[str, str]:
 
 def parse_authelia_line(raw: str) -> Parsed | None:
     """Authelia's sign-in lines: successful and failed attempts, unknown users, access denied to a known user,
-    password resets, and every warning or error. Not the 'not authorized to user <anonymous>' line Gatus's front-door check
+    password resets, and every warning or error. Not the 'not authorized to user <anonymous>' line the health checker's front-door check
     causes every minute, nor the user file reloads."""
     kv = parse_logfmt(clean(raw))
     msg = kv.get("msg")

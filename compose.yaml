@@ -68,7 +68,7 @@ services:
     volumes:
       - ./config/traefik:/etc/traefik:ro
     networks:
-      # Gatus (on edge) checks the front door by its real hostnames, which resolve to Traefik here
+      # annex-ops (on edge) checks the front door by its real hostnames, which resolve to Traefik here
       edge: {aliases: ["${ANNEX_HOST_HOME}", "${ANNEX_HOST_AUTH}"]}
       platform: {}
       socket-ro: {}
@@ -249,7 +249,8 @@ services:
       OPS_USERS_FILE: /annex/directory/users.json
       # alerts (M1.3): where to post, and what to put in links
       ANNEX_ALERT_SLACK_CHANNEL: ${ANNEX_ALERT_SLACK_CHANNEL}
-      ANNEX_URL_STATUS: ${ANNEX_URL_STATUS}
+      ANNEX_URL_STATUS: ${ANNEX_URL_CONSOLE}/status
+      ANNEX_FRONTDOOR_URL: ${ANNEX_FRONTDOOR_URL}
       ANNEX_URL_METABASE: ${ANNEX_URL_METABASE}
       # incoming webhooks (M1.5): the public URL (receiving is the hooks container's job; ops delivers)
       ANNEX_URL_HOOKS: ${ANNEX_URL_HOOKS}
@@ -262,7 +263,7 @@ services:
       - ${ANNEX_DATA_DIR}/state/ops:/annex/state:ro
       # each app's hooks file (delivery needs its token, port and paths; the directory, not a file: D7)
       - ${ANNEX_DATA_DIR}/secrets/hooks:/annex/hooks:ro
-    # edge: apps reach it, and it reaches Slack; platform: Mailpit's SMTP and Gatus; appdata: its database;
+    # edge: apps reach it, and it reaches Slack; platform: Mailpit's SMTP and Homepage's tiles; appdata: its database;
     # socket-ro: Docker events and logs, read-only
     networks: [edge, platform, appdata, socket-ro]
     user: "10001:10001"
@@ -327,7 +328,7 @@ services:
 
   # The console (M2.4, D69): server-rendered pages for builders and admins, read-only. Its own container (the ops image,
   # another command) so that the identity headers it trusts can only come from Traefik's forward-auth: it is on `platform`
-  # (Traefik, Gatus) and on `console`, a network shared only with appdata-db. Never on `edge` or `appdata`, where apps
+  # (Traefik) and on `console`, a network shared only with appdata-db. Never on `edge` or `appdata`, where apps
   # are, so no app can reach it and forge a Remote-User. Its database role may only SELECT what its pages show. No
   # Docker access, no SMTP, no Slack token, no directory, no secrets of any app.
   console:
@@ -387,40 +388,6 @@ services:
       traefik.docker.network: annex-platform
       traefik.http.routers.mail.rule: Host(`${ANNEX_HOST_MAIL}`)
       traefik.http.services.mail.loadbalancer.server.port: "8025"
-
-  # --- Monitoring: uptime checks; incidents and alerts are in annex-ops --------
-  gatus:
-    <<: *base
-    image: annex-gatus:5.37.0
-    build:
-      context: ./images/gatus
-      labels:
-        com.kaldi.annex: "true"
-    env_file: ${ANNEX_DATA_DIR}/secrets/gatus.env
-    environment:
-      <<: *tz
-      # mounted under /annex, not /config: the image's sample config there would be merged in otherwise
-      GATUS_CONFIG_PATH: /annex
-      ANNEX_CONFIG_HASH: ${ANNEX_CONFIG_HASH_GATUS}
-    volumes:
-      - ./config/gatus:/annex/platform:ro
-      # one file per web app, written by `annex deploy` (the directory, not a file: D7)
-      - ${ANNEX_DATA_DIR}/state/gatus/apps:/annex/apps:ro
-      - ${ANNEX_DATA_DIR}/state/gatus/data:/data
-    # edge: probes apps on their internal port; platform: Homepage's widget, Traefik's route and ops's webhook
-    networks: [edge, platform]
-    mem_limit: 64m
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
-      interval: 15s
-      timeout: 3s
-      start_period: 15s
-    labels:
-      com.kaldi.annex: "true"
-      traefik.enable: "true"
-      traefik.docker.network: annex-platform
-      traefik.http.routers.status.rule: Host(`${ANNEX_HOST_STATUS}`)
-      traefik.http.services.status.loadbalancer.server.port: "8080"
 
   # --- Jobs and backups ---------------------------------------------------
   ofelia:

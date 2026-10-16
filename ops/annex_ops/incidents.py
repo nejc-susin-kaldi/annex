@@ -1,17 +1,14 @@
 """Incidents: the one thread that runs the alert engine, stores incidents and sends the messages.
 
-The Docker watcher, the log followers and the Gatus webhook put inputs on a queue; this thread is the only
+The Docker watcher, the log followers and the health checker put inputs on a queue; this thread is the only
 consumer and the only writer, so there are no races. It also ticks the engine every `tick_s` seconds.
 """
-import json
 import queue
 import re
 import sys
 import threading
 import time
 import traceback
-import urllib.error
-import urllib.request
 
 from psycopg.types.json import Jsonb
 
@@ -228,34 +225,6 @@ def send_alert(emails: list[str], subject: str, data: dict, channels: list[str],
             pass
 
 
-# --- Gatus -----------------------------------------------------------------------
-def gatus_subject(group: str, name: str) -> str | None:
-    if group == "apps":
-        return f"app:{name}"
-    if group == "platform":
-        return f"platform:{name}"
-    return None
-
-
-def gatus_statuses() -> list[dict]:
-    with urllib.request.urlopen(f"{config.GATUS_URL}/api/v1/endpoints/statuses", timeout=5) as r:
-        return json.load(r)
-
-
-def reconcile_gatus(submit) -> None:
-    """A RESOLVED webhook sent while ops was down is lost: at startup, clear `down` for endpoints whose last two
-    results are good (Gatus's own success threshold)."""
-    try:
-        statuses = gatus_statuses()
-    except (urllib.error.URLError, OSError, ValueError):
-        return
-    for ep in statuses:
-        subject = gatus_subject(ep.get("group", ""), ep.get("name", ""))
-        results = ep.get("results") or []
-        if subject and len(results) >= 2 and results[-1].get("success") and results[-2].get("success"):
-            submit(eng.GatusState(subject, False))
-
-
 # --- queries for ctl and the CLI ---------------------------------------------------
 def list_incidents(open_only: bool = False, app: str | None = None, limit: int = 50) -> list[dict]:
     where = ["TRUE"] + (["resolved_at IS NULL"] if open_only else []) + (["app = %s"] if app else [])
@@ -287,20 +256,20 @@ def record_job_run(app: str, job: str, finished_at: float, ok: bool, duration_ms
 
 
 def health_check(app: str) -> dict:
-    """Gatus's current verdict for an app: up, down, none (no check, e.g. a job-only app) or unknown (Gatus can't be reached)."""
-    try:
-        with urllib.request.urlopen(f"{config.GATUS_URL}/api/v1/endpoints/apps_{app}/statuses", timeout=5) as r:
-            results = json.load(r).get("results") or []
-    except urllib.error.HTTPError as e:
-        return {"state": "none" if e.code == 404 else "unknown"}
-    except (urllib.error.URLError, OSError, ValueError):
-        return {"state": "unknown"}
-    if not results:
-        return {"state": "unknown", "detail": "no result yet"}
-    last = results[-1]
-    out = {"state": "up" if last.get("success") else "down", "checked_at": last.get("timestamp")}
-    if not last.get("success"):
-        out["detail"] = "; ".join(last.get("errors") or []) or "a condition failed"
+    """The health checker's current verdict for an app: up, down, none (no check, e.g. a job-only app) or unknown (no result
+    yet, or the checker isn't running)."""
+    from . import health
+
+    row = health.latest().get(f"app:{app}")
+    if row is None:
+        try:
+            labels = docker_api.inspect(f"annex-app-{app}").get("Config", {}).get("Labels") or {}
+        except (docker_api.DockerError, OSError):
+            return {"state": "unknown", "detail": "no result yet"}
+        return {"state": "unknown", "detail": "no result yet"} if labels.get("com.kaldi.annex.healthcheck") else {"state": "none"}
+    out = health.state_of(row, time.time(), config.tuning().check_interval_s)
+    if "checked_at" in out:
+        out["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(out["checked_at"]))
     return out
 
 
@@ -342,7 +311,7 @@ def start_background() -> Manager:
     """Start the engine thread, the Docker watcher, the log followers and the usage and digest threads (called
     once, at app startup)."""
     global _manager, _ingest, _sink
-    from . import audit, digest, errors_run, follow_logs, hooks_delivery, host, logship, logstore, usage, watch_docker
+    from . import audit, digest, errors_run, follow_logs, health, hooks_delivery, host, logship, logstore, usage, watch_docker
 
     mgr = _manager = Manager()
     mgr.start()
@@ -371,7 +340,16 @@ def start_background() -> Manager:
                 log(f"usage: couldn't record {inp.subject}: {type(e).__name__}: {e}")
 
     cursors = follow_logs.CursorStore()
-    watch_docker.Watcher(submit, lambda: reconcile_gatus(mgr.submit)).start()
+    # the health checker starts after the watcher's first reconcile pass, so the engine has seen every container
+    # before the first verdict reaches it (a verdict for an app it hasn't seen is ignored)
+    checker: list = []
+
+    def start_checker() -> None:
+        if not checker:
+            checker.append(health.Checker(mgr.submit))
+            checker[0].start()
+
+    watch_docker.Watcher(submit, start_checker).start()
     follow_logs.Follower("annex-traefik-1", traefik_handler(mgr, ingest), cursors).start()
     follow_logs.Follower(OFELIA, ofelia_handler(mgr), cursors).start()
     # scheduled jobs run inside the app's container through Ofelia, so their output is in Ofelia's log: a second

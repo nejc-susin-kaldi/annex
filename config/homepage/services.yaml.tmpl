@@ -28,12 +28,17 @@
     - Status:
         href: "{{ANNEX_URL_CONSOLE}}/status"
         description: Health of every app and the platform
-        icon: gatus.png
-        server: annex
-        container: annex-gatus-1
+        icon: mdi-heart-pulse
         widget:
-          type: gatus
-          url: http://gatus:8080
+          type: customapi
+          url: http://ops:8000/tiles/_status
+          refreshInterval: 30000
+          mappings:
+            - field: up
+              label: Up
+            - field: down
+              label: Down
+              color: adaptive
     - Usage:
         href: "{{ANNEX_URL_METABASE}}/search?q=Annex%20usage"
         description: "Annex counts signed-in visits per tool. You see totals; logins are visible to admins only, and raw records are deleted after 30 days."

@@ -71,7 +71,7 @@ class Watcher(threading.Thread):
     def __init__(self, submit, reconcile_extra=None):
         super().__init__(daemon=True, name="watch-docker")
         self.submit = submit
-        self.reconcile_extra = reconcile_extra  # called after the reconcile pass (Gatus state)
+        self.reconcile_extra = reconcile_extra  # called after the reconcile pass (starts the health checker)
 
     def reconcile(self) -> None:
         cids = set()

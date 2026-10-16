@@ -125,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--state", choices=["active", "quiet"])
     s.add_argument("--limit", type=int, default=100)
     s.add_argument("--json", action="store_true")
+    sub.add_parser("health", help="the health checker's newest result per check (every web app and the front door)").add_argument("--json", action="store_true")
     s = sub.add_parser("audit", help="the audit trail, newest first: deploys, rollbacks, secrets, accounts, sign-ins, gateway reads, sends")
     s.add_argument("--app")
     s.add_argument("--since", help="e.g. 30m, 2h, 7d")
@@ -172,6 +173,10 @@ def main(argv: list[str] | None = None) -> int:
             data, cols = logs_query(a), []
         elif a.cmd == "errors":
             data, cols = errors_run.list_groups(a.app, a.state, a.limit), []
+        elif a.cmd == "health":
+            from . import health
+            now, interval = time.time(), config.tuning().check_interval_s
+            data, cols = {k: {**health.state_of(r, now, interval), "ms": r["ms"], "age_s": round(now - r["ts"])} for k, r in sorted(health.latest().items())}, []
         elif a.cmd == "audit":
             data, cols = audit.timeline(a.app, parse_since(a.since) if a.since else None, a.action, a.actor, a.limit), []
         elif a.cmd == "logs-drain":

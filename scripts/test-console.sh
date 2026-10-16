@@ -108,7 +108,7 @@ hasnt "the console's address can't be reached from an edge-only app either" "REA
 
 echo "4. What the container and its database role hold"
 env=$(vm "docker exec annex-console-1 printenv" | cut -d= -f1)
-for k in SLACK_BOT_TOKEN OPS_INTERNAL_TOKEN OPS_SMTP_HOST ANNEX_EMAIL_FROM OPS_DOCKER_API; do hasnt "no $k in the console's environment" "$k" "$env"; done
+for k in SLACK_BOT_TOKEN ANNEX_ALERT_SLACK_CHANNEL OPS_SMTP_HOST ANNEX_EMAIL_FROM OPS_DOCKER_API; do hasnt "no $k in the console's environment" "$k" "$env"; done
 expect "no mounts at all (no Docker socket, no secrets, no directory)" "" "$(vm "docker inspect annex-console-1 -f '{{range .Mounts}}{{.Destination}} {{end}}'")"
 expect "read-only root filesystem, uid 10001, no capabilities" "true 10001:10001 [ALL]" "$(vm "docker inspect annex-console-1 -f '{{.HostConfig.ReadonlyRootfs}} {{.Config.User}} {{.HostConfig.CapDrop}}'")"
 expect "memory limit 96 MiB" 100663296 "$(vm "docker inspect annex-console-1 -f '{{.HostConfig.Memory}}'")"

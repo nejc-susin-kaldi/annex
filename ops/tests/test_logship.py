@@ -172,7 +172,7 @@ def test_what_is_shipped():
     assert ls.spec_for("platform:ops").kind == "platform" and ls.spec_for("platform:hooks").kind == "platform"
     assert ls.spec_for("platform:authelia").kind == "authelia"
     assert ls.spec_for("platform:product-db").container == "gateway"
-    for not_shipped in ("platform:socket-ro", "platform:socket-exec", "platform:traefik", "platform:gatus", "platform:ofelia",
+    for not_shipped in ("platform:socket-ro", "platform:socket-exec", "platform:traefik", "platform:ofelia",
                         "platform:metabase", "platform:homepage", "platform:mailpit", "platform:dozzle", "platform:backup"):
         assert ls.spec_for(not_shipped) is None, not_shipped
 

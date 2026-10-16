@@ -301,3 +301,17 @@ SELECT ts, CASE WHEN app = '_platform' THEN 'annex-ops' ELSE 'app:' || app END, 
        jsonb_strip_nulls(jsonb_build_object('recipients', recipients, 'subject', subject, 'error', error))
 FROM annex_ops.sends;
 GRANT SELECT ON annex_ops.audit_events, annex_ops.audit_timeline TO annex_console;
+
+-- --- M2.6: health checks ---------------------------------------------------------------------------------------
+-- annex-ops checks every web app's health URL and the front door (ops/annex_ops/health.py); one row per check, kept 7 days.
+-- `app` is the app's name, or '_front-door'. `annex status`, the console and the discovery tile read the newest rows.
+CREATE TABLE IF NOT EXISTS annex_ops.health_checks (
+  app   text NOT NULL,
+  ts    timestamptz NOT NULL DEFAULT now(),
+  ok    boolean NOT NULL,
+  ms    int,
+  error text
+);
+CREATE INDEX IF NOT EXISTS health_checks_app_ts ON annex_ops.health_checks (app, ts DESC);
+CREATE INDEX IF NOT EXISTS health_checks_ts ON annex_ops.health_checks (ts);
+GRANT SELECT ON annex_ops.health_checks TO annex_console;

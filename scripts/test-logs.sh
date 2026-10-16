@@ -125,7 +125,7 @@ expect "gateway lines carry the app's release" True "$(py 'all(r["release"] for 
 expect "annex-ops's own lines are stored" True "$([ "$(sql "SELECT count(*) FROM annex_ops.logs WHERE container='annex-ops-1'")" -gt 0 ] && echo True || echo False)"
 expect "the receiver's lines are stored" True "$([ "$(sql "SELECT count(*) FROM annex_ops.logs WHERE container='annex-hooks-1'")" -gt 0 ] && echo True || echo False)"
 expect "health-check lines are not" 0 "$(sql "SELECT count(*) FROM annex_ops.logs WHERE container IN ('annex-ops-1','annex-hooks-1') AND msg LIKE '%GET /healthz%200%'")"
-expect "nothing is shipped from Traefik, Gatus or the socket proxies" 0 "$(sql "SELECT count(*) FROM annex_ops.logs WHERE container ~ 'traefik|gatus|socket'")"
+expect "nothing is shipped from Traefik or the socket proxies" 0 "$(sql "SELECT count(*) FROM annex_ops.logs WHERE container ~ 'traefik|socket'")"
 bad_login=$(c -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data "{\"username\":\"nobody-$RUN\",\"password\":\"wrong-$RUN\",\"keepMeLoggedIn\":false}" "$AUTH_URL/api/firstfactor")
 expect "a failed sign-in is refused" 401 "$bad_login"
 wait_sql 30 "SELECT count(*) FROM annex_ops.logs WHERE container='annex-authelia-1' AND msg LIKE '%nobody-$RUN%'" 1 \

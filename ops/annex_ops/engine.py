@@ -4,7 +4,7 @@ Everything that can go wrong with an app or the platform is a *signal* (down, st
 oom, errors, job-failed) attached to a *subject* (`app:<name>`, `job:<app>/<job>`, `platform:<service>`).
 A subject has at most one open incident: the first signal opens it (and the caller sends one alert), later
 signals are added to it silently, and it resolves once every signal has cleared. That is what makes
-"stop an app", which Docker and Gatus both notice, produce exactly one alert and one "resolved".
+"stop an app", which Docker and the health checker both notice, produce exactly one alert and one "resolved".
 
 `handle(now, input)` takes one input and `tick(now)` evaluates the time-based rules; both return actions for
 the caller (incidents.py) to persist and send. Containers are tracked by their Docker id, so a Compose recreate
@@ -40,6 +40,11 @@ class Tuning:
     mem_alert_s: float = 300           # ... for this long ...
     mem_clear_mb: float = 400          # ... and clear once this much is available again
     backup_max_age_s: float = 93600    # the newest backup may be 26 h old (nightly at 02:00, plus slack)
+    # health checks (M2.6): every web app's health URL and the front door, each check_interval_s
+    check_interval_s: float = 60
+    check_timeout_s: float = 5
+    check_fail_threshold: int = 2      # failures in a row before an app counts as down ...
+    check_ok_threshold: int = 2        # ... and successes in a row before it counts as up again
 
 
 # --- inputs ------------------------------------------------------------------
@@ -107,7 +112,7 @@ class Destroy:
 
 
 @dataclass
-class GatusState:
+class HealthState:  # the health checker's confirmed verdict (health.py: 2 failures in a row = down, 2 successes = up)
     subject: str  # app:<name> or platform:front-door
     down: bool
     detail: str = ""
@@ -323,7 +328,7 @@ class Engine:
         elif isinstance(inp, ReconcileDone):
             for cid in [cid for cid in self.ctrs if cid not in inp.cids]:
                 self._destroy(now, Destroy(cid, self.ctrs[cid].subject), out)
-        elif isinstance(inp, GatusState):
+        elif isinstance(inp, HealthState):
             if inp.subject.startswith("app:") and not self._subject_has_container(inp.subject):
                 return out  # a check for an app that no longer exists
             if inp.down:

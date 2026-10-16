@@ -3,7 +3,7 @@
 
 Reads .env (falls back to .env.example), derives hostnames and mode-specific
 settings, renders every *.tmpl under config/ with {{VAR}} placeholders, and
-copies compose files, config, db/, vm/, ops/ and images/ alongside. The resulting .env in the
+copies compose files, config, db/, vm/ and ops/ alongside. The resulting .env in the
 bundle holds non-secret settings only; it is used by Compose on the VM and read
 by the annex CLI as the source of truth for the deployed platform.
 
@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / ".build" / "platform"
-PLATFORM_SERVICES = ["home", "auth", "metabase", "logs", "gateway", "mail", "status", "hooks", "console"]
+PLATFORM_SERVICES = ["home", "auth", "metabase", "logs", "gateway", "mail", "hooks", "console"]
 # Used in templates only; kept out of .env because Compose would try to interpolate "$".
 TEMPLATE_ONLY = {"ANNEX_HOST_REGEX"}
 
@@ -83,7 +83,7 @@ def derive(env: dict[str, str]) -> dict[str, str]:
         "ANNEX_EMAIL_ALLOW": env.get("ANNEX_EMAIL_ALLOW", ""),
         "ANNEX_EMAIL_FROM": env.get("ANNEX_EMAIL_FROM", "noreply@annex.example"),
         "ANNEX_ALERT_SLACK_CHANNEL": env.get("ANNEX_ALERT_SLACK_CHANNEL", "#annex-alerts"),
-        # what Gatus (inside the VM) probes to check the front door: no port suffix
+        # what annex-ops (inside the VM) requests to check the front door: no port suffix
         "ANNEX_FRONTDOOR_URL": ("https" if mode == "local" else "http") + "://" + pattern.replace("{name}", "home") + "/",
     }
     for svc in PLATFORM_SERVICES:
@@ -119,8 +119,6 @@ def main() -> None:
     # annex-ops is the first platform image built from source on the VM
     shutil.copytree(ROOT / "ops", OUT / "ops",
                     ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "tests"))
-    # derived images (built on the VM from a pinned upstream image)
-    shutil.copytree(ROOT / "images", OUT / "images")
 
     # Mode-specific Traefik files: keep the one for this mode, drop the other.
     tdir = OUT / "config" / "traefik"
@@ -137,7 +135,7 @@ def main() -> None:
 
     # A config change must recreate the container that reads it (Compose only
     # compares container config, not bind-mounted file contents).
-    for svc in ("traefik", "authelia", "homepage", "gatus"):
+    for svc in ("traefik", "authelia", "homepage"):
         h = hashlib.sha256()
         for f in sorted((OUT / "config" / svc).rglob("*")):
             if f.is_file():

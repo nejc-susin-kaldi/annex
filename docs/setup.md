@@ -38,10 +38,7 @@ Undo (the same command as above):
 ```bash
 sudo sed -i '' '/# annex$/d' /etc/hosts
 ```
-The status page (M1.3) needs `status.annex.home.arpa`, again as its own line with the same tag (the undo above removes it too):
-```bash
-echo '127.0.0.1 status.annex.home.arpa # annex' | sudo tee -a /etc/hosts
-```
+The status page (M1.3) needed `status.annex.home.arpa`; since M2.6 the status page is the console's `/status`, so **that hosts line is no longer needed**. If you added it, it is harmless; remove it with the undo above (which removes every line tagged `# annex`) and add back the others you want.
 The console (M2.4) needs `console.annex.home.arpa`, again as its own line with the same tag (the undo above removes it too). Only a browser needs it: `scripts/test-console.sh` goes through `--connect-to` and works without it. The Homepage tiles "Console" and "Status" point at it.
 ```bash
 echo '127.0.0.1 console.annex.home.arpa # annex' | sudo tee -a /etc/hosts

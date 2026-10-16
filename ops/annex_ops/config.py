@@ -35,8 +35,7 @@ def slack_connected() -> bool:
 # --- alerts and monitoring (M1.3) ---------------------------------------------
 WATCHERS = os.environ.get("OPS_WATCHERS", "1") != "0"  # unit tests turn the background threads off
 DOCKER_API = os.environ.get("OPS_DOCKER_API", "socket-ro:2375")  # the read-only socket proxy
-GATUS_URL = os.environ.get("OPS_GATUS_URL", "http://gatus:8080").rstrip("/")
-INTERNAL_TOKEN = os.environ.get("OPS_INTERNAL_TOKEN", "")  # Gatus's webhook to /internal/gatus
+FRONTDOOR_URL = os.environ.get("ANNEX_FRONTDOOR_URL", "")  # what the health checker requests to check the front door (D41)
 TUNING_FILE = os.environ.get("OPS_TUNING_FILE", "/annex/state/tuning.json")
 ALERT_SLACK_CHANNEL = os.environ.get("ANNEX_ALERT_SLACK_CHANNEL", "#annex-alerts")
 STATUS_URL = os.environ.get("ANNEX_URL_STATUS", "")
