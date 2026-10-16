@@ -156,6 +156,13 @@ class HostSample:  # the VM itself, every host_sample_s (host.py); None = couldn
 
 
 @dataclass
+class LogSample:  # the stored logs after the daily housekeeping (logship.Keeper)
+    size_mb: float
+    max_mb: float
+    trimmed: list  # days dropped early because the table passed max_mb
+
+
+@dataclass
 class Restore:  # open incidents loaded from the database at startup
     incidents: list[dict]  # {subject, opened_at, last_notified_at, reminders, signals: {name: {since, detail, cid}}}
 
@@ -343,6 +350,8 @@ class Engine:
             self._hook_ok(now, inp.app, inp.hook, out)
         elif isinstance(inp, HostSample):
             self._host(now, inp, out)
+        elif isinstance(inp, LogSample):
+            self._logs(now, inp, out)
         elif isinstance(inp, Maintenance):
             if inp.until is None:
                 self.maint.pop(inp.subject, None)
@@ -392,6 +401,15 @@ class Engine:
                             f"(expected nightly at 02:00)", out)
             else:
                 self._clear(now, "platform:backup", "backup", out)
+
+    def _logs(self, now: float, s: LogSample, out: list[Action]) -> None:
+        """The size guard dropped the oldest day(s) early: admins hear once. It clears when the table is well under
+        its limit again (80 %), so a table hovering at the limit doesn't flap."""
+        if s.trimmed:
+            self._raise(now, "platform:logs", "logs", f"the stored logs passed {s.max_mb:.0f} MB, so the oldest day(s) were "
+                        f"dropped early: {', '.join(s.trimmed)}", out)
+        elif s.size_mb < 0.8 * s.max_mb:
+            self._clear(now, "platform:logs", "logs", out)
 
     def _seen(self, now: float, ev: Seen, out: list[Action]) -> None:
         c = self._ctr(ev)

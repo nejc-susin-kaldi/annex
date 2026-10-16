@@ -56,6 +56,10 @@ has "the app's log lines carry the same request_id" "\"request_id\": \"$rid\"" "
 expect "the app's last log line is structured (ts, level, msg)" True "$(tail -1 <<<"$lines" | py 'all(k in d for k in ("ts", "level", "msg")) and d["level"] in ("debug", "info", "warn", "error")')"
 has "Traefik's access log carries it too" "\"downstream_X-Request-Id\":\"$rid\"" "$(vm "docker logs --tail 60 annex-traefik-1 2>&1")"
 hasnt "no search text in the app's log" "novak" "$lines"
+# stored logs (M2.2): the same request is in annex-ops's table, found by its id, tagged with the release
+stored=""
+for _ in 1 2 3 4 5 6 7 8; do stored=$("$ANNEX" logs client-lookup --request "$rid" 2>&1) && grep -q "request" <<<"$stored" && break; sleep 2; done
+has "annex logs --request finds the request in the stored logs" " r$(py 'd["release"]' <<<"$("$ANNEX" --json status client-lookup)" | tr -d r) info  request" "$stored"
 st=$("$ANNEX" --json status client-lookup)
 expect "annex status: health check up" up "$(py '(d.get("health_check") or {}).get("state")' <<<"$st")"
 expect "annex status: no open incident" None "$(py 'd.get("incident")' <<<"$st")"

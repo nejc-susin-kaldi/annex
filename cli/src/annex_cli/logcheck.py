@@ -38,3 +38,16 @@ def structured(lines: list[str]) -> bool | None:
 def warning(lines: list[str]) -> str | None:
     """The deploy warning for these first log lines, or None."""
     return MESSAGE if structured(lines) is False else None
+
+
+def structured_rows(rows: list[dict]) -> bool | None:
+    """The same question for lines annex-ops has stored (their `structured` flag is the convention's check, made
+    when the line arrived): True if one follows it, False if there are lines and none do, None if there are none."""
+    if not rows:
+        return None
+    return any(r.get("structured") for r in rows)
+
+
+def rows_warning(rows: list[dict]) -> str | None:
+    """The status warning for a job-only app's first stored lines, or None."""
+    return MESSAGE if structured_rows(rows) is False else None

@@ -52,3 +52,20 @@ class Structured(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StoredRows(unittest.TestCase):
+    """Job-only apps are checked on the lines annex-ops stored from their first run (M2.2)."""
+
+    def test_a_job_that_logs_in_the_convention(self):
+        self.assertTrue(logcheck.structured_rows([{"structured": False}, {"structured": True}]))
+        self.assertIsNone(logcheck.rows_warning([{"structured": True}]))
+
+    def test_a_job_that_prints(self):
+        rows = [{"structured": False}, {"structured": False}]
+        self.assertFalse(logcheck.structured_rows(rows))
+        self.assertIn("logs aren't structured", logcheck.rows_warning(rows))
+
+    def test_a_job_that_has_not_run_yet_is_not_judged(self):
+        self.assertIsNone(logcheck.structured_rows([]))
+        self.assertIsNone(logcheck.rows_warning([]))

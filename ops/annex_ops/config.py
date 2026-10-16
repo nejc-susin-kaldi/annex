@@ -90,6 +90,13 @@ def usage_settings():
     return _settings(UsageSettings)
 
 
+def log_settings():
+    """Retention, size limit and rate cap of the stored logs (logship.LogSettings)."""
+    from .logship import LogSettings
+
+    return _settings(LogSettings)
+
+
 # incoming webhooks (M1.5): the one public hostname, and where each app's signing secrets are mounted
 HOST_HOOKS = os.environ.get("ANNEX_HOST_HOOKS", "").lower()
 URL_HOOKS = os.environ.get("ANNEX_URL_HOOKS", "").rstrip("/")

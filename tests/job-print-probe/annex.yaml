@@ -1,0 +1,16 @@
+# Test fixture for scripts/test-logs.sh (M2.2): a job-only app whose job logs with print(), so `annex status` must
+# warn about it once its first scheduled run is stored. Standard library only. Not an example app.
+name: job-print-probe
+owner: sam
+description: Job logging check test probe (fixture)
+type: job
+access: internal
+storage:
+  files: true
+schedule:
+  - name: tick
+    cron: "* * * * *"
+    command: ["python", "job.py"]
+env: {}
+secrets: []
+egress: []

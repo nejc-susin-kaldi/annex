@@ -13,7 +13,7 @@ Annex runs small internal tools on the client's own server, behind their login, 
 | `annex_contract` | **Call first.** The rules, `annex.yaml` fields, injected env, data views |
 | `annex_init(template, name, directory, owner)` | Start an app from a template in an empty folder (absolute path) |
 | `annex_deploy(path)` | Validate, build and run the folder; returns the URL or exactly what to fix |
-| `annex_list`, `annex_status(app)`, `annex_logs(app)` | Check what's running |
+| `annex_list`, `annex_status(app)`, `annex_logs(app, tail, since, release, level, grep, request)` | Check what's running; logs are kept 14 days, also after a rollback |
 | `annex_run(app, job)` | Run a scheduled job now |
 | `annex_releases(app)`, `annex_rollback(app, to_release)` | See releases; switch back to an earlier one (code and config only) |
 
@@ -56,7 +56,8 @@ Every app logs the same way; the templates already do it, so keep it. Use the lo
 - **Pick the level:** `debug` detail (hidden unless `env: {LOG_LEVEL: debug}`), `info` what happened, `warn` odd but handled, `error` failed. Log errors with context (what you were doing, which id); `log.exception(...)` inside `except` adds the stack.
 - **Jobs:** one start line and one end line with counts and duration, and exit non-zero on failure.
 - **Never log** secrets, tokens, passwords, request bodies, cookies or full product records. IDs, counts and the user's login are fine; search text and other personal data aren't.
-- A deploy whose first log lines aren't structured succeeds with the warning "logs aren't structured": fix it by switching from `print()` to `log`.
+- A deploy whose first log lines aren't structured succeeds with the warning "logs aren't structured": fix it by switching from `print()` to `log`. A job-only app gets the same warning in `annex_status` after its first scheduled run.
+- **Reading logs:** `annex_logs` searches the stored logs, so a failed or rolled-back release is still there: `release: "r4"`, `level: "error"` (error and above), `grep: "text"` (message and fields), `request: "<id from the X-Request-Id header>"`, `since: "2h"`. After a failed deploy, read the failed release's lines with its number, not the live release's. Anything with a secret-looking field name is removed before storing, so don't rely on logs to see a token.
 
 ## Homelab note (M0 prototype)
 The browser reaches Annex through an SSH tunnel on port 8443 and `/etc/hosts` entries. If the user can't open a new app's URL, they need to add its hostname to `/etc/hosts` (see `docs/setup.md` in the annex repo). Existing entries cover `client-lookup`, `monthly-report` and `vibe-dashboard`.

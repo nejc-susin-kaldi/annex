@@ -103,11 +103,17 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("list", help="list deployed apps")
     s = sub.add_parser("status", help="show an app's state")
     s.add_argument("app")
-    s = sub.add_parser("logs", help="show an app's logs")
+    s = sub.add_parser("logs", help="show an app's logs (stored for 14 days: they outlive the container)")
     s.add_argument("app")
-    s.add_argument("-n", "--tail", type=int, default=100)
-    s.add_argument("-f", "--follow", action="store_true")
-    s.add_argument("--since", help="e.g. 10m, 2h")
+    s.add_argument("-n", "--tail", type=int, default=100, help="the last N matching lines")
+    s.add_argument("-f", "--follow", action="store_true", help="follow the live container (no filters)")
+    s.add_argument("--since", help="e.g. 10m, 2h, 7d")
+    s.add_argument("--release", help="one release's lines, e.g. r4: also after it was rolled back")
+    s.add_argument("--level", choices=["debug", "info", "warn", "error"], help="this level and above")
+    s.add_argument("--grep", help="lines containing this text (message and fields, any case)")
+    s.add_argument("--request", help="the lines of one request id")
+    s.add_argument("--source", choices=["app", "gateway", "all"], default="app",
+                   help="app: its own lines and its jobs' output (default); gateway: its data reads; all")
     s = sub.add_parser("usage", help="who uses what: users, requests, errors and response times per app")
     s.add_argument("app", nargs="?", help="one app, by day (default: every app)")
     s.add_argument("--by-user", action="store_true", help="per-person request counts (admins only; needs an app)")
@@ -196,6 +202,8 @@ def main(argv: list[str] | None = None) -> None:
             else:
                 logs = st.pop("recent_logs")
                 jobs = st.pop("jobs", [])
+                if "warnings" in st:
+                    st["warnings"] = "; ".join(st["warnings"])
                 for k, v in st.items():
                     if k == "schedule":
                         v = ", ".join(j["name"] + " (" + j["cron"] + ")" for j in v)
@@ -212,9 +220,16 @@ def main(argv: list[str] | None = None) -> None:
                     print(f"{'job ' + j['job']:12} {_job_line(j)}")
                 print("recent logs:\n  " + "\n  ".join(logs))
         elif a.cmd == "logs":
+            filters = dict(release=a.release, level=a.level, grep=a.grep, request=a.request)
             if a.follow:
+                if any(filters.values()) or a.since or a.source != "app":
+                    raise AnnexError("-f follows the live container's own log and can't be combined with --since, "
+                                         "--release, --level, --grep, --request or --source. Drop -f to search the stored logs")
                 sys.exit(ops.follow_logs(a.app, a.tail))
-            print(ops.logs(a.app, a.tail, a.since), end="")
+            if emit:
+                emit(ops.stored_logs(a.app, a.tail, a.since, source=a.source, **filters))
+            else:
+                print(ops.logs(a.app, a.tail, a.since, source=a.source, **filters), end="")
         elif a.cmd == "usage":
             res = ops.usage(a.app, a.by_user)
             if emit:

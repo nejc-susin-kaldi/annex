@@ -101,7 +101,8 @@ Every app logs the same way, so anyone can debug any app, and Annex can store an
 - **Never log** secrets, tokens, passwords, cookies, request bodies or full product records. IDs and counts are fine, and so is the user's login; other personal data isn't (log `matches=3`, not the search text).
 - **Jobs** log a start line and an end line with counts and duration, log errors with context, and **exit non-zero on failure** (that is what alerts the owner).
 - **The helpers do it for you.** Python: `from annex_runtime import log, request_context` (`log.info("report written", rows=12, ms=340)`, `log.exception(...)` inside `except`; the template's middleware sets the context and the header). Node: `import { log, annexRequest }` (`log.info("report written", { rows: 12 })`, `app.use(annexRequest)`). The `static` template's server logs its requests itself. `print()` still works but isn't structured; prefer `log`. Your own stack must write the same format.
-- **Annex checks, and only warns:** after a web app passes its health gate, `annex deploy` reads its first lines; if none follow the convention, the result says "logs aren't structured". The deploy still succeeds.
+- **Annex checks, and only warns:** after a web app passes its health gate, `annex deploy` reads its first lines; if none follow the convention, the result says "logs aren't structured". A job-only app is checked on its first scheduled run: `annex status` shows the same warning. The deploy still succeeds.
+- **Annex keeps your logs for 14 days**, also after the container is gone (a rolled-back release's lines, last week's errors). `annex logs <app>` searches them: by release (`--release r4`), level (`--level warn` means warn and error), text in the message or fields (`--grep`), request id (`--request`) and age (`--since 2h`). A scheduled job's output is kept too. Before a field is stored, anything whose name looks secret (`password`, `token`, `secret`, `authorization`, `cookie`, `api_key`, ...) is removed and `password=...` style text is redacted: a safety net, not permission to log them. Lines over 8 KB are cut, and a container writing more than 200 lines in a second keeps the first 200 (one line says how many were dropped). The last moments of a container that is being replaced can be missed.
 
 ## Bring your own stack
 The templates are the fast path, not a requirement. Any language or framework works if it runs as **one container** and follows the runtime rules above. Write your own `Dockerfile` and `annex.yaml` and check:
@@ -165,7 +166,7 @@ All data is synthetic. Adding a view is a reviewed change by the platform team, 
 | `annex deploy [path]` | validate, provision DB/role/token, build, run, register |
 | `annex list` | list deployed apps |
 | `annex status <app>` | an app's state, health check, open incident, last job runs, config and recent logs |
-| `annex logs <app> [-n 100] [-f]` | an app's logs |
+| `annex logs <app> [-n 100] [--since 2h] [--release r4] [--level warn] [--grep text] [--request id] [-f]` | an app's stored logs (14 days, also of containers that are gone); `-f` follows the live container |
 | `annex run <app> <job>` | trigger a job now |
 | `annex hooks <app>` | incoming webhook events of an app (metadata only); **human only:** `annex hooks show <id>`, `annex hooks replay <app> ...` |
 | `annex usage [app]` | users, requests, errors and response times per app (totals; with an app, by day) |

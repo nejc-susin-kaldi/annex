@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from . import config, db, digest, directory, hooks_store, incidents, sends, usage
+from . import config, db, digest, directory, hooks_store, incidents, logship, logstore, sends, usage
 from .errors import OpsError
 
 
@@ -43,6 +43,19 @@ def parse_since(text: str) -> float:
     if not m:
         raise OpsError(400, f"--since {text!r} is not a duration. Use e.g. 30m, 1h or 2d")
     return int(m[1]) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[m[2]]
+
+
+def parse_release(text: str) -> int:
+    """r4 or 4 -> 4."""
+    m = re.fullmatch(r"r?(\d+)", (text or "").strip())
+    if not m:
+        raise OpsError(400, f"--release {text!r} is not a release. Use e.g. r4 (see: annex releases <app>)")
+    return int(m[1])
+
+
+def logs_query(a) -> list[dict]:
+    return logstore.query_logs(a.app, a.tail, parse_since(a.since) if a.since else None,
+                               parse_release(a.release) if a.release else None, a.level, a.grep, a.request, a.source, a.oldest)
 
 
 def hooks_action(a) -> dict | list:
@@ -96,6 +109,22 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--failed", action="store_true", help="replay: every failed event of the app")
     s.add_argument("--since", help="replay: events received within this long, e.g. 30m, 1h, 2d")
     s.add_argument("--json", action="store_true")
+    s = sub.add_parser("logs", help="an app's stored log lines (they outlive the container), oldest first")
+    s.add_argument("app")
+    s.add_argument("-n", "--tail", type=int, default=100, help="the last N matching lines (default 100)")
+    s.add_argument("--since", help="e.g. 30m, 2h, 7d")
+    s.add_argument("--release", help="e.g. r4")
+    s.add_argument("--level", help="this level and above: debug, info, warn, error")
+    s.add_argument("--grep", help="lines containing this text (message and fields, any case)")
+    s.add_argument("--request", help="one request id")
+    s.add_argument("--source", default="app", help="app (default: the app and its jobs), gateway (its data reads) or all")
+    s.add_argument("--oldest", action="store_true", help="the first N matching lines instead of the last N")
+    s.add_argument("--json", action="store_true")
+    s = sub.add_parser("logs-drain", help="store a container's unread log lines now (before Docker replaces it)")
+    s.add_argument("container")
+    s.add_argument("--timeout", type=float, default=5.0)
+    s.add_argument("--json", action="store_true")
+    sub.add_parser("logs-stats", help="partitions, size and line count of the stored logs").add_argument("--json", action="store_true")
     sub.add_parser("rollup", help="run the usage rollup now").add_argument("--json", action="store_true")
     sub.add_parser("host", help="the VM's disk, memory and newest backup, as the alert engine sees them").add_argument(
         "--json", action="store_true")
@@ -127,6 +156,12 @@ def main(argv: list[str] | None = None) -> int:
             data, cols = (usage.usage_app(a.app, a.by_user) if a.app else usage.usage_table()), []
         elif a.cmd == "hooks":
             data, cols = hooks_action(a), []
+        elif a.cmd == "logs":
+            data, cols = logs_query(a), []
+        elif a.cmd == "logs-drain":
+            data, cols = logship.drain(a.container, a.timeout), []
+        elif a.cmd == "logs-stats":
+            data, cols = logstore.stats(), []
         elif a.cmd == "rollup":
             data, cols = usage.rollup(), []
         elif a.cmd == "host":

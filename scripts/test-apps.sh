@@ -37,7 +37,7 @@ has "with its owner" 'owner: sam' "$services"
 echo "CLI"
 has "annex list shows it healthy" "sam web running healthy" "$("$ANNEX" list | awk '$1 == "client-lookup" {print $2, $3, $4, $5}')"
 has "annex status shows views" "client_summary" "$("$ANNEX" status client-lookup)"
-has "annex logs shows requests (structured lines)" '"msg": "request"' "$("$ANNEX" logs client-lookup -n 20)"
+has "annex logs shows requests (stored, structured lines)" ' info  request  ' "$("$ANNEX" logs client-lookup --grep request -n 20)"
 
 echo "Logging convention (M2.1)"
 has "a conforming app deploys without the logging warning" "is live" "$out"

@@ -539,6 +539,72 @@ def cmd_prune_snapshots(a: argparse.Namespace) -> None:
         shutil.rmtree(p, ignore_errors=True)
     out({"ok": True, "removed": [p.name for p in old], "kept": [p.name for p in snaps[len(old):]]})
 
+# --- releases in the database (M2.2) -----------------------------------------------------------------------------
+# releases.jsonl stays the file of record; annex_ops.releases is the copy the console and the audit trail read. The
+# CLI calls release-record wherever it appends a line; release-backfill (push.sh) loads every file, idempotently.
+# /srv/annex/apps is read here, on the VM: it is never mounted into a container (it holds the apps' data).
+RELEASE_COLUMNS = ("app text, release int, image text, result text, deployed_at timestamptz, deployed_by text, via text, "
+                   "git jsonb, note text, rollback_of int, manifest jsonb")
+
+
+def release_row(app: str, rel: dict) -> dict | None:
+    """The annex_ops.releases row for one releases.jsonl line (None if the line lacks what a release needs)."""
+    if not all(rel.get(k) is not None for k in ("release", "image", "result", "deployed_at")):
+        return None
+    note = rel.get("error") or ""
+    if rel.get("rolled_back_to") is not None:
+        note = f"rolled back to r{rel['rolled_back_to']}: {note}"
+    rb = rel.get("rollback")
+    if rb:
+        note = f"rollback from r{rb['from']} to r{rb['to']}" + (" with data" if rb.get("with_data") else "")
+    return {"app": app, "release": rel["release"], "image": rel["image"], "result": rel["result"],
+            "deployed_at": rel["deployed_at"], "deployed_by": rel.get("deployed_by"), "via": rel.get("via"),
+            "git": rel.get("git"), "note": note or None, "rollback_of": rb["from"] if rb else None,
+            "manifest": rel.get("manifest") or {}}
+
+
+def dollar_quote(text: str) -> str:
+    """A SQL string literal that needs no escaping: dollar quotes with a tag the text doesn't contain."""
+    tag, i = "annexjson", 0
+    while f"${tag}$" in text:
+        i += 1
+        tag = f"annexjson{i}"
+    return f"${tag}${text}${tag}$"
+
+
+def releases_sql(rows: list[dict]) -> str:
+    return ("INSERT INTO annex_ops.releases (app, release, image, result, deployed_at, deployed_by, via, git, note, "
+            "rollback_of, manifest) SELECT r.app, r.release, r.image, r.result, r.deployed_at, r.deployed_by, r.via, "
+            "r.git, r.note, r.rollback_of, r.manifest FROM jsonb_to_recordset("
+            f"{dollar_quote(json.dumps(rows))}::jsonb) AS r({RELEASE_COLUMNS}) ON CONFLICT (app, deployed_at, release) DO NOTHING;")
+
+
+def cmd_release_record(a: argparse.Namespace) -> None:
+    """One releases.jsonl line on stdin."""
+    row = release_row(a.app, json.loads(sys.stdin.read()))
+    if row is None:
+        raise Fail("release-record: the line has no release, image, result or deployed_at")
+    if not ops_db_exists():
+        raise Fail("annex-ops isn't set up on this server: run scripts/bootstrap.sh and scripts/push.sh")
+    psql(APPDATA_DB, OPS_DB, releases_sql([row]))
+    out({"ok": True, "recorded": 1})
+
+
+def cmd_release_backfill(_: argparse.Namespace) -> None:
+    rows = []
+    for f in sorted((DATA / "apps").glob("*/releases.jsonl")):
+        for line in f.read_text().splitlines():
+            if line.strip():
+                row = release_row(f.parent.name, json.loads(line))
+                if row:
+                    rows.append(row)
+    if rows:
+        if not ops_db_exists():
+            raise Fail("annex-ops isn't set up on this server: run scripts/bootstrap.sh and scripts/push.sh")
+        psql(APPDATA_DB, OPS_DB, releases_sql(rows))
+    out({"ok": True, "found": len(rows)})
+
+
 # --- Annex's own user accounts (Authelia's file backend, D57) ----------------------------------------------------
 # Source of truth: secrets/authelia/users.yml, which Authelia also rewrites when a user resets or changes their
 # password. The user directory (state/directory/users.json: no hashes) is derived from it for annex-ops.
@@ -841,6 +907,11 @@ def main() -> None:
     s.add_argument("app")
     s.add_argument("--keep", type=int, default=3)
     s.set_defaults(fn=cmd_prune_snapshots)
+    s = sub.add_parser("release-record", help="store one releases.jsonl line (on stdin) in annex_ops.releases")
+    s.add_argument("app")
+    s.set_defaults(fn=cmd_release_record)
+    sub.add_parser("release-backfill", help="load every app's releases.jsonl into annex_ops.releases (idempotent)").set_defaults(
+        fn=cmd_release_backfill)
     sub.add_parser("users-list").set_defaults(fn=cmd_users_list)
     sub.add_parser("users-sync").set_defaults(fn=cmd_users_sync)
     s = sub.add_parser("users-add")

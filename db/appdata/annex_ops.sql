@@ -173,3 +173,46 @@ GRANT USAGE ON SCHEMA annex_ops TO annex_hooks;
 GRANT INSERT ON annex_ops.hook_events TO annex_hooks;
 GRANT SELECT (id) ON annex_ops.hook_events TO annex_hooks;
 GRANT USAGE ON SEQUENCE annex_ops.hook_events_id_seq TO annex_hooks;
+
+-- --- M2.2: logs that outlive containers ---------------------------------------------------------
+-- Every shipped container's lines (apps, annex-ops, the receiver, Authelia's sign-in lines, the gateway's
+-- request lines, scheduled jobs' output), kept log_retention_days (14) in day partitions that annex-ops makes
+-- ahead of time and drops whole (never DELETEs). Secret-looking fields are removed before a line gets here.
+-- ts is Docker's own timestamp (a line can't choose its own day), `ns` the sub-microsecond remainder, so lines
+-- written within the same microsecond (a traceback) keep their order.
+CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA public;   -- trusted, so the database owner may; its index makes --grep fast
+CREATE TABLE IF NOT EXISTS annex_ops.logs (
+  ts         timestamptz NOT NULL,
+  ns         smallint NOT NULL DEFAULT 0,
+  app        text,                 -- null for platform containers
+  container  text NOT NULL,        -- annex-app-client-lookup, annex-ops-1, ... or 'gateway' for the gateway's request lines
+  release    int,                  -- from the container's com.kaldi.annex.release label
+  stream     text NOT NULL,        -- stdout | stderr
+  level      text,                 -- debug | info | warn | error; for lines that aren't JSON, guessed (error) or null
+  request_id text,
+  msg        text NOT NULL,        -- the msg field, or the whole line; at most 8 KB
+  fields     jsonb,                -- the other JSON fields, minus anything secret; null = the line wasn't structured
+  h          uuid NOT NULL         -- md5 of container, stream, nanosecond timestamp and line: a replay can't duplicate
+) PARTITION BY RANGE (ts);
+CREATE UNIQUE INDEX IF NOT EXISTS logs_dedupe ON annex_ops.logs (ts, h);
+CREATE INDEX IF NOT EXISTS logs_app_ts ON annex_ops.logs (app, ts DESC);
+CREATE INDEX IF NOT EXISTS logs_app_release ON annex_ops.logs (app, release, ts DESC);
+CREATE INDEX IF NOT EXISTS logs_request ON annex_ops.logs (request_id) WHERE request_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS logs_search ON annex_ops.logs USING gin ((msg || ' ' || coalesce(fields::text, '')) gin_trgm_ops);
+
+-- every release of every app: annex_vm.py release-record writes a row wherever the CLI appends to releases.jsonl
+-- (which stays the file of record); release-backfill loads the existing files, idempotently
+CREATE TABLE IF NOT EXISTS annex_ops.releases (
+  app         text NOT NULL,
+  release     int NOT NULL,
+  image       text NOT NULL,
+  result      text NOT NULL,       -- live | failed
+  deployed_at timestamptz NOT NULL,
+  deployed_by text,
+  via         text,                -- cli | mcp
+  git         jsonb,               -- {sha, dirty}
+  note        text,                -- why it failed, or "rollback from r5 to r3 [with data]"
+  rollback_of int,                 -- the release a rollback switched away from
+  manifest    jsonb NOT NULL,
+  PRIMARY KEY (app, deployed_at, release)   -- an app removed and deployed again starts at r1 again: its history stays
+);

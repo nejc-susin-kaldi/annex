@@ -35,6 +35,7 @@ suites=(
   "users|scripts/test-users.sh"
   "usage|scripts/test-usage.sh"
   "hooks|scripts/test-hooks.sh"
+  "logs|scripts/test-logs.sh"
   "host|scripts/test-host.sh"
 )
 [ -n "$slow" ] && suites+=("alerts|scripts/test-alerts.sh")

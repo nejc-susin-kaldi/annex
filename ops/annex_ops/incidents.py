@@ -181,7 +181,7 @@ class Manager(threading.Thread):
         if kind == "job":
             key = f"{name}-{job}"
             return [ANSI.sub("", ln) for ln in docker_api.tail_logs(OFELIA, 400) if f'"{key}"' in ln][-20:]
-        if name in ("disk", "memory", "front-door"):  # no container of their own
+        if name in ("disk", "memory", "logs", "front-door"):  # no container of their own
             return []
         return docker_api.tail_logs(f"annex-{name}-1", 20)
 
@@ -335,13 +335,14 @@ _manager: Manager | None = None
 
 
 _ingest = None
+_sink = None
 
 
 def start_background() -> Manager:
     """Start the engine thread, the Docker watcher, the log followers and the usage and digest threads (called
     once, at app startup)."""
-    global _manager, _ingest
-    from . import digest, follow_logs, hooks_delivery, host, usage, watch_docker
+    global _manager, _ingest, _sink
+    from . import digest, follow_logs, hooks_delivery, host, logship, logstore, usage, watch_docker
 
     mgr = _manager = Manager()
     mgr.start()
@@ -350,9 +351,17 @@ def start_background() -> Manager:
     digest.Worker().start()
     hooks_delivery.Worker(mgr.submit).start()
     host.Sampler(mgr.submit).start()
+    # logs that outlive containers (M2.2): one follower per shipped container, started and stopped by the watcher's events
+    sink = _sink = logstore.Sink()
+    sink.start()
+    releases = logship.Releases()
+    logship.Keeper(mgr.submit, sink).start()
+    shipper = logship.Shipper(sink, releases)
+    shipper.start()
 
     def submit(inp) -> None:
         mgr.submit(inp)
+        shipper.submit(inp)
         if isinstance(inp, (eng.Seen, eng.Start)) and inp.subject.startswith("app:"):
             try:
                 ingest.touch_app(inp.subject[4:])  # an app that exists but has no traffic still has a first_seen
@@ -363,13 +372,19 @@ def start_background() -> Manager:
     watch_docker.Watcher(submit, lambda: reconcile_gatus(mgr.submit)).start()
     follow_logs.Follower("annex-traefik-1", traefik_handler(mgr, ingest), cursors).start()
     follow_logs.Follower(OFELIA, ofelia_handler(mgr), cursors).start()
+    # scheduled jobs run inside the app's container through Ofelia, so their output is in Ofelia's log: a second
+    # reader, in exact mode (the lines of one run share a microsecond), with its own cursor
+    follow_logs.Follower(OFELIA, logship.JobOutput(sink, releases), cursors, key=logship.SHIP_PREFIX + OFELIA, exact=True,
+                         before_save=sink.flush).start()
     return mgr
 
 
 def stop_background() -> None:
-    """At shutdown: write the buffered usage rows, so a restart neither loses nor repeats them."""
+    """At shutdown: write the buffered usage rows and log lines, so a restart neither loses nor repeats them."""
     if _ingest is not None:
         _ingest.flush()
+    if _sink is not None:
+        _sink.flush()
 
 
 def traefik_handler(mgr: Manager, ingest=None):

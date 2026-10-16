@@ -1,0 +1,14 @@
+# Test fixture for scripts/test-logs.sh (M2.2): an app that logs what it is told to, secrets included, to prove
+# they never reach the stored logs. Standard library only. Not an example app: don't deploy it for real.
+name: log-probe
+owner: sam
+description: Log shipping test probe (fixture)
+type: web
+port: 8080
+healthcheck: /healthz
+access: internal
+env:
+  PROBE_MARKER: "boot-default"
+  PROBE_SECRET: "not-a-secret-just-a-default"
+secrets: []
+egress: []

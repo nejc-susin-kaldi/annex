@@ -20,7 +20,7 @@ from typing import Callable
 
 import yaml
 
-from . import logcheck
+from . import logcheck, logview
 from . import manifest as mf
 from .remote import REPO, AnnexError, Remote
 
@@ -231,8 +231,12 @@ def _releases(r: Remote, app: str) -> list[dict]:
 
 
 def _append_release(r: Remote, app: str, rel: dict) -> None:
-    r.run(f"mkdir -p {r.data}/apps/{app} && cat >> {r.data}/apps/{app}/releases.jsonl",
-          input=json.dumps(rel, default=str) + "\n")
+    line = json.dumps(rel, default=str) + "\n"
+    r.run(f"mkdir -p {r.data}/apps/{app} && cat >> {r.data}/apps/{app}/releases.jsonl", input=line)
+    try:  # the database copy (annex_ops.releases) is for the console and the audit trail; the file stays the record
+        r.vm("release-record", app, input=line)
+    except (AnnexError, subprocess.SubprocessError, OSError):
+        pass  # annex-ops' database is down: the next scripts/push.sh (release-backfill) catches up
 
 
 def _live(releases: list[dict]) -> dict | None:
@@ -331,6 +335,27 @@ def _gatus_check(r: Remote, m: mf.Manifest) -> None:
     r.run(f"docker restart {GATUS} >/dev/null 2>&1", check=False)
 
 
+def _drain(r: Remote, app: str, progress: Progress = _quiet) -> None:
+    """Before Docker replaces or removes an app's container, have annex-ops store the lines it hasn't read yet
+    (the container's log goes with it). Never blocks the operation: annex-ops being down, slow or confused costs
+    a warning and nothing else. Lines written while the old container shuts down can still be missed."""
+    why = None
+    try:
+        res = r.run(f"timeout 10 docker exec {OPS_CONTAINER} python -m annex_ops.ctl logs-drain {container(app)} "
+                    f"--timeout 5 --json", check=False, timeout=30)
+        if res.returncode != 0:
+            why = "annex-ops didn't answer"
+        else:
+            answer = json.loads(res.stdout.decode().strip().splitlines()[-1])
+            if answer.get("timed_out") or not answer.get("stored", True):
+                why = "annex-ops was too slow or its database is down"
+    except (AnnexError, subprocess.SubprocessError, OSError, ValueError, IndexError):
+        why = "annex-ops didn't answer"
+    if why:
+        progress(f"Warning: couldn't store {container(app)}'s last log lines before replacing it ({why}); "
+                 f"the deploy carries on. Check: ssh {r.host} docker logs {OPS_CONTAINER}")
+
+
 def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Progress
               ) -> tuple[tuple[str, str] | None, dict]:
     """Provision what manifest `m` asks for, switch the app to `image` and run the health gate.
@@ -343,6 +368,7 @@ def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Pro
                                               webhooks=[w.__dict__ for w in m.webhooks]))
     compose = yaml.safe_dump(compose_for(m, r, image, release), sort_keys=False)
     r.run(f"mkdir -p {d} && cat > {d}/compose.yaml", input=compose)
+    _drain(r, m.name, progress)  # the container Compose is about to replace (a failed release's, on a rollback)
     progress(f"Starting r{release} ({image})")
     r.run(f"cd {d} && docker compose up -d --remove-orphans 2>&1")
     failed = _gate(r, m, progress)
@@ -737,15 +763,65 @@ def status(app: str) -> dict:
     info["jobs"] = [{"job": j["name"], "cron": j["cron"], **{k: v for k, v in runs.get(j["name"], {}).items() if k != "job"}}
                     for j in (record or {}).get("schedule", [])]
     info["recent_logs"] = r.out(f"docker logs --tail 15 {container(app)} 2>&1", check=False).splitlines()
+    if record and not record.get("url") and record.get("release"):
+        # a job-only app has no web start-up to judge at deploy time: its first stored lines (from a scheduled run)
+        try:
+            first = _stored_logs(r, app, 50, release=record["release"], oldest=True)
+        except AnnexError:
+            first = []
+        if (w := logcheck.rows_warning(first)):
+            info["warnings"] = [w]
     return info
 
 
-def logs(app: str, tail: int = 100, since: str | None = None) -> str:
+def _stored_logs(r: Remote, app: str, tail: int = 100, since: str | None = None, release: int | str | None = None,
+                 level: str | None = None, grep: str | None = None, request: str | None = None, source: str = "app",
+                 oldest: bool = False) -> list[dict]:
+    """An app's log lines as annex-ops stored them (14 days, whatever happened to the container), oldest first."""
+    try:
+        rel = logview.release_number(None if release is None else str(release))
+    except ValueError as e:
+        raise AnnexError(str(e)) from None
+    args = ["logs", app, "-n", str(max(1, min(int(tail), 5000))), "--source", source,
+            *(["--since", since] if since else []), *(["--release", str(rel)] if rel is not None else []),
+            *(["--level", level] if level else []), *(["--grep", grep] if grep else []),
+            *(["--request", request] if request else []), *(["--oldest"] if oldest else [])]
+    return _ops_ctl(r, *args)
+
+
+def stored_logs(app: str, tail: int = 100, since: str | None = None, release: int | str | None = None,
+                level: str | None = None, grep: str | None = None, request: str | None = None,
+                source: str = "app") -> list[dict]:
+    """`annex logs --json`: the matching stored lines, oldest first."""
     r = Remote()
-    if not _containers(r, app):
+    rows = _stored_logs(r, app, tail, since, release, level, grep, request, source)
+    if not rows and not _containers(r, app) and not _record(r, app):
         raise AnnexError(f"No app named {app!r}. See deployed apps with: annex list")
-    s = f" --since {shlex.quote(since)}" if since else ""
-    return r.out(f"docker logs --timestamps --tail {int(tail)}{s} {container(app)} 2>&1")
+    return rows
+
+
+def logs(app: str, tail: int = 100, since: str | None = None, release: int | str | None = None,
+         level: str | None = None, grep: str | None = None, request: str | None = None, source: str = "app") -> str:
+    """An app's logs from annex-ops' store: the live container's lines and those of containers that are gone (a
+    rolled-back release, last week). Filter by release (r4), level (this and above), text, request id and age.
+    If annex-ops can't be reached, the live container's own log is shown instead, unfiltered."""
+    r = Remote()
+    try:
+        rows = _stored_logs(r, app, tail, since, release, level, grep, request, source)
+    except AnnexError as e:
+        if not str(e).startswith("annex-ops isn't answering"):
+            raise
+        if any((release, level, grep, request)) or source != "app":
+            raise AnnexError(f"{e}\nThe stored logs need annex-ops, so --release, --level, --grep, --request and --source "
+                             f"can't be used until it is back") from None
+        if not _containers(r, app):
+            raise AnnexError(f"No app named {app!r}. See deployed apps with: annex list") from None
+        s = f" --since {shlex.quote(since)}" if since else ""
+        return ("(annex-ops isn't answering: this is the live container's own log, not the stored one)\n"
+                + r.out(f"docker logs --timestamps --tail {int(tail)}{s} {container(app)} 2>&1"))
+    if not rows and not _containers(r, app) and not _record(r, app):
+        raise AnnexError(f"No app named {app!r}. See deployed apps with: annex list")
+    return logview.render_all(rows)
 
 
 def follow_logs(app: str, tail: int = 100) -> int:
@@ -781,6 +857,7 @@ def secret_set(app: str, pairs: list[str]) -> dict:
             app, postgres=record["postgres"], files=record["files"], views=record["views"], secrets=record["secrets"],
             notify_email=record.get("notify_email", False), notify_slack=record.get("notify_slack", []),
             webhooks=record.get("webhooks", []), port=record.get("port")))
+        _drain(r, app)
         r.run(f"cd {r.data}/deploy/{app} && docker compose up -d 2>&1")
         res["applied"] = "restarted with new values"
         if undeclared:
@@ -797,6 +874,7 @@ def remove(app: str, keep_data: bool = False) -> dict:
     if not record and not _containers(r, app):
         raise AnnexError(f"No app named {app!r}. See deployed apps with: annex list")
     d = f"{r.data}/deploy/{app}"
+    _drain(r, app)
     # the check goes first, so Gatus never sees the stopped container as an outage
     if r.run(f"test -f {r.data}/state/gatus/apps/{app}.yaml", check=False).returncode == 0:
         r.run(f"rm -f {r.data}/state/gatus/apps/{app}.yaml")

@@ -22,6 +22,9 @@ vm "cd $DATA/platform && . $DATA/secrets/master.env && docker compose exec -T -e
 log "Starting platform ${profile[*]:-(core)}"
 vm "cd $DATA/platform && docker compose ${profile[*]:-} up -d --build --wait --wait-timeout 420 --remove-orphans"
 
+# every app's releases.jsonl into annex_ops.releases (idempotent; the CLI records new ones as they happen)
+vm "python3 $DATA/platform/vm/annex_vm.py release-backfill >/dev/null"
+
 # the user directory for annex-ops follows Authelia's users.yml (users change it by resetting passwords; D57)
 vm "python3 $DATA/platform/vm/annex_vm.py users-sync >/dev/null"
 

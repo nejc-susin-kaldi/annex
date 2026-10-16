@@ -1,5 +1,6 @@
 """A small Docker Engine API client over HTTP, for the read-only socket proxy (socket-ro). Standard library only."""
 import base64
+import calendar
 import http.client
 import json
 import re
@@ -121,9 +122,25 @@ def parse_ts(text: str) -> float | None:
     return base + (float("0." + frac) if frac else 0.0)
 
 
+def parse_ts_ns(text: str) -> int | None:
+    """Docker's RFC3339 timestamp -> integer nanoseconds since the epoch (a float keeps only about a microsecond)."""
+    m = _TS.match(text)
+    if not m:
+        return None
+    y, mo, d, h, mi, s, frac = m.groups()
+    secs = calendar.timegm((int(y), int(mo), int(d), int(h), int(mi), int(s)))
+    return secs * 10**9 + (int((frac + "000000000")[:9]) if frac else 0)
+
+
 def split_timestamp(line: str) -> tuple[float | None, str]:
     stamp, _, rest = line.partition(" ")
     ts = parse_ts(stamp)
+    return (ts, rest) if ts is not None else (None, line)
+
+
+def split_timestamp_ns(line: str) -> tuple[int | None, str]:
+    stamp, _, rest = line.partition(" ")
+    ts = parse_ts_ns(stamp)
     return (ts, rest) if ts is not None else (None, line)
 
 
@@ -137,6 +154,21 @@ def stream_logs(container: str, since: float, follow: bool = True, timeout: floa
             ts, text = split_timestamp(line)
             if ts is not None:
                 yield ts, stream, text
+    finally:
+        conn.close()
+
+
+def stream_logs_ns(container: str, since_ns: int, follow: bool = True, timeout: float = 120):
+    """(nanoseconds, stream, line) from `since_ns` on (inclusive: Docker's `since` doesn't skip an equal timestamp).
+    The log shipper uses this: lines written in the same microsecond (a traceback) stay distinct and in order."""
+    since = f"{since_ns // 10**9}.{since_ns % 10**9:09d}" if since_ns > 0 else "0"
+    q = urllib.parse.urlencode({"stdout": 1, "stderr": 1, "timestamps": 1, "follow": int(follow), "since": since})
+    conn, resp = _get(f"/containers/{urllib.parse.quote(container)}/logs?{q}", timeout)
+    try:
+        for stream, line in lines(frames(resp.read)):
+            ns, text = split_timestamp_ns(line)
+            if ns is not None:
+                yield ns, stream, text
     finally:
         conn.close()
 
