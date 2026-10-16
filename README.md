@@ -7,7 +7,7 @@ A small platform where builders (and their AI coding agents) deploy internal too
 cp .env.example .env          # then adjust; ANNEX_PUBLIC_PORT=8443 for tunnel testing
 scripts/bootstrap.sh          # VM layout, secrets, demo users, mkcert cert (idempotent)
 scripts/push.sh --extras      # sync and start the platform, incl. Metabase and Dozzle
-scripts/test-smoke.sh         # quick check that every part works (about 2 minutes)
+scripts/test-smoke.sh         # quick check that every part works (under a minute)
 scripts/show-users.sh         # demo user passwords
 ```
 For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo is in [docs/demo.md](docs/demo.md); teardown is in [docs/teardown.md](docs/teardown.md). Day-to-day commands are in [docs/operations.md](docs/operations.md).
@@ -44,7 +44,7 @@ Plus annex-ops (`ops/`: email and Slack for apps, incidents and alerts, host and
 | `scripts/push.sh [--extras]` | renders config, rsyncs to `/srv/annex/platform`, `docker compose up --wait`, applies gateway views, configures Metabase |
 | `scripts/extras.sh on\|off` | Metabase and Dozzle on or off |
 | `scripts/tunnel.sh up\|down` | SSH tunnel `127.0.0.1:8443 → annex:443` |
-| `scripts/test-smoke.sh` | **after every push**: every part once (login, deploy, gateway, job, email, ops, host, webhooks), about 2 minutes |
+| `scripts/test-smoke.sh` | **after every push**: every part once (login, deploy, gateway, job, email, ops, host, webhooks), under a minute |
 | `scripts/test-all.sh [--slow] [--only a,b]` | every check below in order, with a summary (30+ minutes; only when needed) |
 | `scripts/test-platform.sh` | M0.1 acceptance checks |
 | `scripts/backup.sh` | run the nightly backup now |

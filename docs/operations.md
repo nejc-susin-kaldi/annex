@@ -23,7 +23,7 @@
 | Remove an app | `./annex remove <app> [--keep-data]` |
 | Back up now | `scripts/backup.sh` (nightly at 02:00 anyway; 7 days kept) |
 | Restore one app | `scripts/restore.sh <app> [archive]` (replaces its DB and `/data`) |
-| Quick check after a push | `scripts/test-smoke.sh` (about 2 minutes: every part once) |
+| Quick check after a push | `scripts/test-smoke.sh` (under a minute: every part once) |
 | All checks | `scripts/test-all.sh` (30+ minutes; `--slow` adds the 20-minute `test-alerts.sh`; `--only platform,apps` for a few). Only when a change concerns timings, retries or alerts |
 | Host health as ops sees it | `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl host` (disk, memory, newest backup's age) |
 | Checks one by one | `scripts/test-platform.sh` (M0.1), `scripts/test-apps.sh` (M0.2), `scripts/test-jobs.sh` + `scripts/restore-test.sh` (M0.3), `scripts/test-rollback.sh` (M1.1), `scripts/test-notify.sh` (M1.2), `scripts/test-alerts.sh` (M1.3, 12-20 minutes), `scripts/test-usage.sh` (M1.4), `scripts/test-hooks.sh` (M1.5), `scripts/test-host.sh` (disk, memory, backup alerts), `scripts/test-users.sh` (accounts) |

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test: is everything up and wired together? Run it after every push (about 2 minutes).
+# Smoke test: is everything up and wired together? Run it after every push (under a minute).
 # It touches each part once, cheaply, and changes nothing that matters: one redeploy of client-lookup
 # (cached build), one run of monthly-report's job (one more history row, one email to cm in Mailpit).
 # It doesn't prove timings, retries or "exactly one alert": that's what the full suites are for

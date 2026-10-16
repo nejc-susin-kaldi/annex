@@ -41,6 +41,6 @@ The brief is `docs/brief.md`. Read it before changing anything. Later milestones
 - Apps: `./annex deploy <folder>`, then `scripts/test-apps.sh`. Validation errors must say what's wrong and how to fix it, because agents read them.
 - User accounts are managed with `./annex users` (human only). Don't edit `secrets/authelia/users.yml` by hand while Authelia runs: `annex_vm.py` writes it atomically and twice (D57).
 - Temporary files on the VM go under `/srv/annex`, never `/tmp` (the write rule above). One-off containers: `docker run --rm` with a command that exits by itself; never cut a server's output short with `| head`, which leaves it running (three stray Gatus containers ran for 18 hours that way).
-- After changing platform files: `scripts/push.sh` (add `--extras` for Metabase and Dozzle), then **`scripts/test-smoke.sh`** (about 2 minutes: every part once).
+- After changing platform files: `scripts/push.sh` (add `--extras` for Metabase and Dozzle), then **`scripts/test-smoke.sh`** (under a minute: every part once).
 - **Long suites only when they're needed, and ask Nejc first.** Run the one suite for the part you changed (`scripts/test-<area>.sh`, a few minutes). `scripts/test-all.sh` (30+ minutes) and `scripts/test-alerts.sh` (20 minutes) only when the change concerns what they prove (timings, retries, "exactly one alert"), and tell Nejc before starting them.
 - A change to a bind-mounted config file must trigger a recreate. `render.py` hashes `config/<service>` into `ANNEX_CONFIG_HASH_*` for this; add new services there when needed.
