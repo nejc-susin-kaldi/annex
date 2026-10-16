@@ -19,8 +19,14 @@
         icon: mdi-api
         server: annex
         container: annex-gateway-1
+    - Console:
+        href: "{{ANNEX_URL_CONSOLE}}"
+        description: "Your apps at a glance (builders see their own, admins all): status, releases, usage, errors, logs and config. Read-only"
+        icon: mdi-view-dashboard-outline
+        server: annex
+        container: annex-console-1
     - Status:
-        href: "{{ANNEX_URL_STATUS}}"
+        href: "{{ANNEX_URL_CONSOLE}}/status"
         description: Health of every app and the platform
         icon: gatus.png
         server: annex

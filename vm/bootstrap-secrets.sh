@@ -34,6 +34,7 @@ ensure_key APPDATA_DB_OPS_PASSWORD
 ensure_key APPDATA_DB_METABASE_USAGE_PASSWORD
 ensure_key OPS_INTERNAL_TOKEN 32
 ensure_key APPDATA_DB_HOOKS_PASSWORD
+ensure_key APPDATA_DB_CONSOLE_PASSWORD
 for f in session_secret storage_encryption_key reset_password_jwt_secret; do
   [ -s "$S/authelia/$f" ] || { rand 32 > "$S/authelia/$f"; echo "bootstrap: generated authelia/$f"; }
 done
@@ -64,6 +65,10 @@ VARS
 # the webhook receiver (its own container): a role that may only insert events
 cat > "$S/hooks-receiver.env" <<VARS
 OPS_DATABASE_URL=postgres://annex_hooks:$APPDATA_DB_HOOKS_PASSWORD@appdata-db:5432/annex_ops
+VARS
+# the console (its own container, M2.4): a read-only role
+cat > "$S/console.env" <<VARS
+OPS_DATABASE_URL=postgres://annex_console:$APPDATA_DB_CONSOLE_PASSWORD@appdata-db:5432/annex_ops
 VARS
 # Gatus authenticates its alert webhook to ops with this token
 cat > "$S/gatus.env" <<VARS

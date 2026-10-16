@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / ".build" / "platform"
-PLATFORM_SERVICES = ["home", "auth", "metabase", "logs", "gateway", "mail", "status", "hooks"]
+PLATFORM_SERVICES = ["home", "auth", "metabase", "logs", "gateway", "mail", "status", "hooks", "console"]
 # Used in templates only; kept out of .env because Compose would try to interpolate "$".
 TEMPLATE_ONLY = {"ANNEX_HOST_REGEX"}
 

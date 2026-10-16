@@ -1,7 +1,7 @@
 -- The annex-ops service's database (apps' email/Slack grants and the send log).
 -- Idempotent: scripts/push.sh applies it on every push, as postgres, with
 --   psql -v ops_pw=<APPDATA_DB_OPS_PASSWORD> -v usage_pw=<APPDATA_DB_METABASE_USAGE_PASSWORD>
---        -v hooks_pw=<APPDATA_DB_HOOKS_PASSWORD> -d postgres -f -
+--        -v hooks_pw=<APPDATA_DB_HOOKS_PASSWORD> -v console_pw=<APPDATA_DB_CONSOLE_PASSWORD> -d postgres -f -
 -- It lives here and not in init/, because init/ only runs on a fresh database.
 -- Later milestones append their tables to this file.
 DO $$ BEGIN
@@ -24,6 +24,13 @@ DO $$ BEGIN
 END $$;
 ALTER ROLE annex_hooks WITH LOGIN PASSWORD :'hooks_pw';
 GRANT CONNECT ON DATABASE annex_ops TO annex_hooks;
+
+-- The console's role (M2.4, its own container): read-only, and only what its pages show (grants at the end of this file)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'annex_console') THEN CREATE ROLE annex_console LOGIN; END IF;
+END $$;
+ALTER ROLE annex_console WITH LOGIN PASSWORD :'console_pw';
+GRANT CONNECT ON DATABASE annex_ops TO annex_console;
 
 \c annex_ops
 SET ROLE annex_ops;
@@ -254,3 +261,16 @@ CREATE TABLE IF NOT EXISTS annex_ops.error_groups (
 CREATE TABLE IF NOT EXISTS annex_ops.error_alerts (
   ts timestamptz NOT NULL DEFAULT now(), app text NOT NULL, groups int NOT NULL, summary boolean NOT NULL DEFAULT false);
 CREATE INDEX IF NOT EXISTS error_alerts_app_ts ON annex_ops.error_alerts (app, ts DESC);
+
+-- --- M2.4: the console's read-only role ------------------------------------------------------------------
+-- annex_console runs in its own container (compose `console`) on a network shared only with appdata-db. It may SELECT
+-- what its pages show and nothing else: no INSERT/UPDATE/DELETE anywhere, no `app_grants` (token hashes), no
+-- `log_cursors`, no webhook bodies or headers (column grants on hook_events), no email addresses (`sends` is not
+-- granted until the audit page, and then without bodies there are none). Later steps add their grants below.
+REVOKE ALL ON ALL TABLES IN SCHEMA annex_ops FROM annex_console;
+GRANT USAGE ON SCHEMA annex_ops TO annex_console;
+GRANT SELECT ON annex_ops.logs, annex_ops.releases, annex_ops.error_groups, annex_ops.error_events,
+  annex_ops.incidents, annex_ops.job_runs, annex_ops.requests, annex_ops.usage_daily, annex_ops.usage_weekly,
+  annex_ops.usage_apps, annex_ops.app_seen, annex_ops.app_signals TO annex_console;
+GRANT SELECT (id, app, hook, received_at, status, content_type, attempts, next_attempt_at, delivered_at, last_error, replay_of)
+  ON annex_ops.hook_events TO annex_console;

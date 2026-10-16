@@ -223,8 +223,9 @@ def stats() -> dict:
 # --- reading ----------------------------------------------------------------------------------
 def query_logs(app: str, n: int = 100, since_s: float | None = None, release: int | None = None,
                level: str | None = None, grep: str | None = None, request: str | None = None,
-               source: str = "app", oldest: bool = False) -> list[dict]:
-    """An app's stored lines, oldest first. The last `n` that match (or the first `n` with `oldest`).
+               source: str = "app", oldest: bool = False, before: datetime | None = None) -> list[dict]:
+    """An app's stored lines, oldest first. The last `n` that match (or the first `n` with `oldest`); `before` (a
+    timestamp) pages backwards: only lines older than it (the console's "older" link).
     source: app = the app's own lines and its jobs' output, gateway = its gateway reads, all = both."""
     if source not in ("app", "gateway", "all"):
         raise OpsError(400, f"--source {source!r} is not a source. Use app, gateway or all")
@@ -244,6 +245,9 @@ def query_logs(app: str, n: int = 100, since_s: float | None = None, release: in
     if request:
         where.append("request_id = %s")
         args.append(request)
+    if before is not None:
+        where.append("ts < %s")
+        args.append(before)
     if source == "app":
         where.append("container <> 'gateway'")
     elif source == "gateway":

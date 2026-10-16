@@ -85,6 +85,13 @@ gat=$(vm "docker exec annex-ops-1 python -c \"import urllib.request; print(urlli
 has "Gatus checks the front door" '"platform_front-door"' "$gat"
 has "Gatus checks client-lookup" '"apps_client-lookup"' "$gat"
 
+echo "Console (M2.4)"
+CONSOLE=$(setting ANNEX_URL_CONSOLE)
+expect "the console shows sam his app, and gives cm a 403 on it (and cm /status)" "200 403 200" \
+  "$(code -b "$TMP/sam.jar" "$CONSOLE/apps/client-lookup") $(code -b "$TMP/cm.jar" "$CONSOLE/apps/client-lookup") $(code -b "$TMP/cm.jar" "$CONSOLE/status")"
+expect "the console is on no network apps are on" "annex-console annex-platform " "$(vm "docker inspect annex-console-1 -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}} {{end}}'" | tr ' ' '\n' | grep . | sort | tr '\n' ' ')"
+has "Homepage lists the Console and Status tiles (its services.yaml parses)" "$CONSOLE/status" "$(c -b "$TMP/cm.jar" "$HOME_URL/api/services")"
+
 echo "Webhooks (the receiver)"
 HOOKS=$(setting ANNEX_URL_HOOKS)
 expect "the hooks host has no login, and an unknown hook is a 404" 404 "$(code -X POST -d '{}' "$HOOKS/h/no-such-app/x")"

@@ -209,7 +209,8 @@ services:
       - ./db/appdata/init:/docker-entrypoint-initdb.d:ro
       - ./db/appdata/hooks:/annex:ro
       - ${ANNEX_DATA_DIR}/dumps:/dumps
-    networks: [appdata]
+    # appdata: apps with Postgres, ops and the receiver; console: the console's read-only role (D69), nobody else
+    networks: [appdata, console]
     shm_size: 128m
     mem_limit: 384m
     healthcheck:
@@ -323,6 +324,45 @@ services:
       traefik.http.middlewares.hooks-ratelimit.ratelimit.burst: "40"
       traefik.http.middlewares.hooks-limit.buffering.maxRequestBodyBytes: "1048576"
       traefik.http.services.hooks.loadbalancer.server.port: "8000"
+
+  # The console (M2.4, D69): server-rendered pages for builders and admins, read-only. Its own container (the ops image,
+  # another command) so that the identity headers it trusts can only come from Traefik's forward-auth: it is on `platform`
+  # (Traefik, Gatus) and on `console`, a network shared only with appdata-db. Never on `edge` or `appdata`, where apps
+  # are, so no app can reach it and forge a Remote-User. Its database role may only SELECT what its pages show. No
+  # Docker access, no SMTP, no Slack token, no directory, no secrets of any app.
+  console:
+    <<: *base
+    image: annex-ops:local
+    pull_policy: never  # built by the ops service
+    command: ["uvicorn", "annex_ops.console_app:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: ${ANNEX_DATA_DIR}/secrets/console.env
+    environment:
+      <<: *tz
+      OPS_WATCHERS: "0"
+      ANNEX_HOST_PATTERN: ${ANNEX_HOST_PATTERN}
+      ANNEX_PORT_SUFFIX: ${ANNEX_PORT_SUFFIX}
+      ANNEX_URL_HOME: ${ANNEX_URL_HOME}
+    networks: [platform, console]
+    user: "10001:10001"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    mem_limit: 96m
+    depends_on:
+      appdata-db: {condition: service_healthy}
+      ops: {condition: service_started}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      start_interval: 2s
+    labels:
+      com.kaldi.annex: "true"
+      traefik.enable: "true"
+      traefik.docker.network: annex-platform
+      traefik.http.routers.console.rule: Host(`${ANNEX_HOST_CONSOLE}`)
+      traefik.http.services.console.loadbalancer.server.port: "8000"
 
   # Prototype mail server: catches everything, nothing leaves the VM. Admins only (Authelia rule).
   mailpit:
@@ -510,6 +550,11 @@ networks:
   # appdata-db, apps, metabase
   appdata:
     name: annex-appdata
+    internal: true
+    labels: {com.kaldi.annex: "true"}
+  # the console and appdata-db, nobody else (the console's read-only database role)
+  console:
+    name: annex-console
     internal: true
     labels: {com.kaldi.annex: "true"}
   socket-ro:

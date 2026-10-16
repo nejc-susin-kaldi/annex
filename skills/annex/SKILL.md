@@ -60,5 +60,8 @@ Every app logs the same way; the templates already do it, so keep it. Use the lo
 - **Errors:** a new kind of error (error-level lines, `log.exception`, printed tracebacks, and browser JavaScript errors from `/annex-errors.js`) emails the owner once; `annex errors <app>` lists the kinds. Keep the `<script src="/annex-errors.js">` tag and the two routes the templates have, log failures at `error` with context, and don't swallow exceptions: a swallowed error is one nobody hears about.
 - **Reading logs:** `annex_logs` searches the stored logs, so a failed or rolled-back release is still there: `release: "r4"`, `level: "error"` (error and above), `grep: "text"` (message and fields), `request: "<id from the X-Request-Id header>"`, `since: "2h"`. After a failed deploy, read the failed release's lines with its number, not the live release's. Anything with a secret-looking field name is removed before storing, so don't rely on logs to see a token.
 
+## The console
+If the user wants to *look* at an app without the CLI (status, releases, errors, logs, usage), point them at the console (`console.<domain>`, the Homepage's Console tile): their own apps, read-only. You still deploy, roll back and read logs with the tools above.
+
 ## Homelab note (M0 prototype)
 The browser reaches Annex through an SSH tunnel on port 8443 and `/etc/hosts` entries. If the user can't open a new app's URL, they need to add its hostname to `/etc/hosts` (see `docs/setup.md` in the annex repo). Existing entries cover `client-lookup`, `monthly-report` and `vibe-dashboard`.
