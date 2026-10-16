@@ -18,6 +18,11 @@ echo "Local"
 out=$(cd "$ROOT" && uv run --quiet --python 3.13 --with-requirements ops/requirements.txt --with pytest pytest ops/tests -q 2>&1 | tail -1)
 has "annex-ops unit tests" " passed" "$out"
 (cd "$ROOT" && python3 -m unittest discover -s vm/tests -q >/dev/null 2>&1) && ok "annex_vm unit tests" || bad "annex_vm unit tests" "failed"
+(cd "$ROOT" && PYTHONPATH=cli/src python3 -m unittest discover -s cli/tests -q >/dev/null 2>&1) && ok "CLI unit tests (log check)" || bad "CLI unit tests" "failed"
+(cd "$ROOT" && python3 -m unittest discover -s runtime/tests -q >/dev/null 2>&1) && ok "runtime logging tests (python)" || bad "runtime logging tests (python)" "failed"
+if command -v node >/dev/null; then
+  (cd "$ROOT" && node --test runtime/tests/*.test.mjs >/dev/null 2>&1) && ok "runtime logging tests (node)" || bad "runtime logging tests (node)" "failed"
+fi
 
 echo "Platform"
 wait_healthy 120 >/dev/null || true
@@ -39,6 +44,18 @@ page=$(c -b "$TMP/cm.jar" "$(url client-lookup)/" | sed 's/<[^>]*>/ /g' | tr -s 
 has "it greets the signed-in user" "Hello, Maja Horvat" "$page"
 has "a granted view is readable" "client_summary : allowed" "$page"
 has "an ungranted view is denied" "advisor_book : denied" "$page"
+has "a deploy of a conforming app has no logging warning" "is live" "$out"
+hasnt "  ...(logs are structured)" "logs aren't structured" "$out"
+# the logging convention (M2.1): one request carries one id in its response header, its log lines and Traefik's access log
+rid_headers=$(c -D - -o /dev/null -b "$TMP/cm.jar" "$(url client-lookup)/?q=novak")
+rid=$(tr -d '\r' <<<"$rid_headers" | sed -n 's/^[Xx]-[Rr]equest-[Ii]d: //p')
+expect "the response carries an X-Request-Id" 16 "${#rid}"
+sleep 2
+lines=$(vm "docker logs --tail 40 annex-app-client-lookup 2>&1")
+has "the app's log lines carry the same request_id" "\"request_id\": \"$rid\"" "$lines"
+expect "the app's last log line is structured (ts, level, msg)" True "$(tail -1 <<<"$lines" | py 'all(k in d for k in ("ts", "level", "msg")) and d["level"] in ("debug", "info", "warn", "error")')"
+has "Traefik's access log carries it too" "\"downstream_X-Request-Id\":\"$rid\"" "$(vm "docker logs --tail 60 annex-traefik-1 2>&1")"
+hasnt "no search text in the app's log" "novak" "$lines"
 st=$("$ANNEX" --json status client-lookup)
 expect "annex status: health check up" up "$(py '(d.get("health_check") or {}).get("state")' <<<"$st")"
 expect "annex status: no open incident" None "$(py 'd.get("incident")' <<<"$st")"

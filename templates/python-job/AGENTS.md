@@ -14,6 +14,19 @@ This folder is an **Annex app**: a small internal tool that runs behind the clie
 - **No secrets in code, files or the image.** Declare the name under `secrets:` and ask a human to run `annex secret set <app> KEY=VALUE`.
 - **Don't change the Dockerfile's base image or `USER 10001`.** The image needs `sleep` (the base image has it), because the container idles between runs. The filesystem is read-only; write only to `/tmp` and `/data`.
 
+## Logging
+Use `log` from `annex_runtime.py`, not `print()`: every line becomes one JSON object (`ts`, `level`, `msg` and your fields), which Annex stores and searches.
+```python
+from annex_runtime import log
+log.info("report written", rows=12, ms=340)
+log.warn("gateway slow", view="client_summary", ms=2300)
+log.error("could not send", status=e.status)   # inside `except`: log.exception("could not send") adds the stack
+```
+- **Pick the level:** `debug` detail for you (hidden unless `env: {LOG_LEVEL: debug}`), `info` what happened, `warn` odd but handled, `error` failed.
+- **Jobs log a start line and an end line** with counts and duration (see `job.py`), and exit non-zero on failure.
+- **Log errors with context** (what you were doing, which id), and counts instead of rows.
+- **Never log** secrets, tokens, passwords, request bodies, cookies or full product records, or personal data beyond the user's login (log `matches=3`, not the search text).
+
 ## Email and Slack
 To email people or post to Slack, declare it in `annex.yaml` (`notify: {email: true, slack: ["#finance-reports"]}`) and use the helpers in `annex_runtime.py`. Never run an SMTP client or hold a Slack token of your own: Annex injects `ANNEX_OPS_URL` and a token that can do exactly what you declared.
 ```python

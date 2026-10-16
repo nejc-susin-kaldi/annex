@@ -12,6 +12,7 @@ accessLog:
       defaultMode: drop
       names:
         Remote-User: keep
+        X-Request-Id: keep   # the app's response header (and the client's request header), so one id links log lines
 ping:
   entryPoint: ping
 entryPoints:

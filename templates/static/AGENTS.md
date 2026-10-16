@@ -20,6 +20,9 @@ All requests are relative to the page and go to this app's own server:
 - Views and their columns are in the contract (`annex contract`). All data is synthetic. Large views (e.g. `monthly_positions`, ~40k rows) should be filtered or limited.
 - Use relative URLs (`api/...`, not `/api/...` or a hostname), so the page works on any host.
 
+## Logging
+`server.py` logs every request as one JSON line (`ts`, `level`, `msg`, `request_id`, `user`, method, path, status, ms) and returns an `X-Request-Id` header, so leave it alone. There is nothing to log in the page itself: never `console.log` secrets, tokens or product records either. Fix what the server's `warn` and `error` lines say (`annex logs <app>`).
+
 ## What you must not do
 - **Don't change `server.py`, the `Dockerfile` or `.dockerignore`.** No build step runs on the server. If you use a framework with a build step, build locally and put the output in `public/`.
 - **No login code, no credentials, no direct database or gateway calls from the browser.**

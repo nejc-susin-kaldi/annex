@@ -2,15 +2,34 @@
 import csv
 import html
 import os
+import time
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
-from annex_runtime import current_user
+from annex_runtime import current_user, log, request_context
 from store import REPORTS, connect
 
 app = FastAPI(title="monthly-report")
+
+@app.middleware("http")
+async def request_log(request: Request, call_next):
+    """One request id per request: on every log line, in the X-Request-Id response header and in Annex's access
+    log, so one id finds everything about a request. Plus one access line per request (health checks at debug)."""
+    t0 = time.monotonic()
+    with request_context(request.headers) as request_id:
+        try:
+            response = await call_next(request)
+        except Exception:
+            log.exception("unhandled error", method=request.method, path=request.url.path)
+            response = PlainTextResponse("Internal Server Error", status_code=500)
+        response.headers["X-Request-Id"] = request_id
+        (log.debug if request.url.path == "/healthz" else log.info)(
+            "request", method=request.method, path=request.url.path, status=response.status_code,
+            ms=round((time.monotonic() - t0) * 1000))
+        return response
+
 TITLE = os.environ.get("REPORT_TITLE", "Monthly report")
 STYLE = """
 body{font-family:system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem;color:#1f2933}
@@ -34,7 +53,9 @@ def healthz():
 def download(name: str):
     path = REPORTS / name
     if "/" in name or not name.endswith(".csv") or not path.is_file():
+        log.warn("report not found", file=name)
         raise HTTPException(404, "no such report")
+    log.info("report downloaded", file=name)
     return FileResponse(path, media_type="text/csv", filename=name)
 
 
@@ -74,5 +95,8 @@ def index(request: Request):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")), proxy_headers=True,
-                forwarded_allow_ips="*")
+    port = int(os.environ.get("PORT", "8080"))
+    log.info("started", port=port)
+    # log_config=None and access_log=False: uvicorn's own lines would be plain text; request_log above does it
+    uvicorn.run(app, host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*",
+                log_config=None, access_log=False)

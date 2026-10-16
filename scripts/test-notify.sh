@@ -28,7 +28,7 @@ expect "kaldi-admin logs in (for Mailpit)" 200 "$(login kaldi-admin)"
 c -o /dev/null -X DELETE -b "$TMP/kaldi-admin.jar" "$MAIL_URL/api/v1/messages"
 expect "Mailpit is empty before the run" 0 "$(mail_count)"
 out=$("$ROOT/annex" run "$APP" monthly 2>&1) && ok "annex run $APP monthly exits 0" || bad "annex run $APP monthly exits 0" "$out"
-has "the job reports who it emailed" "emailed cm@annex.example" "$out"
+has "the job logs that it emailed (logins, not addresses)" '"msg": "report emailed", "to": ["cm"]' "$out"
 hits=$(as kaldi-admin "$MAIL_URL/api/v1/search?query=to:cm@annex.example")
 expect "Mailpit has exactly one message to cm@annex.example" 1 "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["messages_count"])' <<<"$hits")"
 id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["messages"][0]["ID"])' <<<"$hits" 2>/dev/null || true)

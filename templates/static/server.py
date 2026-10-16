@@ -8,17 +8,53 @@
 import json
 import os
 import re
+import secrets
+import time
+from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 PUBLIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public")
 VIEW = re.compile(r"^/api/data/([a-z_][a-z0-9_]*)$")
+REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
+LEVELS = {"debug": 10, "info": 20, "warn": 30, "error": 40}
+THRESHOLD = LEVELS.get(os.environ.get("LOG_LEVEL", "info").strip().lower().replace("warning", "warn"), 20)
+
+
+def log(level: str, msg: str, **fields) -> None:
+    """One JSON object per line on stdout, as annex_runtime.log does (the Logging section of `annex contract`)."""
+    if LEVELS[level] >= THRESHOLD:
+        line = {"ts": datetime.now().astimezone().isoformat(timespec="milliseconds"), "level": level, "msg": msg}
+        line.update({(k + "_" if k in ("ts", "level", "msg") else k): v for k, v in fields.items()})
+        print(json.dumps(line, default=str), flush=True)
 
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=PUBLIC, **kwargs)
+
+    def handle_one_request(self):
+        self.t0 = time.monotonic()
+        self.request_id = ""
+        super().handle_one_request()
+
+    def parse_request(self):
+        ok = super().parse_request()
+        incoming = self.headers.get("X-Request-Id", "") if ok else ""
+        self.request_id = incoming if REQUEST_ID.match(incoming) else secrets.token_hex(8)
+        self.user = self.headers.get("Remote-User", "") if ok else ""
+        return ok
+
+    def end_headers(self):
+        self.send_header("X-Request-Id", self.request_id)  # one id on the response, the access log and the lines
+        super().end_headers()
+
+    def log_request(self, code="-", size="-"):
+        path = self.path.partition("?")[0]
+        log("debug" if path == "/healthz" else "info", "request", request_id=self.request_id, user=self.user,
+            method=self.command, path=path, status=int(code) if str(code).isdigit() else 0,
+            ms=round((time.monotonic() - self.t0) * 1000))
 
     def send_json(self, status: int, body: bytes) -> None:
         self.send_response(status)
@@ -58,13 +94,17 @@ class Handler(SimpleHTTPRequestHandler):
         except HTTPError as e:
             return self.send_json(e.code, e.read())
         except URLError as e:
+            log("warn", "gateway read failed", request_id=self.request_id, user=self.user, view=view, error=str(e.reason))
             return self.send_json(502, json.dumps({"error": str(e.reason)}).encode())
 
+    def log_error(self, fmt, *args):
+        log("warn", fmt % args, request_id=getattr(self, "request_id", ""))
+
     def log_message(self, fmt, *args):
-        print(f"{self.address_string()} {fmt % args}", flush=True)
+        pass  # request lines come from log_request, errors from log_error
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
-    print(f"serving {PUBLIC} on :{port}", flush=True)
+    log("info", "started", port=port, public=PUBLIC)
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()

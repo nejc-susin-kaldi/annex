@@ -5,14 +5,33 @@ code), scoped product data (only the declared views), and a discovery entry.
 """
 import html
 import os
+import time
 
 import uvicorn
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
-from annex_runtime import GatewayError, current_user, gateway
+from annex_runtime import GatewayError, current_user, gateway, log, request_context
 
 app = FastAPI(title="client-lookup")
+
+@app.middleware("http")
+async def request_log(request: Request, call_next):
+    """One request id per request: on every log line, in the X-Request-Id response header and in Annex's access
+    log, so one id finds everything about a request. Plus one access line per request (health checks at debug)."""
+    t0 = time.monotonic()
+    with request_context(request.headers) as request_id:
+        try:
+            response = await call_next(request)
+        except Exception:
+            log.exception("unhandled error", method=request.method, path=request.url.path)
+            response = PlainTextResponse("Internal Server Error", status_code=500)
+        response.headers["X-Request-Id"] = request_id
+        (log.debug if request.url.path == "/healthz" else log.info)(
+            "request", method=request.method, path=request.url.path, status=response.status_code,
+            ms=round((time.monotonic() - t0) * 1000))
+        return response
+
 GRANTED = ["client_summary", "top_clients_by_aum"]
 NOT_GRANTED = ["monthly_positions", "advisor_book"]
 
@@ -50,6 +69,7 @@ def access_check() -> str:
             gateway(view, limit=1)
             items.append(f"<li><code>{view}</code>: <span class=ok>allowed</span></li>")
         except GatewayError as e:
+            log.debug("gateway view not granted", view=view, status=e.status)
             items.append(f"<li><code>{view}</code>: <span class=no>denied ({e.status})</span></li>")
     return "<ul>" + "".join(items) + "</ul>"
 
@@ -67,6 +87,7 @@ def index(request: Request, q: str = Query("", max_length=60)):
         if q:
             pattern = "*" + q.replace("*", "").replace(",", " ") + "*"
             rows = gateway("client_summary", client_name=f"ilike.{pattern}", order="aum_eur.desc", limit=50)
+            log.info("client search", chars=len(q), matches=len(rows))  # counts, never the search text
             results = f"<h2>Clients matching “{html.escape(q)}”</h2>" + table(rows)
         else:
             top = gateway("top_clients_by_aum", limit=10)
@@ -76,6 +97,7 @@ def index(request: Request, q: str = Query("", max_length=60)):
                 f"<td>{html.escape(r['advisor_name'])}</td><td class=num>{eur(r['aum_eur'])}</td></tr>" for r in top
             ) + "</table>"
     except GatewayError as e:
+        log.error("could not load clients", status=e.status, error=str(e))
         results = f"<p class=no>Could not load data: {html.escape(str(e))}</p>"
     groups = ", ".join(user.groups) or "none"
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>Client lookup</title>
@@ -90,5 +112,8 @@ def index(request: Request, q: str = Query("", max_length=60)):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")), proxy_headers=True,
-                forwarded_allow_ips="*")
+    port = int(os.environ.get("PORT", "8080"))
+    log.info("started", port=port)
+    # log_config=None and access_log=False: uvicorn's own lines would be plain text; request_log above does it
+    uvicorn.run(app, host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*",
+                log_config=None, access_log=False)

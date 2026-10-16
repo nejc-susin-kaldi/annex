@@ -14,6 +14,19 @@ This folder is an **Annex app**: a small internal tool that runs behind the clie
 - **No secrets in code, files or the image.** Declare the name under `secrets:` and ask a human to run `annex secret set <app> KEY=VALUE`.
 - **Don't change the Dockerfile's base image, `USER 10001` or `HEALTHCHECK`.** The app runs on a read-only filesystem; write only to `/tmp` and `/data`.
 
+## Logging
+Use `log` from `annex_runtime.js`, not `console.log()`: every line becomes one JSON object (`ts`, `level`, `msg` and your fields), which Annex stores and searches.
+```js
+import { log } from "./annex_runtime.js";
+log.info("report written", { rows: 12, ms: 340 });
+log.warn("gateway slow", { view: "client_summary", ms: 2300 });
+log.error("could not send", { status: e.status });
+```
+- **Pick the level:** `debug` detail for you (hidden unless `env: {LOG_LEVEL: debug}`), `info` what happened, `warn` odd but handled, `error` failed.
+- `app.use(annexRequest)` in `server.js` gives every line of a request its `request_id` and `user`, and returns the `X-Request-Id` header. Keep it first.
+- **Log errors with context** (what you were doing, which id), and counts instead of rows.
+- **Never log** secrets, tokens, passwords, request bodies, cookies or full product records, or personal data beyond the user's login (log `matches=3`, not the search text).
+
 ## Email and Slack
 To email people or post to Slack, declare it in `annex.yaml` (`notify: {email: true, slack: ["#finance-reports"]}`) and use the helpers in `annex_runtime.js`. Never run an SMTP client or hold a Slack token of your own: Annex injects `ANNEX_OPS_URL` and a token that can do exactly what you declared.
 ```js

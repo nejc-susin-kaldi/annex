@@ -45,7 +45,7 @@
 | `certs/` | mkcert wildcard certificate (local TLS mode) |
 
 ## Logs
-- Apps: `./annex logs <app>`, or Dozzle at `logs.` (admins).
+- Apps: `./annex logs <app>`, or Dozzle at `logs.` (admins). Apps log JSON lines (`ts`, `level`, `msg`, and `request_id` and `user` inside a request): the logging convention is in the contract, and `annex deploy` warns (never refuses) when a web app's first lines aren't structured. One request's id is in the app's response header (`X-Request-Id`), its log lines and Traefik's access log (`downstream_X-Request-Id`). `LOG_LEVEL` (default `info`) can be set under `env:`.
 - Gateway access per app: `ssh annex docker logs annex-product-db-1 2>&1 | grep annex-gateway`.
 - Front door: `ssh annex docker logs annex-traefik-1` (JSON access log), `annex-authelia-1` (login decisions).
 

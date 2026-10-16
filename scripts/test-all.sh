@@ -24,6 +24,8 @@ suites=(
   "runtime|scripts/sync-runtime.sh --check"
   "unit|uv run --quiet --python 3.13 --with-requirements ops/requirements.txt --with pytest pytest ops/tests -q"
   "vm-unit|python3 -m unittest discover -s vm/tests -q"
+  "cli-unit|env PYTHONPATH=cli/src python3 -m unittest discover -s cli/tests -q"
+  "runtime-unit|python3 -m unittest discover -s runtime/tests -q"
   "platform|scripts/test-platform.sh"
   "apps|scripts/test-apps.sh"
   "jobs|scripts/test-jobs.sh"

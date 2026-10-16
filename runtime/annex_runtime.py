@@ -1,13 +1,20 @@
-"""Helpers for the Annex app contract: identity, the data gateway, email, Slack and incoming webhooks.
+"""Helpers for the Annex app contract: identity, logging, the data gateway, email, Slack and incoming webhooks.
 
 Keep this file as is; build your app in main.py.
 """
 from __future__ import annotations
 
+import contextvars
 import hmac
 import json
+import logging
 import os
+import re
+import secrets
+import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -30,6 +37,99 @@ def current_user(headers) -> User:
         email=headers.get("remote-email", ""),
         groups=[g for g in headers.get("remote-groups", "").split(",") if g],
     )
+
+
+# --- Logging: one JSON object per line on stdout (the Logging section of `annex contract`) ----------------------
+# Required: ts, level (debug|info|warn|error), msg. Inside request_context() every line also gets request_id and
+# user. LOG_LEVEL (injected, default info) sets the threshold. Never log secrets, tokens, passwords, request
+# bodies or full product records: IDs and counts are fine.
+_LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warn": logging.WARNING, "warning": logging.WARNING,
+           "error": logging.ERROR}
+_NAMES = {logging.DEBUG: "debug", logging.INFO: "info", logging.WARNING: "warn", logging.ERROR: "error",
+          logging.CRITICAL: "error"}
+_RESERVED = ("ts", "level", "msg", "request_id", "user")
+_request_id: contextvars.ContextVar[str] = contextvars.ContextVar("annex_request_id", default="")
+_log_user: contextvars.ContextVar[str] = contextvars.ContextVar("annex_log_user", default="")
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
+
+
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        out = {"ts": datetime.fromtimestamp(record.created).astimezone().isoformat(timespec="milliseconds"),
+               "level": _NAMES.get(record.levelno, "info"), "msg": record.getMessage()}
+        if _request_id.get():
+            out["request_id"] = _request_id.get()
+        if _log_user.get():
+            out["user"] = _log_user.get()
+        for key, value in (getattr(record, "annex_fields", None) or {}).items():
+            out[key + "_" if key in _RESERVED else key] = value  # a field can't overwrite ts, level, msg, ...
+        if record.exc_info and record.exc_info[0]:
+            out["exc"] = f"{record.exc_info[0].__name__}: {record.exc_info[1]}"
+            out["stack"] = self.formatException(record.exc_info)
+        return json.dumps(out, default=str)
+
+
+def _configure_logging() -> None:
+    """Everything that uses Python's logging (uvicorn, libraries) comes out in the same format, on stdout."""
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(_JsonFormatter())
+    root = logging.getLogger()
+    root.handlers[:] = [handler]
+    root.setLevel(_LEVELS.get(os.environ.get("LOG_LEVEL", "info").strip().lower(), logging.INFO))
+
+
+class _Log:
+    """log.info("report written", rows=12, ms=340). Extra keyword arguments become fields of the line."""
+
+    def __init__(self, name: str = "annex"):
+        self._logger = logging.getLogger(name)
+
+    def _emit(self, level: int, msg: str, fields: dict, exc: bool = False) -> None:
+        self._logger.log(level, msg, extra={"annex_fields": fields}, exc_info=exc or None, stacklevel=3)
+
+    def debug(self, msg: str, **fields) -> None:
+        self._emit(logging.DEBUG, msg, fields)
+
+    def info(self, msg: str, **fields) -> None:
+        self._emit(logging.INFO, msg, fields)
+
+    def warn(self, msg: str, **fields) -> None:
+        self._emit(logging.WARNING, msg, fields)
+
+    warning = warn
+
+    def error(self, msg: str, **fields) -> None:
+        self._emit(logging.ERROR, msg, fields)
+
+    def exception(self, msg: str, **fields) -> None:
+        """An error line with the exception being handled (its type, message and stack)."""
+        self._emit(logging.ERROR, msg, fields, exc=True)
+
+
+_configure_logging()
+log = _Log()
+
+
+def new_request_id() -> str:
+    """16 random hex characters."""
+    return secrets.token_hex(8)
+
+
+@contextmanager
+def request_context(headers):
+    """Set request_id and user on every log line inside the block, and yield the request id. An incoming
+    X-Request-Id is reused if it looks sane (8-64 letters, digits, '.', '_' or '-'), else a new one is made;
+    send it back as the X-Request-Id response header so one id links the access log, the app's lines and an error.
+    `headers` is a mapping with case-insensitive keys (Starlette's request.headers, http.server's self.headers)."""
+    rid = headers.get("x-request-id") or headers.get("X-Request-Id") or ""
+    rid = rid if _REQUEST_ID_RE.match(rid) else new_request_id()
+    t1 = _request_id.set(rid)
+    t2 = _log_user.set(headers.get("remote-user") or headers.get("Remote-User") or "")
+    try:
+        yield rid
+    finally:
+        _request_id.reset(t1)
+        _log_user.reset(t2)
 
 
 class GatewayError(Exception):

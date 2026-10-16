@@ -50,5 +50,13 @@ Prefer a template when the user hasn't asked for a specific stack: it already fo
 - **Webhooks** (Trello, Stripe, GitHub, Slack, shared-secret): declare `webhooks:` in `annex.yaml` with a `secret` listed under `secrets:`, and give the provider `$ANNEX_HOOKS_URL/<name>`. In the endpoint call `hook_event(headers)` first (401 on `HookError`), answer 2xx quickly and dedupe by `event_id`: delivery is at least once. Ask a human to set the signing secret (`annex secret set`); `annex hooks show` and `replay` are human only.
 - **Pin versions** of libraries, including CDN URLs.
 
+## Logging
+Every app logs the same way; the templates already do it, so keep it. Use the logger, not `print()`.
+- **Use `log`** from `annex_runtime` (`log.info("report written", rows=12)`; node: `log.info("report written", { rows: 12 })`). Every line is one JSON object with `ts`, `level` and `msg`; inside a request it also has `request_id` and `user`. Keep the template's request middleware: it returns the `X-Request-Id` header.
+- **Pick the level:** `debug` detail (hidden unless `env: {LOG_LEVEL: debug}`), `info` what happened, `warn` odd but handled, `error` failed. Log errors with context (what you were doing, which id); `log.exception(...)` inside `except` adds the stack.
+- **Jobs:** one start line and one end line with counts and duration, and exit non-zero on failure.
+- **Never log** secrets, tokens, passwords, request bodies, cookies or full product records. IDs, counts and the user's login are fine; search text and other personal data aren't.
+- A deploy whose first log lines aren't structured succeeds with the warning "logs aren't structured": fix it by switching from `print()` to `log`.
+
 ## Homelab note (M0 prototype)
 The browser reaches Annex through an SSH tunnel on port 8443 and `/etc/hosts` entries. If the user can't open a new app's URL, they need to add its hostname to `/etc/hosts` (see `docs/setup.md` in the annex repo). Existing entries cover `client-lookup`, `monthly-report` and `vibe-dashboard`.

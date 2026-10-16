@@ -20,6 +20,7 @@ from typing import Callable
 
 import yaml
 
+from . import logcheck
 from . import manifest as mf
 from .remote import REPO, AnnexError, Remote
 
@@ -120,7 +121,8 @@ def _tile_labels(m: mf.Manifest, fields: list[tuple[str, str, str | None]]) -> d
 def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
     data_dir = r.data
     url = r.url_for(m.name)
-    env = {"ANNEX_APP_NAME": m.name, "ANNEX_BASE_URL": url, **m.env}
+    # LOG_LEVEL has a default that env: may override (the Logging section of the contract)
+    env = {"ANNEX_APP_NAME": m.name, "ANNEX_BASE_URL": url, "LOG_LEVEL": "info", **m.env}
     labels = {
         "com.kaldi.annex": "true",
         "com.kaldi.annex.app": m.name,
@@ -461,8 +463,11 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
     _cleanup(r, m.name)
     progress("Done")
     warnings = _warnings(r, m, folder)
+    if m.is_web:  # job-only apps are checked on their first run (a later step)
+        lines = r.out(f"docker logs --tail 50 {container(m.name)} 2>&1", check=False).splitlines()
+        warnings += [w for w in [logcheck.warning(lines)] if w]
     return {**record, "warnings": warnings, "webhooks": _webhook_urls(r, m.name, m.webhooks), "previous_release": live and live["release"], "snapshot": rel["snapshot"],
-            "injected_env": sorted({"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", *prov["injected"],
+            "injected_env": sorted({"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", "LOG_LEVEL", *prov["injected"],
                                     *(["DATA_DIR"] if m.files else []),
                                     *(["ANNEX_GATEWAY_URL"] if m.views else []),
                                     *(["ANNEX_OPS_URL"] if m.notify_email or m.notify_slack else []),

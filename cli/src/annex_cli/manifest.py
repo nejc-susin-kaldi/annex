@@ -20,7 +20,9 @@ RESERVED_NAMES = {"home", "auth", "metabase", "logs", "gateway", "mail", "ops", 
                   "echo-test", "www", "api"}
 INJECTED_ENV = {"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", "DATABASE_URL", "DATA_DIR",
                 "ANNEX_GATEWAY_URL", "ANNEX_GATEWAY_TOKEN", "ANNEX_OPS_URL", "ANNEX_OPS_TOKEN", "ANNEX_HOOK_TOKEN",
-                "ANNEX_HOOKS_URL"}
+                "ANNEX_HOOKS_URL", "LOG_LEVEL"}
+# injected with a default, but the app may set its own value under env: (unlike the other injected names)
+OVERRIDABLE_ENV = {"LOG_LEVEL": ("debug", "info", "warn", "error")}
 HOOK_VERIFY = ("trello", "stripe", "github", "slack", "shared-secret")
 MAX_WEBHOOKS = 10
 TYPES = ("web", "job", "web+job")
@@ -211,6 +213,9 @@ def load(folder: Path) -> Manifest:
     for k, v in env.items():
         if not isinstance(k, str) or not KEY_RE.match(k):
             p.append(f"env.{k}: names must be UPPER_SNAKE_CASE")
+        elif k in OVERRIDABLE_ENV:
+            if str(v).strip().lower() not in OVERRIDABLE_ENV[k]:
+                p.append(f"env.{k}: {v!r} is not valid. Use one of: {', '.join(OVERRIDABLE_ENV[k])} (the default is info)")
         elif k in INJECTED_ENV or k.startswith("ANNEX_"):
             p.append(f"env.{k}: is set by Annex; remove it from env")
         if not isinstance(v, (str, int, float, bool)):

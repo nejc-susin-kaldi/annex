@@ -93,6 +93,16 @@ Outside services (Trello, Stripe, GitHub, Slack, anything with a shared secret) 
 - **Limits:** 1 MB per request; 60 events per minute per hook.
 - **Seeing and replaying:** `annex hooks <app>` lists events (never their bodies). **Human only:** `annex hooks show <id>` (headers and body, which can hold personal data) and `annex hooks replay <app> --id N | --failed | --since 1h`. Rotate a signing secret with `annex secret set`, which updates what Annex checks.
 
+## Logging
+Every app logs the same way, so anyone can debug any app, and Annex can store and search the lines.
+- **One JSON object per line on stdout** (stderr is fine for crashes). Required keys: `ts` (ISO 8601 with time zone), `level` (`debug`, `info`, `warn` or `error`) and `msg`. Anything else is free-form (`rows`, `ms`, `view`, ...).
+- **Inside a request** every line also has `request_id` and `user` (the `Remote-User` login). The app reuses an incoming `X-Request-Id` or makes one (16 hex characters), **returns it as the `X-Request-Id` response header** and puts it on every line of that request. Annex's access log keeps the header too, so one id finds the front-door record, the app's lines and an error.
+- **`LOG_LEVEL`** is injected (default `info`); set another under `env:` (`env: {LOG_LEVEL: debug}`) to get `debug` lines. Choose levels like this: `debug` for detail only you need, `info` for what happened, `warn` for something odd that was handled, `error` for something that failed.
+- **Never log** secrets, tokens, passwords, cookies, request bodies or full product records. IDs and counts are fine, and so is the user's login; other personal data isn't (log `matches=3`, not the search text).
+- **Jobs** log a start line and an end line with counts and duration, log errors with context, and **exit non-zero on failure** (that is what alerts the owner).
+- **The helpers do it for you.** Python: `from annex_runtime import log, request_context` (`log.info("report written", rows=12, ms=340)`, `log.exception(...)` inside `except`; the template's middleware sets the context and the header). Node: `import { log, annexRequest }` (`log.info("report written", { rows: 12 })`, `app.use(annexRequest)`). The `static` template's server logs its requests itself. `print()` still works but isn't structured; prefer `log`. Your own stack must write the same format.
+- **Annex checks, and only warns:** after a web app passes its health gate, `annex deploy` reads its first lines; if none follow the convention, the result says "logs aren't structured". The deploy still succeeds.
+
 ## Bring your own stack
 The templates are the fast path, not a requirement. Any language or framework works if it runs as **one container** and follows the runtime rules above. Write your own `Dockerfile` and `annex.yaml` and check:
 
@@ -101,6 +111,7 @@ The templates are the fast path, not a requirement. Any language or framework wo
 - **Health:** a Docker `HEALTHCHECK` is optional but recommended, because `annex list` shows its state.
   - Use a command the image actually has; slim images have no `curl`.
   - If there is one, the deploy waits for it to report healthy.
+- **Logging:** write JSON lines to stdout in the format of the Logging section above (`ts`, `level`, `msg`), and return an `X-Request-Id` header. Libraries' plain-text startup lines are fine as long as your own lines follow it.
 - **Read-only filesystem:** set `ENV HOME=/tmp`, and point caches and temp files at `/tmp`.
 - **Build in the image:** do everything at image build time: install dependencies, compile, bundle, collect static files. Nothing may be installed or built at startup.
 - **Memory:** the default limit is 256 MB. Raise it with `resources.memory` (max `512m`) only if the app needs more. Size runtime heaps to fit, e.g. a JVM with `-Xmx` at about 70 % of the limit, or Node with `--max-old-space-size`.
@@ -129,6 +140,7 @@ If the deploy rejects something, the error says what to change.
 |---|---|
 | `PORT` | web, web+job |
 | `ANNEX_APP_NAME`, `ANNEX_BASE_URL` | always (`ANNEX_BASE_URL` is the app's public URL) |
+| `LOG_LEVEL` | always (default `info`; the one injected name you may override under `env:`: debug, info, warn or error) |
 | `DATABASE_URL` | `storage.postgres: true` (`postgres://…@appdata-db:5432/app_<name>`) |
 | `DATA_DIR=/data` | `storage.files: true` |
 | `ANNEX_GATEWAY_URL`, `ANNEX_GATEWAY_TOKEN` | `data.views` is not empty |

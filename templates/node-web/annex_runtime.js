@@ -1,6 +1,8 @@
-import { timingSafeEqual } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 
-// Helpers for the Annex app contract: identity, the data gateway, email, Slack and incoming webhooks. Keep this file as is.
+// Helpers for the Annex app contract: identity, logging, the data gateway, email, Slack and incoming webhooks.
+// Keep this file as is.
 
 /** The signed-in user, from the headers Annex's front door sets (and strips from clients). */
 export function currentUser(req) {
@@ -11,6 +13,58 @@ export function currentUser(req) {
     email: req.get("remote-email") || "",
     groups: (req.get("remote-groups") || "").split(",").filter(Boolean),
   };
+}
+
+
+// --- Logging: one JSON object per line on stdout (the Logging section of `annex contract`) ------------------------
+// Required: ts, level (debug|info|warn|error), msg. Inside a request every line also gets request_id and user
+// (annexRequest below). LOG_LEVEL (injected, default info) sets the threshold. Never log secrets, tokens,
+// passwords, request bodies or full product records: IDs and counts are fine.
+const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
+const threshold = LEVELS[(process.env.LOG_LEVEL || "info").trim().toLowerCase().replace("warning", "warn")] ?? LEVELS.info;
+const requestStore = new AsyncLocalStorage();
+const RESERVED = ["ts", "level", "msg", "request_id", "user"];
+const REQUEST_ID_RE = /^[A-Za-z0-9._-]{8,64}$/;
+
+function emit(level, msg, fields = {}, context) {
+  if (LEVELS[level] < threshold) return;
+  const ctx = context || requestStore.getStore();
+  const line = { ts: new Date().toISOString(), level, msg: String(msg) };
+  if (ctx?.request_id) line.request_id = ctx.request_id;
+  if (ctx?.user) line.user = ctx.user;
+  for (const [k, v] of Object.entries(fields || {})) line[RESERVED.includes(k) ? `${k}_` : k] = v instanceof Error ? `${v.name}: ${v.message}` : v;
+  process.stdout.write(JSON.stringify(line) + "\n");
+}
+
+/** log.info("report written", { rows: 12, ms: 340 }). The second argument's keys become fields of the line. */
+export const log = {
+  debug: (msg, fields) => emit("debug", msg, fields),
+  info: (msg, fields) => emit("info", msg, fields),
+  warn: (msg, fields) => emit("warn", msg, fields),
+  error: (msg, fields) => emit("error", msg, fields),
+};
+
+/** 16 random hex characters. */
+export function newRequestId() {
+  return randomBytes(8).toString("hex");
+}
+
+/** Express middleware: reuses an incoming X-Request-Id if it looks sane (8-64 letters, digits, . _ -) or makes one,
+ *  returns it as the X-Request-Id response header, puts request_id and user on every log line of the request, and
+ *  logs one access line when it ends (method, path without the query string, status, ms). Health checks are logged
+ *  at debug level. Use it first: app.use(annexRequest). */
+export function annexRequest(req, res, next) {
+  const incoming = req.get("x-request-id") || "";
+  const request_id = REQUEST_ID_RE.test(incoming) ? incoming : newRequestId();
+  const t0 = process.hrtime.bigint();
+  res.setHeader("X-Request-Id", request_id);
+  const context = { request_id, user: req.get("remote-user") || "" };
+  requestStore.run(context, () => {
+    // 'finish' may fire outside this async context, so the access line gets it explicitly
+    res.on("finish", () => emit(req.path === "/healthz" ? "debug" : "info", "request",
+      { method: req.method, path: req.path, status: res.statusCode, ms: Number((process.hrtime.bigint() - t0) / 1000000n) }, context));
+    next();
+  });
 }
 
 export class GatewayError extends Error {

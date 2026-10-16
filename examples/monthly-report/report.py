@@ -14,7 +14,7 @@ import time
 from collections import defaultdict
 from datetime import date
 
-from annex_runtime import GatewayError, NotifyError, gateway, post_slack, send_email
+from annex_runtime import GatewayError, NotifyError, gateway, log, post_slack, send_email
 from store import REPORTS, connect
 
 ASSET_CLASSES = ["Equity", "Bond", "Fund", "ETF", "Money market"]
@@ -27,7 +27,8 @@ def month_end_for(arg: str | None) -> str:
     else:
         rows = gateway("monthly_positions", select="month_end", order="month_end.desc", limit=1)
     if not rows:
-        raise SystemExit(f"no positions for {arg or 'any month'}")
+        log.error("no positions found", month=arg or "any")
+        raise SystemExit(1)
     return rows[0]["month_end"]
 
 
@@ -43,29 +44,30 @@ def notify(title: str, month_end: str, clients: int, total: float, filename: str
             "title": f"{title}: {month}",
             "body": f"Your report is ready: {clients} clients, total {total:,.0f} EUR at {month_end}.",
             "link": link, "link_text": "Download CSV"})
-        print(f"emailed {', '.join(sent['to'])}")
+        log.info("report emailed", to=recipients, count=len(sent["to"]))  # logins, not addresses
     except NotifyError as e:
-        print(f"email failed: {e}", file=sys.stderr)
+        log.error("email failed", status=e.status, error=str(e))
         code = 1
     channel = os.environ.get("REPORT_SLACK_CHANNEL")
     if channel:
         try:
             post_slack(channel, f"{title}: {month} is ready: {link}")
-            print(f"posted to {channel}")
+            log.info("posted to Slack", channel=channel)
         except NotifyError as e:
-            print(f"warning: Slack post to {channel} failed: {e}", file=sys.stderr)
+            log.warn("Slack post failed", channel=channel, status=e.status, error=str(e))
     return code
 
 
 def main() -> int:
     t0 = time.monotonic()
     args = [a for a in sys.argv[1:] if a != "--notify"]
+    log.info("job started", month=args[0] if args else "latest", notify="--notify" in sys.argv[1:])
     try:
         month_end = month_end_for(args[0] if args else None)
         rows = gateway("monthly_positions", month_end=f"eq.{month_end}",
                        select="client_id,client_name,asset_class,market_value_eur")
     except GatewayError as e:
-        print(f"gateway error: {e}", file=sys.stderr)
+        log.error("gateway read failed", view="monthly_positions", status=e.status, error=str(e))
         return 1
 
     per_client: dict[int, dict] = defaultdict(lambda: {c: 0.0 for c in ASSET_CLASSES})
@@ -91,10 +93,10 @@ def main() -> int:
     with connect() as conn:
         conn.execute("INSERT INTO report_runs (month_end, clients, positions, total_value_eur, file, duration_ms) "
                      "VALUES (%s, %s, %s, %s, %s, %s)", (month_end, len(lines), len(rows), round(total, 2), path.name, ms))
-    print(f"{path.name}: {len(lines)} clients, {len(rows)} positions, total {total:,.0f} EUR, {ms} ms")
-    if "--notify" in sys.argv[1:]:
-        return notify(TITLE, month_end, len(lines), total, path.name)
-    return 0
+    code = notify(TITLE, month_end, len(lines), total, path.name) if "--notify" in sys.argv[1:] else 0
+    log.info("job finished", file=path.name, clients=len(lines), positions=len(rows), total_eur=round(total), ms=ms,
+             ok=code == 0)
+    return code
 
 
 if __name__ == "__main__":
