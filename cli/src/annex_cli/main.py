@@ -114,6 +114,9 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--request", help="the lines of one request id")
     s.add_argument("--source", choices=["app", "gateway", "all"], default="app",
                    help="app: its own lines and its jobs' output (default); gateway: its data reads; all")
+    s = sub.add_parser("errors", help="the kinds of error seen in logs (server, browser, jobs): active, or quiet since a fix")
+    s.add_argument("app", nargs="?", help="one app (default: all)")
+    s.add_argument("--state", choices=["active", "quiet"])
     s = sub.add_parser("usage", help="who uses what: users, requests, errors and response times per app")
     s.add_argument("app", nargs="?", help="one app, by day (default: every app)")
     s.add_argument("--by-user", action="store_true", help="per-person request counts (admins only; needs an app)")
@@ -230,6 +233,19 @@ def main(argv: list[str] | None = None) -> None:
                 emit(ops.stored_logs(a.app, a.tail, a.since, source=a.source, **filters))
             else:
                 print(ops.logs(a.app, a.tail, a.since, source=a.source, **filters), end="")
+        elif a.cmd == "errors":
+            res = ops.errors(a.app, a.state)
+            if emit:
+                emit(res)
+            else:
+                for g in res:
+                    g["seen"] = f"{g['count']}x, last {g['last_seen'][5:16].replace('T', ' ')}"
+                    g["release"] = (f"r{g['first_release']}" if g["first_release"] == g["last_release"]
+                                    else f"r{g['first_release']}-r{g['last_release']}")
+                    g["count"] = str(g["count"])
+                print(_table(res, ["app", "state", "kind", "title", "seen", "release", "user"]))
+                for g in res[:3]:
+                    print(f"  e.g. {g['sample']}" + (f"   (annex logs {g['app']} --request {g['request_id']})" if g["request_id"] else ""))
         elif a.cmd == "usage":
             res = ops.usage(a.app, a.by_user)
             if emit:

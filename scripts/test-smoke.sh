@@ -60,6 +60,9 @@ hasnt "no search text in the app's log" "novak" "$lines"
 stored=""
 for _ in 1 2 3 4 5 6 7 8; do stored=$("$ANNEX" logs client-lookup --request "$rid" 2>&1) && grep -q "request" <<<"$stored" && break; sleep 2; done
 has "annex logs --request finds the request in the stored logs" " r$(py 'd["release"]' <<<"$("$ANNEX" --json status client-lookup)" | tr -d r) info  request" "$stored"
+# error groups (M2.3): the list answers, and the app serves the browser error script
+expect "annex errors answers (a list)" list "$("$ANNEX" --json errors client-lookup | py 'type(d).__name__')"
+has "the app serves /annex-errors.js" "unhandledrejection" "$(c -b "$TMP/cm.jar" "$(url client-lookup)/annex-errors.js")"
 st=$("$ANNEX" --json status client-lookup)
 expect "annex status: health check up" up "$(py '(d.get("health_check") or {}).get("state")' <<<"$st")"
 expect "annex status: no open incident" None "$(py 'd.get("incident")' <<<"$st")"

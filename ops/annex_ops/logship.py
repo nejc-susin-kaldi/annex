@@ -32,6 +32,7 @@ LEVEL_ALIASES = {"debug": "debug", "trace": "debug", "info": "info", "notice": "
 MAX_MSG = 8192
 MAX_FIELDS = 8192      # serialised; a line with more keeps only its key names
 MAX_STRING = 2000      # one string value in `fields`
+MAX_STACK = 6000       # the `stack` field: a Python traceback keeps its end (where it was raised), others their start
 RESERVED = {"ts", "level", "msg", "request_id"}  # moved to columns (or dropped: ts is Docker's); `user` stays in fields
 REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 RECENT = 2000          # hashes remembered per container, so a replay doesn't even reach the database
@@ -94,6 +95,17 @@ def scrub_value(v, depth: int = 0):
     return v
 
 
+def clip_stack(text: str) -> str:
+    """A stack that is too long: Python prints the innermost frame last, Node first, and that is the frame that
+    matters for grouping errors, so a Python traceback keeps its end and anything else its start."""
+    if len(text) <= MAX_STACK:
+        return text
+    if text.lstrip().startswith("Traceback"):
+        tail = text[-MAX_STACK:]
+        return "…\n" + tail[tail.find("\n") + 1:] if "\n" in tail else tail
+    return text[:MAX_STACK - 14] + " …[truncated]"
+
+
 def bound_fields(fields: dict) -> dict:
     if len(json.dumps(fields, default=str)) <= MAX_FIELDS:
         return fields
@@ -137,9 +149,12 @@ def parse_app_line(raw: str) -> Parsed | None:
         if isinstance(obj, dict) and obj.get("level") in LEVELS and isinstance(obj.get("msg"), str):
             rid = obj.get("request_id")
             fields = {k: v for k, v in obj.items() if k not in RESERVED}
+            stack = fields.pop("stack", None)
+            fields = scrub_value(fields)
+            if isinstance(stack, str):
+                fields["stack"] = clip_stack(scrub_text(clean(stack)))
             return Parsed(obj["level"], truncate(scrub_text(clean(obj["msg"])), MAX_MSG),
-                          rid if isinstance(rid, str) and REQUEST_ID.match(rid) else None,
-                          bound_fields(scrub_value(fields)))
+                          rid if isinstance(rid, str) and REQUEST_ID.match(rid) else None, bound_fields(fields))
     return Parsed(guess_level(text), truncate(scrub_text(text), MAX_MSG))
 
 

@@ -113,3 +113,35 @@ class Convention(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BrowserErrors(unittest.TestCase):
+    """The server side of the browser error reports (M2.3)."""
+
+    def setUp(self):
+        rt._browser_hits.clear()
+
+    def test_a_report_becomes_one_error_line_with_the_user_and_request_id(self):
+        body = json.dumps({"msg": "x is not defined", "stack": "ReferenceError: x\n at a.js:1", "url": "/page"}).encode()
+
+        def go():
+            with rt.request_context({"remote-user": "sam", "x-request-id": "abcdef0123456789"}):
+                self.assertEqual(rt.report_browser_error({"remote-user": "sam"}, body), 204)
+        [line] = capture(go)
+        self.assertEqual((line["level"], line["msg"], line["source"], line["user"], line["request_id"]),
+                         ("error", "browser error: x is not defined", "browser", "sam", "abcdef0123456789"))
+        self.assertEqual(line["url"], "/page")
+
+    def test_bad_big_and_too_many(self):
+        h = {"remote-user": "sam"}
+        self.assertEqual(rt.report_browser_error(h, b"not json"), 400)
+        self.assertEqual(rt.report_browser_error(h, b"[1]"), 400)
+        self.assertEqual(rt.report_browser_error(h, b"x" * 9000), 413)
+        body = b'{"msg": "e"}'
+        results = []
+        capture(lambda: results.extend(rt.report_browser_error(h, body) for _ in range(12)))
+        self.assertEqual(results, [204] * 10 + [429] * 2)
+        self.assertEqual(rt.report_browser_error({"remote-user": "cm"}, body), 204)  # another user has their own allowance
+
+    def test_the_script_is_served_from_the_file_next_to_the_runtime(self):
+        self.assertIn("unhandledrejection", rt.browser_errors_js())

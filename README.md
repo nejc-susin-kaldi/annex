@@ -53,6 +53,7 @@ Plus annex-ops (`ops/`: email and Slack for apps, incidents and alerts, host and
 | `scripts/test-rollback.sh` | M1.1 checks: automatic rollback, `annex rollback`, `--with-data` |
 | `scripts/test-notify.sh` | M1.2 checks: email through Mailpit, Slack allowlist, send log, grants |
 | `scripts/test-logs.sh` | M2.2 checks (about 4 minutes): stored logs searchable by release, level, text and request id; secrets never stored; a failed release keeps its lines; gateway, platform and sign-in lines; ops restart without gap or duplicates; the rate cap; a paused annex-ops never blocks a deploy; partitions roll; the job-only logging warning |
+| `scripts/test-errors.sh` | M2.3 checks (about 4 minutes): 50 identical errors are one group and one email, another kind another email, the hourly limit and its summary, quiet after a fix, back in a newer release, browser reports, printed tracebacks, groups removed with the app |
 | `scripts/test-hooks.sh` | M1.5 checks: signed events reach the app, bad ones don't, retries after a stop, replay, a tight route |
 | `scripts/test-usage.sh` | M1.4 checks: a scripted session shows the same numbers in `annex usage`, the tiles and Metabase; privacy, retention, restart, digest |
 | `scripts/seed-usage.sh [--clear]` | optional demo prep: 8 weeks of synthetic usage history for the dashboard |

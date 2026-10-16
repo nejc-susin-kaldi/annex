@@ -560,6 +560,12 @@ def usage(app: str | None = None, by_user: bool = False) -> dict | list:
     return _ops_ctl(Remote(), "usage", *(["--app", app] if app else []), *(["--by-user"] if by_user else []))
 
 
+def errors(app: str | None = None, state: str | None = None) -> list[dict]:
+    """The kinds of error seen in the logs (server, browser and jobs), newest first: active, or quiet (a newer
+    release is live and it hasn't come back, or it hasn't been seen for a day)."""
+    return _ops_ctl(Remote(), "errors", *([app] if app else []), *(["--state", state] if state else []))
+
+
 def hooks(app: str | None = None, status: str | None = None, limit: int = 50) -> list[dict]:
     """Incoming webhook events, newest first: metadata only (never a body)."""
     return _ops_ctl(Remote(), "hooks", "list", *(["--app", app] if app else []), *(["--status", status] if status else []),

@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from . import config, db, digest, directory, hooks_store, incidents, logship, logstore, sends, usage
+from . import config, db, digest, directory, errors_run, hooks_store, incidents, logship, logstore, sends, usage
 from .errors import OpsError
 
 
@@ -120,6 +120,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--source", default="app", help="app (default: the app and its jobs), gateway (its data reads) or all")
     s.add_argument("--oldest", action="store_true", help="the first N matching lines instead of the last N")
     s.add_argument("--json", action="store_true")
+    s = sub.add_parser("errors", help="kinds of error seen in apps' logs (active, or quiet since a fix), newest first")
+    s.add_argument("app", nargs="?")
+    s.add_argument("--state", choices=["active", "quiet"])
+    s.add_argument("--limit", type=int, default=100)
+    s.add_argument("--json", action="store_true")
     s = sub.add_parser("logs-drain", help="store a container's unread log lines now (before Docker replaces it)")
     s.add_argument("container")
     s.add_argument("--timeout", type=float, default=5.0)
@@ -158,6 +163,8 @@ def main(argv: list[str] | None = None) -> int:
             data, cols = hooks_action(a), []
         elif a.cmd == "logs":
             data, cols = logs_query(a), []
+        elif a.cmd == "errors":
+            data, cols = errors_run.list_groups(a.app, a.state, a.limit), []
         elif a.cmd == "logs-drain":
             data, cols = logship.drain(a.container, a.timeout), []
         elif a.cmd == "logs-stats":

@@ -12,9 +12,11 @@ import os
 import re
 import secrets
 import sys
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -130,6 +132,44 @@ def request_context(headers):
     finally:
         _request_id.reset(t1)
         _log_user.reset(t2)
+
+
+# --- Errors in the browser (the Logging section of `annex contract`) ------------------------------------------------
+# A page that includes <script src="/annex-errors.js"> reports uncaught errors to POST /api/_errors on its own app,
+# which logs one error line (source=browser, with the user and request id) so they are grouped and emailed like
+# server errors. Wire it up with two routes: serve browser_errors_js() at /annex-errors.js, and call
+# report_browser_error(request.headers, body) in POST /api/_errors and answer with the status it returns.
+BROWSER_ERRORS_PER_MINUTE = 10
+_browser_hits: dict[str, list[float]] = {}
+
+
+def browser_errors_js() -> str:
+    return Path(__file__).with_name("annex-errors.js").read_text()
+
+
+def report_browser_error(headers, body: bytes) -> int:
+    """Log one error line for a browser error report and return the HTTP status to answer with: 204 logged, 400 not a
+    report, 413 too big, 429 too many from this user (10 a minute)."""
+    if len(body) > 8192:
+        return 413
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return 400
+    if not isinstance(data, dict):
+        return 400
+    key = headers.get("remote-user") or headers.get("Remote-User") or "anonymous"
+    now = time.monotonic()
+    hits = [t for t in _browser_hits.get(key, []) if now - t < 60]
+    if len(hits) >= BROWSER_ERRORS_PER_MINUTE:
+        _browser_hits[key] = hits
+        return 429
+    _browser_hits[key] = hits + [now]
+    if len(_browser_hits) > 1000:
+        _browser_hits.clear()
+    log.error(f"browser error: {str(data.get('msg') or 'unknown error')[:500]}", source="browser",
+              url=str(data.get("url") or "")[:200], stack=str(data.get("stack") or "")[:1500])
+    return 204
 
 
 class GatewayError(Exception):

@@ -6,9 +6,9 @@ import time
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 
-from annex_runtime import current_user, log, request_context
+from annex_runtime import browser_errors_js, current_user, log, report_browser_error, request_context
 from store import REPORTS, connect
 
 app = FastAPI(title="monthly-report")
@@ -42,6 +42,18 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 
 def eur(v) -> str:
     return f"{float(v):,.0f}"
+
+
+@app.get("/annex-errors.js")
+def annex_errors_js():
+    """The script that reports this page's JavaScript errors to /api/_errors (keep both routes)."""
+    return Response(browser_errors_js(), media_type="application/javascript")
+
+
+@app.post("/api/_errors")
+async def browser_errors(request: Request):
+    """Browser error reports (from /annex-errors.js): logged as one error line, grouped and emailed like server errors."""
+    return Response(status_code=report_browser_error(request.headers, await request.body()))
 
 
 @app.get("/healthz")
@@ -91,7 +103,7 @@ def index(request: Request):
         body.append("</table>")
     return (f"<!doctype html><html><head><meta charset=utf-8><title>{html.escape(TITLE)}</title>"
             f"<meta name=viewport content='width=device-width, initial-scale=1'><style>{STYLE}</style></head>"
-            f"<body>{''.join(body)}</body></html>")
+            f"<body>{''.join(body)}<script src='/annex-errors.js'></script></body></html>")
 
 
 if __name__ == "__main__":

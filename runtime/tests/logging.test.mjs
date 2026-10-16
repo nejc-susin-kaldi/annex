@@ -70,3 +70,36 @@ test("health checks are logged at debug level only", () => {
   const [line] = capture(() => { annexRequest(req, res, () => {}); res.emit("finish"); });
   assert.equal(line.level, "debug");
 });
+
+// --- browser errors (M2.3) -------------------------------------------------------------------------------
+const { reportBrowserError, browserErrorsJs } = await import("../annex_runtime.js");
+
+test("a browser error report is one error line with source=browser", () => {
+  const get = (n) => ({ "remote-user": "sam" })[n];
+  const [line] = capture(() => assert.equal(reportBrowserError(get, JSON.stringify({ msg: "x is not defined", url: "/p" })), 204));
+  assert.equal(line.level, "error"); assert.equal(line.msg, "browser error: x is not defined"); assert.equal(line.source, "browser");
+});
+
+test("bad, big and too many reports", () => {
+  const get = (n) => ({ "remote-user": "limit-user" })[n];
+  assert.equal(reportBrowserError(get, "nope"), 400);
+  assert.equal(reportBrowserError(get, "[1]"), 400);
+  assert.equal(reportBrowserError(get, "x".repeat(9000)), 413);
+  const codes = [];
+  capture(() => { for (let i = 0; i < 12; i++) codes.push(reportBrowserError(get, '{"msg":"e"}')); });
+  assert.deepEqual(codes, [...Array(10).fill(204), 429, 429]);
+});
+
+test("the browser script reports errors and rejections to /api/_errors, without the query string, at most 5 a page", () => {
+  const listeners = {}, calls = [];
+  const sandbox = { window: { addEventListener: (t, f) => { listeners[t] = f; } }, location: { pathname: "/page", search: "?q=secret" },
+    fetch: (url, opts) => { calls.push([url, JSON.parse(opts.body)]); return Promise.resolve(); }, String, JSON };
+  new Function(...Object.keys(sandbox), browserErrorsJs())(...Object.values(sandbox));
+  listeners.error({ message: "boom", error: { stack: "Error: boom\n at x" } });
+  listeners.unhandledrejection({ reason: new Error("later") });
+  for (let i = 0; i < 6; i++) listeners.error({ message: `e${i}` });
+  assert.equal(calls.length, 5);
+  assert.equal(calls[0][0], "/api/_errors"); assert.deepEqual(Object.keys(calls[0][1]).sort(), ["msg", "stack", "url"]);
+  assert.equal(calls[0][1].url, "/page"); assert.equal(calls[1][1].msg, "later");
+  assert.ok(!JSON.stringify(calls).includes("secret"));
+});

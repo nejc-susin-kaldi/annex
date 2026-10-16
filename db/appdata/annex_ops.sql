@@ -216,3 +216,41 @@ CREATE TABLE IF NOT EXISTS annex_ops.releases (
   manifest    jsonb NOT NULL,
   PRIMARY KEY (app, deployed_at, release)   -- an app removed and deployed again starts at r1 again: its history stays
 );
+
+-- --- M2.3: error groups ---------------------------------------------------------------------------------
+-- annex-ops reads the stored logs (above) for errors: structured error lines, and Python tracebacks an app printed.
+-- One event per error, grouped by a fingerprint (ops/annex_ops/errors_group.py). An event is stored once (its key is the
+-- hash of the line that started it), so reading a window twice counts nothing twice. Events are kept 14 days, groups 30
+-- days after they were last seen. `annex remove` deletes an app's groups and events (a redeployed name starts clean).
+CREATE TABLE IF NOT EXISTS annex_ops.error_events (
+  h           uuid PRIMARY KEY,
+  app         text NOT NULL,
+  fingerprint text NOT NULL,
+  ts          timestamptz NOT NULL,
+  release     int,
+  request_id  text,
+  login       text
+);
+CREATE INDEX IF NOT EXISTS error_events_app_ts ON annex_ops.error_events (app, ts DESC);
+CREATE TABLE IF NOT EXISTS annex_ops.error_groups (
+  app                 text NOT NULL,
+  fingerprint         text NOT NULL,
+  kind                text NOT NULL,           -- server | browser | job
+  title               text NOT NULL,           -- the normalised summary
+  first_seen          timestamptz NOT NULL,
+  last_seen           timestamptz NOT NULL,
+  count               int NOT NULL DEFAULT 1,
+  first_release       int,
+  last_release        int,
+  sample_msg          text,
+  sample_request_id   text,
+  last_user           text,
+  alert_due           boolean NOT NULL DEFAULT false,   -- an email is owed (sent by the next pass, within the hourly limit)
+  alert_again         boolean NOT NULL DEFAULT false,   -- ... and it is "back", not new
+  alerted_at          timestamptz,
+  PRIMARY KEY (app, fingerprint)
+);
+-- every error email, for the hourly limit (and, later, the audit trail)
+CREATE TABLE IF NOT EXISTS annex_ops.error_alerts (
+  ts timestamptz NOT NULL DEFAULT now(), app text NOT NULL, groups int NOT NULL, summary boolean NOT NULL DEFAULT false);
+CREATE INDEX IF NOT EXISTS error_alerts_app_ts ON annex_ops.error_alerts (app, ts DESC);

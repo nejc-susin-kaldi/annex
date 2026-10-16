@@ -97,6 +97,13 @@ def log_settings():
     return _settings(LogSettings)
 
 
+def error_settings():
+    """Error groups: scan interval, quiet period, emails per hour (errors_run.ErrorSettings)."""
+    from .errors_run import ErrorSettings
+
+    return _settings(ErrorSettings)
+
+
 # incoming webhooks (M1.5): the one public hostname, and where each app's signing secrets are mounted
 HOST_HOOKS = os.environ.get("ANNEX_HOST_HOOKS", "").lower()
 URL_HOOKS = os.environ.get("ANNEX_URL_HOOKS", "").rstrip("/")

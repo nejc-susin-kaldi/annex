@@ -3,6 +3,7 @@
   GET /healthz             200 when ready
   GET /api/me              the signed-in user, from the front door's headers
   GET /api/data/<view>?... a gateway view (only views listed in annex.yaml), PostgREST filters pass through
+  POST /api/_errors        browser error reports from annex-errors.js (logged as one error line)
   GET /anything-else       files from public/ (index.html for /)
 """
 import json
@@ -28,6 +29,34 @@ def log(level: str, msg: str, **fields) -> None:
         line = {"ts": datetime.now().astimezone().isoformat(timespec="milliseconds"), "level": level, "msg": msg}
         line.update({(k + "_" if k in ("ts", "level", "msg") else k): v for k, v in fields.items()})
         print(json.dumps(line, default=str), flush=True)
+
+
+ERRORS_PER_MINUTE = 10
+error_hits: dict[str, list[float]] = {}
+
+
+def browser_error(login: str, request_id: str, body: bytes) -> int:
+    """Log one error line for a browser error report (as annex_runtime.report_browser_error does); returns the status:
+    204 logged, 400 not a report, 413 too big, 429 too many from this user."""
+    if len(body) > 8192:
+        return 413
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return 400
+    if not isinstance(data, dict):
+        return 400
+    now = time.monotonic()
+    hits = [t for t in error_hits.get(login or "anonymous", []) if now - t < 60]
+    if len(hits) >= ERRORS_PER_MINUTE:
+        error_hits[login or "anonymous"] = hits
+        return 429
+    error_hits[login or "anonymous"] = hits + [now]
+    if len(error_hits) > 1000:
+        error_hits.clear()
+    log("error", f"browser error: {str(data.get('msg') or 'unknown error')[:500]}", request_id=request_id, user=login,
+        source="browser", url=str(data.get("url") or "")[:200], stack=str(data.get("stack") or "")[:1500])
+    return 204
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -80,6 +109,16 @@ class Handler(SimpleHTTPRequestHandler):
         if path.startswith("/api/"):
             return self.send_json(404, b'{"error": "unknown API path"}')
         return super().do_GET()
+
+    def do_POST(self):
+        if self.path.partition("?")[0] != "/api/_errors":
+            return self.send_json(404, b'{"error": "unknown API path"}')
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(min(n, 9000))
+        status = browser_error(self.user, self.request_id, body)
+        self.send_response(status)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def proxy(self, view: str, query: str) -> None:
         base = os.environ.get("ANNEX_GATEWAY_URL")

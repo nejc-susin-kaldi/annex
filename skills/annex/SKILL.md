@@ -57,6 +57,7 @@ Every app logs the same way; the templates already do it, so keep it. Use the lo
 - **Jobs:** one start line and one end line with counts and duration, and exit non-zero on failure.
 - **Never log** secrets, tokens, passwords, request bodies, cookies or full product records. IDs, counts and the user's login are fine; search text and other personal data aren't.
 - A deploy whose first log lines aren't structured succeeds with the warning "logs aren't structured": fix it by switching from `print()` to `log`. A job-only app gets the same warning in `annex_status` after its first scheduled run.
+- **Errors:** a new kind of error (error-level lines, `log.exception`, printed tracebacks, and browser JavaScript errors from `/annex-errors.js`) emails the owner once; `annex errors <app>` lists the kinds. Keep the `<script src="/annex-errors.js">` tag and the two routes the templates have, log failures at `error` with context, and don't swallow exceptions: a swallowed error is one nobody hears about.
 - **Reading logs:** `annex_logs` searches the stored logs, so a failed or rolled-back release is still there: `release: "r4"`, `level: "error"` (error and above), `grep: "text"` (message and fields), `request: "<id from the X-Request-Id header>"`, `since: "2h"`. After a failed deploy, read the failed release's lines with its number, not the live release's. Anything with a secret-looking field name is removed before storing, so don't rely on logs to see a token.
 
 ## Homelab note (M0 prototype)

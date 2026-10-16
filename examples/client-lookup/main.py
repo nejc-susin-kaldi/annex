@@ -9,9 +9,9 @@ import time
 
 import uvicorn
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
-from annex_runtime import GatewayError, current_user, gateway, log, request_context
+from annex_runtime import GatewayError, browser_errors_js, current_user, gateway, log, report_browser_error, request_context
 
 app = FastAPI(title="client-lookup")
 
@@ -74,6 +74,18 @@ def access_check() -> str:
     return "<ul>" + "".join(items) + "</ul>"
 
 
+@app.get("/annex-errors.js")
+def annex_errors_js():
+    """The script that reports this page's JavaScript errors to /api/_errors (keep both routes)."""
+    return Response(browser_errors_js(), media_type="application/javascript")
+
+
+@app.post("/api/_errors")
+async def browser_errors(request: Request):
+    """Browser error reports (from /annex-errors.js): logged as one error line, grouped and emailed like server errors."""
+    return Response(status_code=report_browser_error(request.headers, await request.body()))
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
@@ -108,7 +120,7 @@ def index(request: Request, q: str = Query("", max_length=60)):
 <button>Search</button></form>
 {results}
 <div class=box><b>Data access for this app</b> (enforced by the gateway, not by this code):{access_check()}</div>
-</body></html>"""
+<script src="/annex-errors.js"></script></body></html>"""
 
 
 if __name__ == "__main__":

@@ -27,6 +27,11 @@ log.error("could not send", { status: e.status });
 - **Log errors with context** (what you were doing, which id), and counts instead of rows.
 - **Never log** secrets, tokens, passwords, request bodies, cookies or full product records, or personal data beyond the user's login (log `matches=3`, not the search text).
 
+## Errors
+Errors are grouped for you: Annex reads the stored logs, and the first time a **new kind of error** shows up (a `log.error` line or an unhandled exception) the owner gets one email; more of the same are only counted. So:
+- Log failures with `log.error(...)` (with the id or step you were on), not `log.info` or `console.log`; an error you handle and recover from is a `warn`.
+- **Keep the browser part:** every page includes `<script src="/annex-errors.js"></script>` and `server.js` calls `mountBrowserErrors(app, express)`; together they report JavaScript errors the user hits as `source=browser` errors. Put the script tag in every page you add.
+
 ## Email and Slack
 To email people or post to Slack, declare it in `annex.yaml` (`notify: {email: true, slack: ["#finance-reports"]}`) and use the helpers in `annex_runtime.js`. Never run an SMTP client or hold a Slack token of your own: Annex injects `ANNEX_OPS_URL` and a token that can do exactly what you declared.
 ```js

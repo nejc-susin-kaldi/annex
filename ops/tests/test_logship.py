@@ -205,3 +205,14 @@ def test_the_log_size_guard_signal():
     assert e.handle(now + 1, eng.LogSample(1900, 2048, [])) == []          # under the limit, not yet well under: stay open
     acts = e.handle(now + 2, eng.LogSample(1000, 2048, []))
     assert ("resolve", "platform:logs") in [(a.kind, a.subject) for a in acts]
+
+
+def test_a_long_python_stack_keeps_its_end_where_it_was_raised_and_node_keeps_its_start():
+    frames = "".join(f'  File "/lib/x{i}.py", line {i}, in f{i}\n    call()\n' for i in range(400))
+    py = "Traceback (most recent call last):\n" + frames + '  File "/app/main.py", line 9, in index\nValueError: x'
+    p = ls.parse_app_line(json.dumps({"level": "error", "msg": "unhandled error", "exc": "ValueError: x", "stack": py}))
+    assert len(p.fields["stack"]) <= ls.MAX_STACK + 20 and p.fields["stack"].endswith("ValueError: x")
+    assert 'in index' in p.fields["stack"] and p.fields["stack"].startswith("…")
+    node = "Error: x\n" + "    at fn (/app/a.js:1:1)\n" * 1000
+    q = ls.parse_app_line(json.dumps({"level": "error", "msg": "m", "stack": node}))
+    assert q.fields["stack"].startswith("Error: x") and q.fields["stack"].endswith("[truncated]")

@@ -342,7 +342,7 @@ def start_background() -> Manager:
     """Start the engine thread, the Docker watcher, the log followers and the usage and digest threads (called
     once, at app startup)."""
     global _manager, _ingest, _sink
-    from . import digest, follow_logs, hooks_delivery, host, logship, logstore, usage, watch_docker
+    from . import digest, errors_run, follow_logs, hooks_delivery, host, logship, logstore, usage, watch_docker
 
     mgr = _manager = Manager()
     mgr.start()
@@ -356,6 +356,7 @@ def start_background() -> Manager:
     sink.start()
     releases = logship.Releases()
     logship.Keeper(mgr.submit, sink).start()
+    errors_run.ErrorScanner().start()  # error groups and their emails (M2.3)
     shipper = logship.Shipper(sink, releases)
     shipper.start()
 

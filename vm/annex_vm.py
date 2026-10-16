@@ -369,6 +369,11 @@ def cmd_deprovision(a: argparse.Namespace) -> None:
         psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.app_grants WHERE app = '{app}';")
         removed.append("email/Slack grant")
     if not a.keep_data:
+        if ops_db_exists():  # a redeployed name starts at r1 again: its old error groups would be wrong
+            psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.error_events WHERE app = '{app}'; "
+                                     f"DELETE FROM annex_ops.error_groups WHERE app = '{app}'; "
+                                     f"DELETE FROM annex_ops.error_alerts WHERE app = '{app}';")
+            removed.append("error groups")
         drop_database(app)
         appdir = DATA / "apps" / app
         if appdir.exists():

@@ -14,6 +14,7 @@
   <h1 id="hello">Hello</h1>
   <h2>Top clients</h2>
   <table id="clients"><tr><th>#</th><th>Client</th><th>AUM (EUR)</th></tr></table>
+  <script src="annex-errors.js"></script>
   <script>
     // Identity and data come from this app's own server (same origin), never from the browser directly.
     fetch("api/me").then(r => r.json()).then(me => {

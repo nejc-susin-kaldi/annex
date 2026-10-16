@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 // Helpers for the Annex app contract: identity, logging, the data gateway, email, Slack and incoming webhooks.
 // Keep this file as is.
@@ -65,6 +66,41 @@ export function annexRequest(req, res, next) {
       { method: req.method, path: req.path, status: res.statusCode, ms: Number((process.hrtime.bigint() - t0) / 1000000n) }, context));
     next();
   });
+}
+
+// --- Errors in the browser (the Logging section of `annex contract`) --------------------------------------------------
+// A page that includes <script src="/annex-errors.js"> reports uncaught errors to POST /api/_errors on its own app,
+// which logs one error line (source=browser, with the user and request id): grouped and emailed like server errors.
+// mountBrowserErrors(app, express) adds both routes.
+const BROWSER_ERRORS_PER_MINUTE = 10;
+const browserHits = new Map();
+
+export function browserErrorsJs() {
+  return readFileSync(new URL("./annex-errors.js", import.meta.url), "utf8");
+}
+
+/** Log one error line for a browser error report; returns the HTTP status to answer with: 204 logged, 400 not a
+ *  report, 413 too big, 429 too many from this user (10 a minute). `body` is the raw text. */
+export function reportBrowserError(get, body) {
+  if (typeof body !== "string" || body.length > 8192) return 413;
+  let data;
+  try { data = JSON.parse(body); } catch { return 400; }
+  if (!data || typeof data !== "object" || Array.isArray(data)) return 400;
+  const key = get("remote-user") || "anonymous";
+  const now = Date.now();
+  const hits = (browserHits.get(key) || []).filter((t) => now - t < 60000);
+  if (hits.length >= BROWSER_ERRORS_PER_MINUTE) { browserHits.set(key, hits); return 429; }
+  browserHits.set(key, [...hits, now]);
+  if (browserHits.size > 1000) browserHits.clear();
+  log.error(`browser error: ${String(data.msg || "unknown error").slice(0, 500)}`,
+    { source: "browser", url: String(data.url || "").slice(0, 200), stack: String(data.stack || "").slice(0, 1500) });
+  return 204;
+}
+
+/** Adds GET /annex-errors.js and POST /api/_errors to an Express app (pass the `express` module). */
+export function mountBrowserErrors(app, express) {
+  app.get("/annex-errors.js", (req, res) => res.type("application/javascript").send(browserErrorsJs()));
+  app.post("/api/_errors", express.text({ type: "*/*", limit: "64kb" }), (req, res) => res.sendStatus(reportBrowserError((n) => req.get(n), req.body)));
 }
 
 export class GatewayError extends Error {
