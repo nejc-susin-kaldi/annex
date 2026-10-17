@@ -2,7 +2,7 @@
 # M1.5 acceptance checks for incoming webhooks, run from the Mac through the SSH tunnel. No real provider is
 # involved or ever pointed at the VM: every event is signed here (with random test secrets that only live in this
 # script's memory) and sent with curl --connect-to to hooks.<domain>.
-# Deploys tests/hook-probe, an app that records what Annex forwards to it. Shortens the retry delays through
+# Deploys annex-selftest, whose /hooks/* endpoints record what Annex forwards to it. Shortens the retry delays through
 # state/ops/tuning.json (removed on exit). About 8-10 minutes.
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/testlib.sh"
@@ -10,7 +10,8 @@ use_tunnel
 
 MAIL_URL=$(setting ANNEX_URL_MAIL)
 HOOKS_URL=$(setting ANNEX_URL_HOOKS)
-APP=hook-probe
+APP=annex-selftest
+SELFTEST_DIR=$ROOT/.build/selftest-hooks
 C_APP=annex-app-$APP
 SAM=sam@annex.example
 ADMIN=admin@annex.example
@@ -79,7 +80,8 @@ GH_SECRET=$(python3 -c 'import secrets; print("gh-" + secrets.token_hex(12))')
 PLAIN_SECRET=$(python3 -c 'import secrets; print("plain-" + secrets.token_hex(12))')
 "$ROOT/annex" secret set "$APP" "TRELLO_SECRET=$TRELLO_SECRET" "GH_SECRET=$GH_SECRET" "PLAIN_SECRET=$PLAIN_SECRET" >/dev/null 2>&1 \
   && ok "signing secrets stored (random values, not printed)" || { bad "annex secret set" "failed"; exit 1; }
-deploy_out=$("$ROOT/annex" deploy "$ROOT/tests/$APP" 2>&1) && ok "$APP deployed" || { bad "$APP deployed" "$deploy_out"; echo "passed $pass, failed $fail"; exit 1; }
+selftest_build "$SELFTEST_DIR"
+deploy_out=$("$ROOT/annex" deploy "$SELFTEST_DIR" 2>&1) && ok "$APP deployed" || { bad "$APP deployed" "$deploy_out"; echo "passed $pass, failed $fail"; exit 1; }
 has "the deploy lists the public Trello URL" "$HOOKS_URL/h/$APP/trello" "$deploy_out"
 has "the deploy lists ANNEX_HOOK_TOKEN and ANNEX_HOOKS_URL" "ANNEX_HOOK_TOKEN" "$deploy_out"
 has "  ...and ANNEX_HOOKS_URL" "ANNEX_HOOKS_URL" "$deploy_out"
@@ -170,7 +172,7 @@ hasnt "annex hooks <app> never prints a body" "stopped-" "$("$ROOT/annex" hooks 
 
 # --- 7. the route is tight ---------------------------------------------------------------------------------------------------------------------
 echo "The route is tight"
-for p in /v1/me /healthz /internal/anything /tiles/client-lookup /; do
+for p in /v1/me /healthz /internal/anything /tiles/$APP /; do
   expect "hooks host $p is a 404 (GET)" 404 "$(code "$HOOKS_URL$p")"
 done
 expect "hooks host /v1/email is a 404 (POST)" 404 "$(code -X POST -d '{}' "$HOOKS_URL/v1/email")"
@@ -196,19 +198,13 @@ expect "after the burst, a signed event gets through again" 200 "$CODE"
 
 # --- 9. revoking -------------------------------------------------------------------------------------------------------------------------------------------
 echo "A release without webhooks revokes them"
-rm -rf "$WORK"; mkdir -p "$WORK"; cp -R "$ROOT/tests/$APP" "$WORK/$APP"
-python3 - "$WORK/$APP/annex.yaml" <<'PY'
-import re, sys
-p = sys.argv[1]; s = open(p).read()
-s = re.sub(r"webhooks:\n(?:  - .*\n)+", "", s)
-open(p, "w").write(s)
-PY
+selftest_build "$WORK/$APP" --drop webhooks
 "$ROOT/annex" deploy "$WORK/$APP" >/dev/null 2>&1 && ok "a copy without webhooks: deployed" || bad "deploy without webhooks" "failed"
 expect "the hooks file is gone" "" "$(vm "ls $DATA/secrets/hooks | grep -x '$APP.json' || true")"
 expect "the app no longer has a hook token" 0 "$(vm "grep -c ANNEX_HOOK_TOKEN $DATA/secrets/apps/$APP/runtime.env || true")"
 trello_event t5 "revoked-$RANDOM"
 expect "a signed event now gets a 404" 404 "$CODE"
-"$ROOT/annex" deploy "$ROOT/tests/$APP" >/dev/null 2>&1 && ok "redeployed with webhooks" || bad "redeploy" "failed"
+"$ROOT/annex" deploy "$SELFTEST_DIR" >/dev/null 2>&1 && ok "redeployed with webhooks" || bad "redeploy" "failed"
 trello_event t6 "back-$RANDOM"
 expect "and signed events work again" 200 "$CODE"
 wait_status "$EID" delivered 30 && ok "  ...and are delivered" || bad "delivered after the redeploy" "$(field "$EID" last_error)"

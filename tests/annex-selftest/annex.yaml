@@ -1,0 +1,45 @@
+# Annex's own test app (a fixture: scripts/test-*.sh deploy it, nobody should deploy it for real). It stands in for a
+# client's app but has one job: use every feature Annex offers, on demand, so a test (or a person diagnosing a
+# problem) can drive it. See main.py for the endpoints and jobs, and scripts/selftest.py for the variants the tests
+# build from this file by dropping the sections between "# --- name ---" and "# --- end ---".
+name: annex-selftest
+owner: sam
+description: Annex self-test app (fixture)
+type: web+job
+# --- web ---
+port: 8080
+healthcheck: /healthz
+# --- end ---
+access: internal
+storage:
+  postgres: true       # a run history (selftest_runs)
+  files: true          # /data: runs, events, switches
+data:
+  views: [client_summary, top_clients_by_aum]    # advisor_book is on purpose not granted
+# --- notify ---
+notify:
+  email: true
+  slack: ["#annex-selftest"]                    # the test channel, never a business channel
+# --- end ---
+# --- webhooks ---
+webhooks:
+  - {name: trello, path: /hooks/trello, verify: trello, secret: TRELLO_SECRET}
+  - {name: gh, path: /hooks/gh, verify: github, secret: GH_SECRET}
+  - {name: plain, path: /hooks/plain, verify: shared-secret, secret: PLAIN_SECRET}
+# --- end ---
+schedule:
+  - name: tick                       # every minute: fails while /data/failjob exists (alerts)
+    cron: "* * * * *"
+    command: ["python", "main.py", "job", "tick"]
+  - name: work                       # gateway read + database row + file; run by hand (`annex run annex-selftest work`)
+    cron: "0 0 30 2 *"               # never on its own (30 February)
+    command: ["python", "main.py", "job", "work"]
+  - name: notify                     # one email and one Slack post on the test channel; run by hand
+    cron: "0 0 30 2 *"
+    command: ["python", "main.py", "job", "notify"]
+env:
+  SELFTEST_RECIPIENT: cm
+  SELFTEST_MARKER: boot-default
+  SELFTEST_SECRET: not-a-secret-just-a-default      # logged on purpose by /emit, to prove it never reaches the stored logs
+secrets: [TRELLO_SECRET, GH_SECRET, PLAIN_SECRET]
+egress: []

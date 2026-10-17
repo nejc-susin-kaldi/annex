@@ -63,6 +63,14 @@ SLACK_ERRORS = {
 }
 
 
+def redirect(channel: str, text: str, active: bool, test_channel: str) -> tuple[str, str, str | None]:
+    """(channel, text, note) to post. In test mode the post goes to the test channel, marked, and says where it was
+    meant to go; the note goes in the send log. Otherwise nothing changes."""
+    if not active:
+        return channel, text, None
+    return test_channel, f"[TEST] {text}  (test run: this was meant for {channel})", f"test mode: posted to {test_channel}"
+
+
 def deliver(channel: str, text: str, blocks: list | None) -> str:
     """Post one message. Returns Slack's message timestamp. Raises OpsError(502)."""
     payload = {"channel": channel, "text": text, **({"blocks": blocks} if blocks else {})}
@@ -93,12 +101,13 @@ def post_slack_request(app: str, raw: object, *, granted: list[str] | None = Non
         sends.check_rate(app, "slack", config.SLACK_PER_HOUR, "Slack posts")
         if not config.slack_connected():
             raise OpsError(503, NOT_CONNECTED)
-        ts = deliver(channel, text, blocks)
+        target, shown, note = redirect(channel, text, config.test_mode_until() is not None, config.TEST_SLACK_CHANNEL)
+        ts = deliver(target, shown, blocks)
     except OpsError as e:
         shown = channel or (raw.get("channel") if isinstance(raw, dict) and isinstance(raw.get("channel"), str) else "")
         sends.log_failure(app, "slack", [str(shown)[:100]] if shown else [], None, e)
         raise
-    return {"id": sends.log_send(app, "slack", [channel], None, "sent"), "channel": channel, "ts": ts}
+    return {"id": sends.log_send(app, "slack", [channel], note, "sent"), "channel": channel, "ts": ts}
 
 
 def post_slack(app: str, channel: str, text: str, blocks: list | None = None) -> dict:

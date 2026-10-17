@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # M1.4 acceptance checks for usage stats, run from the Mac through the SSH tunnel:
-# a scripted session with `sam` and `cm` across three apps must show up with the same numbers in `annex usage`,
+# a scripted session with `sam` and `cm` across three apps (two static ones and annex-selftest) must show up with the same numbers in `annex usage`,
 # the discovery tiles and (extras on) Metabase, and match the script; requests that must not count don't;
 # nothing personal leaks; raw rows are deleted after 30 days; a restart neither loses nor repeats rows; the
-# weekly digest flags a dormant app. Deploys two throwaway static apps (usage-probe, usage-idle) and removes them.
+# weekly digest flags a dormant app. Deploys two throwaway static apps (usage-probe, usage-idle) and annex-selftest, and removes them.
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/testlib.sh"
 use_tunnel
@@ -12,7 +12,7 @@ MB_URL=$(setting ANNEX_URL_METABASE)
 MAIL_URL=$(setting ANNEX_URL_MAIL)
 PATTERN=$(setting ANNEX_HOST_PATTERN)
 SUFFIX=${ANNEX_PUBLIC_PORT:+:$ANNEX_PUBLIC_PORT}
-PROBE=usage-probe IDLE=usage-idle LOOKUP=client-lookup
+PROBE=usage-probe IDLE=usage-idle LOOKUP=$SELFTEST
 url() { echo "https://${PATTERN//\{name\}/$1}$SUFFIX"; }
 WORK=$ROOT/.build/test-usage
 
@@ -39,7 +39,9 @@ for app in $PROBE $IDLE; do
   "$ROOT/annex" init static "$app" --dir "$WORK/$app" --owner sam >/dev/null
   "$ROOT/annex" deploy "$WORK/$app" >/dev/null 2>&1 && ok "$app deployed" || { bad "$app deployed" "see: annex deploy $WORK/$app"; echo "passed $pass, failed $fail"; exit 1; }
 done
-"$ROOT/annex" status $LOOKUP >/dev/null 2>&1 || "$ROOT/annex" deploy "$ROOT/examples/$LOOKUP" >/dev/null 2>&1
+selftest_build "$WORK/$LOOKUP" --drop webhooks,notify
+selftest_deploy "$WORK/$LOOKUP" >/dev/null && ok "$LOOKUP deployed (the self-test app: the one with real pages and a gateway view)" || bad "$LOOKUP deployed" "failed"
+on_exit "selftest_remove $LOOKUP"
 expect "sam logs in" 200 "$(login sam)"
 expect "cm logs in" 200 "$(login cm)"
 expect "kaldi-admin logs in" 200 "$(login kaldi-admin)"
@@ -94,7 +96,7 @@ print(r["users_7d"], r["trend"], r["requests_7d"])' "$usage_json" "$app")
   expect "tile of $app equals annex usage (users, trend, requests)" "$want" "$got"
 done
 services=$(as cm "$HOME_URL/api/services")
-has "Homepage lists the customapi widget for $LOOKUP" '"service_name":"client-lookup"' "$services"
+has "Homepage lists the customapi widget for $LOOKUP" "\"service_name\":\"$LOOKUP\"" "$services"
 has "  ...with the 'Users 7d' mapping" '"label":"Users 7d"' "$services"
 proxied=$(as cm "$HOME_URL/api/services/proxy?type=customapi&group=Tools&service=$LOOKUP&index=0")
 expect "Homepage serves the tile data (users_7d)" "$(field $LOOKUP users_7d)" "$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["users_7d"])' "$proxied")"

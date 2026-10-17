@@ -256,17 +256,25 @@ def record_job_run(app: str, job: str, finished_at: float, ok: bool, duration_ms
 
 
 def health_check(app: str) -> dict:
-    """The health checker's current verdict for an app: up, down, none (no check, e.g. a job-only app) or unknown (no result
-    yet, or the checker isn't running)."""
+    """The health checker's current verdict for an app: up, down, none (no check, e.g. a job-only app) or unknown (the
+    checker isn't running). The thread checks once a minute, so right after a deploy there is no result yet: a reader
+    that finds none from after the container's start checks once itself (and stores it), so `annex status` straight
+    after `annex deploy` says the truth."""
     from . import health
 
     row = health.latest().get(f"app:{app}")
-    if row is None:
-        try:
-            labels = docker_api.inspect(f"annex-app-{app}").get("Config", {}).get("Labels") or {}
-        except (docker_api.DockerError, OSError):
-            return {"state": "unknown", "detail": "no result yet"}
-        return {"state": "unknown", "detail": "no result yet"} if labels.get("com.kaldi.annex.healthcheck") else {"state": "none"}
+    try:
+        info = docker_api.inspect(f"annex-app-{app}")
+    except (docker_api.DockerError, OSError):
+        info = None
+    labels = ((info or {}).get("Config") or {}).get("Labels") or {}
+    if info is not None and labels.get("com.kaldi.annex.healthcheck"):
+        started = docker_api.parse_ts(((info.get("State") or {}).get("StartedAt")) or "")
+        ts = health.targets([{"Labels": labels}], "")
+        if ts and health.stale_for(row, started):
+            row = health.check_now(ts[0], config.tuning().check_timeout_s)
+    elif row is None:
+        return {"state": "none"} if info is not None else {"state": "unknown", "detail": "no result yet"}
     out = health.state_of(row, time.time(), config.tuning().check_interval_s)
     if "checked_at" in out:
         out["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(out["checked_at"]))

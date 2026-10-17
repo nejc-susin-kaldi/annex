@@ -9,13 +9,14 @@
 #   7. partitions roll (retention shortened through state/ops/tuning.json, removed on exit);
 #   8. a job-only app that prints gets the logging warning in `annex status` after its first scheduled run;
 #   9. releases are in the database.
-# Deploys tests/log-probe and tests/job-print-probe and removes both at the end.
+# Deploys annex-selftest and two job-only variants of it (one that prints, one that logs properly) and removes them at the end.
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/testlib.sh"
 use_tunnel
 ANNEX="$ROOT/annex"
-APP=log-probe
-JOB=job-print-probe
+APP=annex-selftest
+JOB=annex-selftest-job      # a job-only variant that prints (plain text)
+JOBOK=annex-selftest-jobok  # a job-only variant that logs in the convention
 C_APP=annex-app-$APP
 PATTERN=$(setting ANNEX_HOST_PATTERN)
 URL="https://${PATTERN//\{name\}/$APP}$(setting ANNEX_PORT_SUFFIX)"
@@ -28,9 +29,9 @@ SINCE=$(date -u +%Y-%m-%dT%H:%M:%S+00)   # the table keeps the history of earlie
 sql() { vm "docker exec annex-appdata-db-1 psql -U postgres -d annex_ops -Atc \"$1\""; }
 ctl() { vm "docker exec annex-ops-1 python -m annex_ops.ctl $* --json"; }
 py() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
-variant() { # variant DIR MARKER: a copy of the fixture with its own marker and secret (and any extra sed on annex.yaml)
-  rm -rf "$WORK/$1" && cp -R "$ROOT/tests/$APP" "$WORK/$1"
-  sed -i.bak "s/boot-default/$2/; s/not-a-secret-just-a-default/$SECRET/" "$WORK/$1/annex.yaml" && rm "$WORK/$1/annex.yaml.bak"
+variant() { # variant DIR MARKER [selftest.py options]: the self-test app with its own marker and fake secret
+  local dir=$1 marker=$2; shift 2
+  selftest_build "$WORK/$dir" --env "SELFTEST_MARKER=$marker" --env "SELFTEST_SECRET=$SECRET" "$@"
 }
 wait_for() { # wait_for SECONDS COMMAND...: 0 once the command succeeds
   local end=$((SECONDS + $1)); shift
@@ -51,15 +52,19 @@ cleanup() {
   vm "rm -f $TUNING; docker unpause annex-ops-1 >/dev/null 2>&1; docker start annex-ops-1 >/dev/null 2>&1" >/dev/null 2>&1 || true
   "$ANNEX" remove $APP --yes >/dev/null 2>&1 || true
   "$ANNEX" remove $JOB --yes >/dev/null 2>&1 || true
+  "$ANNEX" remove $JOBOK --yes >/dev/null 2>&1 || true
 }
 on_exit cleanup
 
 echo "Setup"
 expect "sam logs in" 200 "$(login sam)"
 variant v1 "marker-one-$RUN"
-out=$("$ANNEX" deploy "$WORK/v1" 2>&1) && ok "$APP deployed ($(grep -o 'r[0-9]* is live' <<<"$out"))" || { bad "$APP deployed" "$out"; finish; exit 1; }
+out=$(selftest_deploy "$WORK/v1") && ok "$APP deployed ($(grep -o 'r[0-9]* is live' <<<"$out"))" || { bad "$APP deployed" "$out"; finish; exit 1; }
 R1=$("$ANNEX" --json status $APP | py 'd["release"]'); R1=${R1#r}
-out=$("$ANNEX" deploy "$ROOT/tests/$JOB" 2>&1) && ok "$JOB deployed (a job-only app that prints)" || bad "$JOB deployed" "$out"
+selftest_build "$WORK/job" --name $JOB --job-only --env SELFTEST_LOG=plain
+out=$(selftest_deploy "$WORK/job") && ok "$JOB deployed (a job-only app that prints)" || bad "$JOB deployed" "$out"
+selftest_build "$WORK/jobok" --name $JOBOK --job-only
+selftest_deploy "$WORK/jobok" >/dev/null && ok "$JOBOK deployed (a job-only app that logs in the convention)" || bad "$JOBOK deployed" "failed"
 has "a deploy of a job-only app has no logging warning yet (nothing has run)" "is live" "$out"
 
 echo "1. What an app logs is stored and searchable"
@@ -101,9 +106,8 @@ expect "the harmless nested field is kept" yes "$(sql "SELECT fields->'nested'->
 has "the plain line is kept, with the value redacted" "login failed for sam password=[redacted] Authorization: [redacted]" "$("$ANNEX" logs $APP --grep 'login failed' --since 10m)"
 
 echo "3. A release that fails its health gate keeps its lines"
-variant v2 "marker-failed-$RUN"
-sed -i.bak 's#healthcheck: /healthz#healthcheck: /nope#' "$WORK/v2/annex.yaml" && rm "$WORK/v2/annex.yaml.bak"
-out=$("$ANNEX" deploy "$WORK/v2" 2>&1) && bad "the broken deploy fails" "it succeeded" || ok "the broken deploy fails"
+variant v2 "marker-failed-$RUN" --broken-health
+out=$(selftest_deploy "$WORK/v2") && bad "the broken deploy fails" "it succeeded" || ok "the broken deploy fails"
 has "it was rolled back" "rolled back to r$R1" "$out"
 R2=$("$ANNEX" --json releases $APP | py '[r["release"] for r in d if r["result"] == "failed"][0]')
 expect "the container of the failed release is gone" "r$R1" "r$(vm "docker inspect -f '{{index .Config.Labels \"com.kaldi.annex.release\"}}' $C_APP")"
@@ -115,13 +119,12 @@ hasnt "  ...and none of the live release's" "marker-one-$RUN" "$out"
 expect "the app is back on r$R1" "r$R1" "$("$ANNEX" --json status $APP | py 'd["release"]')"
 
 echo "4. Gateway reads, platform lines and sign-in lines"
-n0=$("$ANNEX" --json logs client-lookup --source gateway -n 5000 | py 'len(d)')
-"$ANNEX" deploy "$ROOT/examples/client-lookup" >/dev/null 2>&1 && ok "client-lookup deployed" || bad "client-lookup deployed" "failed"
-c -o /dev/null -b "$TMP/sam.jar" "https://${PATTERN//\{name\}/client-lookup}$(setting ANNEX_PORT_SUFFIX)/"
-wait_lines 30 $((n0 + 1)) client-lookup --source gateway -n 5000 && ok "a page that reads a view adds gateway lines for its app" || bad "gateway lines" "none new in 30 s"
-has "a gateway line says which view" "[gateway]" "$("$ANNEX" logs client-lookup --source gateway -n 3)"
-hasnt "the app's own logs don't include the gateway lines" "[gateway]" "$("$ANNEX" logs client-lookup -n 200)"
-expect "gateway lines carry the app's release" True "$(py 'all(r["release"] for r in d)' <<<"$("$ANNEX" --json logs client-lookup --source gateway -n 5)")"
+n0=$("$ANNEX" --json logs $APP --source gateway -n 5000 | py 'len(d)')
+c -o /dev/null -b "$TMP/sam.jar" "$URL/"
+wait_lines 30 $((n0 + 1)) $APP --source gateway -n 5000 && ok "a page that reads a view adds gateway lines for its app" || bad "gateway lines" "none new in 30 s"
+has "a gateway line says which view" "[gateway]" "$("$ANNEX" logs $APP --source gateway -n 3)"
+hasnt "the app's own logs don't include the gateway lines" "[gateway]" "$("$ANNEX" logs $APP -n 200)"
+expect "gateway lines carry the app's release" True "$(py 'all(r["release"] for r in d)' <<<"$("$ANNEX" --json logs $APP --source gateway -n 5)")"
 expect "annex-ops's own lines are stored" True "$([ "$(sql "SELECT count(*) FROM annex_ops.logs WHERE container='annex-ops-1'")" -gt 0 ] && echo True || echo False)"
 expect "the receiver's lines are stored" True "$([ "$(sql "SELECT count(*) FROM annex_ops.logs WHERE container='annex-hooks-1'")" -gt 0 ] && echo True || echo False)"
 expect "health-check lines are not" 0 "$(sql "SELECT count(*) FROM annex_ops.logs WHERE container IN ('annex-ops-1','annex-hooks-1') AND msg LIKE '%GET /healthz%200%'")"
@@ -158,7 +161,7 @@ expect "no second holds more than 200 burst lines" True "$([ "$mx" -le 200 ] && 
 variant v3 "marker-paused-$RUN"
 vm "docker pause annex-ops-1 >/dev/null"
 t0=$SECONDS
-out=$("$ANNEX" deploy "$WORK/v3" 2>&1) && ok "a deploy succeeds with annex-ops paused" || bad "deploy with annex-ops paused" "$(tail -3 <<<"$out")"
+out=$(selftest_deploy "$WORK/v3") && ok "a deploy succeeds with annex-ops paused" || bad "deploy with annex-ops paused" "$(tail -3 <<<"$out")"
 dt=$((SECONDS - t0))
 has "it warns that the old container's last lines weren't stored" "couldn't store annex-app-$APP's last log lines" "$out"
 expect "  ...and wasn't held up for long (under 90 s, health gate included)" True "$([ "$dt" -lt 90 ] && echo True || echo False)"
@@ -182,10 +185,12 @@ ok "tuning file removed"
 
 echo "8. A job-only app that prints is warned about after its first run"
 wait_lines 100 2 $JOB && ok "its first scheduled run's output is stored (found in Ofelia's log)" || bad "job output stored" "none in 100 s"
+wait_lines 100 2 $JOBOK || true
 has "the job's lines are shown, tagged as the job's" "[job:tick]" "$("$ANNEX" logs $JOB)"
 has "annex status warns" "logs aren't structured" "$("$ANNEX" status $JOB 2>&1)"
 has "  ...also in the JSON status an agent reads" "logs aren't structured" "$("$ANNEX" --json status $JOB 2>&1)"
-hasnt "a job that logs properly gets no warning (monthly-report)" "logs aren't structured" "$("$ANNEX" status monthly-report 2>&1)"
+hasnt "a job that logs properly gets no warning ($JOBOK)" "logs aren't structured" "$("$ANNEX" status $JOBOK 2>&1)"
+expect "  ...its lines are structured (JSON fields)" True "$("$ANNEX" --json logs $JOBOK | py 'len(d) >= 2 and all(x["structured"] for x in d)')"
 
 echo "9. Releases are in the database"
 expect "every release of $APP is in annex_ops.releases" "$("$ANNEX" --json releases $APP | py 'len(d)')" "$(sql "SELECT count(*) FROM annex_ops.releases WHERE app='$APP' AND deployed_at >= '$SINCE'")"
@@ -195,5 +200,6 @@ expect "the backfill is idempotent" "$(sql "SELECT count(*) FROM annex_ops.relea
 echo "Cleanup"
 "$ANNEX" remove $APP --yes >/dev/null 2>&1 && ok "annex remove $APP" || bad "annex remove $APP" "failed"
 "$ANNEX" remove $JOB --yes >/dev/null 2>&1 && ok "annex remove $JOB" || bad "annex remove $JOB" "failed"
+"$ANNEX" remove $JOBOK --yes >/dev/null 2>&1 && ok "annex remove $JOBOK" || bad "annex remove $JOBOK" "failed"
 has "a removed app's lines are still stored for the retention" "started" "$("$ANNEX" logs $APP --since 1h -n 3 2>&1)"
 finish

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # M1.3 acceptance checks for monitoring and alerts, run from the Mac through the SSH tunnel.
-# Deploys tests/alert-probe (an app that can be told to crash, fail its job or return 500s), shortens the alert
+# Deploys annex-selftest (it can be told to crash, fail its job or return 500s through files in /data and /fail500), shortens the alert
 # thresholds through state/ops/tuning.json (removed again on exit), and for each problem checks that the owner
 # and the admin get exactly ONE alert and ONE "resolved" (and a reminder if it stays open). Mail is read from
 # Mailpit. The health checker's interval is shortened through the same tuning file (5 s instead of 60 s), so it takes
@@ -11,7 +11,7 @@ use_tunnel
 
 MAIL_URL=$(setting ANNEX_URL_MAIL)
 PATTERN=$(setting ANNEX_HOST_PATTERN)
-APP=alert-probe
+APP=annex-selftest
 C_APP=annex-app-$APP
 PROBE_URL="https://${PATTERN//\{name\}/$APP}${ANNEX_PUBLIC_PORT:+:$ANNEX_PUBLIC_PORT}"
 SAM=sam@annex.example
@@ -74,7 +74,8 @@ RESOLVED="[Annex] resolved: $APP is back"
 echo "Setup"
 # the incident table keeps history across runs: remember where this run starts
 BASE_ID=$(vm "docker exec annex-ops-1 python -m annex_ops.ctl incidents --limit 1 --json" 2>/dev/null | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r[0]["id"] if r else 0)' 2>/dev/null || echo 0)
-out=$("$ROOT/annex" deploy "$ROOT/tests/$APP" 2>&1) && ok "$APP deployed" || { bad "$APP deployed" "$out"; echo "passed $pass, failed $fail"; exit 1; }
+selftest_build "$ROOT/.build/selftest-alerts" --drop webhooks,notify
+out=$(selftest_deploy "$ROOT/.build/selftest-alerts") && ok "$APP deployed" || { bad "$APP deployed" "$out"; echo "passed $pass, failed $fail"; exit 1; }
 vm "printf '%s' '{\"stopped_grace_s\": 10, \"crash_window_s\": 120, \"crash_stable_s\": 30, \"error_window_s\": 60, \"reminder_first_s\": 90, \"tick_s\": 5, \"check_interval_s\": 5, \"check_timeout_s\": 3}' > $TUNING && chmod 644 $TUNING"
 ok "short thresholds written to state/ops/tuning.json (removed on exit)"
 expect "sam logs in" 200 "$(login sam)"
@@ -116,20 +117,20 @@ took
 
 # --- 3. burst of 500s ---------------------------------------------------------------------------------
 scenario "3. 20 requests that answer 500"
-for _ in $(seq 20); do code -b "$TMP/sam.jar" "$PROBE_URL/boom" >/dev/null; done
+for _ in $(seq 20); do code -b "$TMP/sam.jar" "$PROBE_URL/fail500" >/dev/null; done
 expect_pair "one error-spike alert" "[Annex] $APP is returning server errors" 1 90
 expect_pair "one 'resolved' once the errors stop" "$RESOLVED" 3 240
 took
 
 # --- 4. a failing job -----------------------------------------------------------------------------------
 scenario "4. the scheduled job exits 1"
-JOB_ALERT="[Annex] $APP: job \"check\" failed"
+JOB_ALERT="[Annex] $APP: job \"tick\" failed"
 vm "docker exec $C_APP touch /data/failjob"
 expect_pair "one job-failed alert" "$JOB_ALERT" 1 150
 sleep 65  # the job runs again, and fails again: no second alert
 expect_count "no repeat alert while it keeps failing (sam)" $SAM "$JOB_ALERT" 1
 vm "docker exec $C_APP rm -f /data/failjob"
-expect_pair "one 'resolved' after the next good run" "[Annex] resolved: $APP job \"check\" is passing again" 1 150
+expect_pair "one 'resolved' after the next good run" "[Annex] resolved: $APP job \"tick\" is passing again" 1 150
 took
 
 # --- 5. a platform service -------------------------------------------------------------------------------
@@ -154,7 +155,7 @@ wait_health "app:$APP" up 60 || true
 st=$("$ROOT/annex" status "$APP" 2>&1)
 has "annex status shows the health check up" "health_check up" "$st"
 has "annex status shows no open incident" "incident     none" "$st"
-has "annex status shows the check job's last run" "job check" "$st"
+has "annex status shows the tick job's last run" "job tick" "$st"
 has "  ...with its result" "last run" "$st"
 keys=$(vm "docker exec annex-ops-1 python -m annex_ops.ctl health --json" | python3 -c '
 import json, sys

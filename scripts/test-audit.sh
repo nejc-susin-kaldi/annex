@@ -2,10 +2,9 @@
 # M2.5 acceptance checks: the audit trail (about 5 minutes).
 # One scripted session as "audit-tester" (ANNEX_USER): a secret is set, an app deployed, a broken version rolled back by
 # itself, a new version deployed and rolled back by hand, product data read through the gateway, an email sent (a job of
-# monthly-report), an account added, changed and removed, a failed and a good sign-in, the app removed. The trail must show
+# annex-selftest's notify job), an account added, changed and removed, a failed and a good sign-in, the app removed. The trail must show
 # each step once, in order, with the right actor, and no secret, password or body anywhere.
-# Gateway buckets and scan times are shortened through state/ops/tuning.json (removed on exit). Deploys aud-app (a copy of
-# client-lookup); removes it at the end.
+# Gateway buckets and scan times are shortened through state/ops/tuning.json (removed on exit). Deploys annex-selftest; removes it at the end.
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/testlib.sh"
 use_tunnel
@@ -17,7 +16,7 @@ SUFFIX=$(setting ANNEX_PORT_SUFFIX)
 url() { echo "https://${PATTERN//\{name\}/$1}$SUFFIX"; }
 TUNING=$DATA/state/ops/tuning.json
 WORK=$ROOT/.build/test-audit
-APP=aud-app
+APP=annex-selftest
 SECRET="AUDSECRET-$RANDOM$RANDOM"
 mkdir -p "${WORK:?}" && find "${WORK:?}" -mindepth 1 -delete
 py() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
@@ -29,12 +28,8 @@ cleanup() {
   "$ANNEX" users remove aud-tmp --yes >/dev/null 2>&1 || true
 }
 on_exit cleanup
-variant() { # variant DIR [broken]
-  local dir="$WORK/${1:?}"
-  mkdir -p "$dir" && find "$dir" -mindepth 1 -delete && cp -R "$ROOT/examples/client-lookup/." "$dir/"
-  sed -i.bak "s/^name: client-lookup/name: $APP/; s/^secrets: \[\]/secrets: [AUDIT_KEY]/" "$dir/annex.yaml" && rm "$dir/annex.yaml.bak"
-  [ "${2:-}" = broken ] && sed -i.bak 's#^healthcheck: /healthz#healthcheck: /nope#' "$dir/annex.yaml" && rm "$dir/annex.yaml.bak"
-  return 0
+variant() { # variant DIR [broken]: annex-selftest with one secret of its own (AUDIT_KEY) and no webhooks (so no other secrets)
+  selftest_build "$WORK/${1:?}" --drop webhooks --secret AUDIT_KEY ${2:+--broken-health}
 }
 
 echo "Setup"
@@ -50,7 +45,7 @@ variant v1
 out=$("$ANNEX" deploy "$WORK/v1" 2>&1) && ok "2. deploy r1" || { bad "deploy r1" "$out"; finish; exit 1; }
 for i in 1 2 3 4; do c -o /dev/null -b "$TMP/sam.jar" "$(url $APP)/"; done
 ok "3. four page loads that read gateway views"
-out=$("$ANNEX" run monthly-report monthly 2>&1) && ok "4. a job that sends an email (monthly-report)" || bad "run job" "$(tail -2 <<<"$out")"
+out=$("$ANNEX" run $APP notify 2>&1) && ok "4. a job that sends an email ($APP notify)" || bad "run job" "$(tail -2 <<<"$out")"
 variant v2 broken
 "$ANNEX" deploy "$WORK/v2" >/dev/null 2>&1 && bad "5. the broken deploy fails" "it succeeded" || ok "5. a broken version fails its health gate and is rolled back by itself"
 variant v3
@@ -74,7 +69,7 @@ done
 
 echo "The trail"
 all=$(trail | START=$START python3 -c 'import json,os,sys; print(json.dumps([x for x in json.load(sys.stdin) if x["ts"] >= os.environ["START"]]))')
-mine=$(pj '[x for x in d if x["actor"] == "audit-tester" or x["app"] == "aud-app" or (x["actor"] == "sam" and x["action"].startswith("signin"))]' <<<"$all")
+mine=$(pj '[x for x in d if x["actor"] == "audit-tester" or x["app"] == "annex-selftest" or (x["actor"] == "sam" and x["action"].startswith("signin"))]' <<<"$all")
 count() { python3 -c "import json,sys; d=json.load(sys.stdin); print(len([x for x in d if x['action'] == '$1' ${2:-}]))" <<<"$mine"; }
 expect "secret.set: once, by $ANNEX_USER, the names only" "1 audit-tester AUDIT_KEY" "$(py '(lambda s: "%d %s %s" % (len(s), s[0]["actor"], ",".join(s[0]["details"]["names"])))([x for x in d if x["action"] == "secret.set"])' <<<"$mine")"
 expect "deploy: twice (r1 and the good new version; the failed one is deploy.failed)" 2 "$(count deploy ' and x["actor"] == "audit-tester"')"
@@ -86,13 +81,13 @@ expect "signin.failed: once for sam" 1 "$(py 'len([x for x in d if x["action"] =
 expect "signin: sam's good sign-in is there (found from Authelia's log)" True "$(py 'len([x for x in d if x["action"] == "signin" and x["actor"] == "sam"]) >= 1' <<<"$mine")"
 reads=$(py '[x["details"] for x in d if x["action"] == "gateway.reads"]' <<<"$mine")
 has "gateway reads: summed per app, view and bucket" "requests" "$reads"
-expect "  ...and the number of reads is the number of gateway lines the app caused (four page loads, two reads each)" \
+expect "  ...and the number of reads is the number of gateway lines the app caused (four page loads, one read each)" \
   "$("$ANNEX" --json logs $APP --source gateway --grep top_clients_by_aum --since "$(( $(date +%s) - START_EPOCH + 5 ))s" -n 5000 | py 'len(d)')" \
   "$(py 'sum(x["details"]["requests"] for x in d if x["action"] == "gateway.reads" and x["details"]["view"] == "top_clients_by_aum")' <<<"$mine")"
-expect "  ...by the app, not by a person" "app:aud-app" "$(py '[x for x in d if x["action"] == "gateway.reads"][0]["actor"]' <<<"$mine")"
-mails=$("$ANNEX" --json audit --action email --app monthly-report --since "$(( $(date +%s) - START_EPOCH + 5 ))s" | py 'len(d)')
+expect "  ...by the app, not by a person" "app:annex-selftest" "$(py '[x for x in d if x["action"] == "gateway.reads"][0]["actor"]' <<<"$mine")"
+mails=$("$ANNEX" --json audit --action email --app $APP --since "$(( $(date +%s) - START_EPOCH + 5 ))s" | py 'len(d)')
 expect "an email sent by an app is in the trail, once (no body)" 1 "$mails"
-has "  ...with its recipients" "cm@annex.example" "$("$ANNEX" --json audit --action email --app monthly-report --since 5m)"
+has "  ...with its recipients" "cm@annex.example" "$("$ANNEX" --json audit --action email --app $APP --since 5m)"
 order=$(py '" ".join(x["action"] for x in sorted([y for y in d if y["actor"] == "audit-tester" or (y["actor"] == "sam" and y["action"].startswith("signin"))], key=lambda y: y["ts"]) if x["action"] not in ("gateway.reads",))' <<<"$all")
 expect "in order, once each (the actor's steps)" "secret.set deploy deploy.failed deploy rollback user.added user.changed user.removed signin.failed signin app.removed" "$(tr -s ' ' <<<"$order" | sed 's/^ //')"
 secrets=$(trail | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))')
@@ -103,8 +98,8 @@ expect "no raw password was typed as a username into the trail" 0 "$(py 'len([x 
 
 echo "Filters"
 expect "--action deploy finds deploy and deploy.failed only" "deploy deploy.failed" "$(trail --app $APP --action deploy | py '" ".join(sorted({x["action"] for x in d}))')"
-expect "--actor finds what $ANNEX_USER did" True "$(trail --actor audit-tester | py 'len(d) >= 10')"
-expect "--app limits to the app" "aud-app" "$(trail --app $APP | py '" ".join(sorted({x["app"] for x in d}))')"
+expect "--actor finds what $ANNEX_USER did" True "$(trail --actor audit-tester | py 'len(d) >= 9')"
+expect "--app limits to the app" "annex-selftest" "$(trail --app $APP | py '" ".join(sorted({x["app"] for x in d}))')"
 expect "--since 1m is empty of the session's old events" 0 "$("$ANNEX" --json audit --since 1s --app $APP | py 'len(d)')"
 has "annex audit prints a table for humans" "ACTION" "$("$ANNEX" audit --app $APP -n 5)"
 

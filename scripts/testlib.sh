@@ -25,11 +25,38 @@ TMP=$(mktemp -d)
 _on_exit=()
 on_exit() { _on_exit+=("$1"); }
 _run_exit() {
+  test_mode off
   local cmd
   for cmd in ${_on_exit[@]+"${_on_exit[@]}"}; do eval "$cmd" || true; done
   rm -rf "$TMP"
 }
 trap _run_exit EXIT
+
+# Test mode (D74): for the length of a run, annex-ops posts every Slack message to #annex-selftest, marked [TEST], so
+# nobody is notified by a test. The file holds an end time (three hours ahead), so a run that dies leaves nothing behind
+# for long. Switched on when a suite sources this file, off when it exits. ANNEX_TEST_MODE=0 skips it.
+test_mode() { # test_mode on|off
+  [ "${ANNEX_TEST_MODE:-1}" = 0 ] && return 0
+  local f=$DATA/state/ops/test-mode
+  if [ "$1" = on ]; then vm "mkdir -p $DATA/state/ops && echo \$((\$(date +%s) + 10800)) > $f && chmod 644 $f" >/dev/null 2>&1 || true
+  else vm "rm -f $f" >/dev/null 2>&1 || true; fi
+}
+
+# --- the self-test app (tests/annex-selftest) -------------------------------------------------------------------
+# Platform tests deploy Annex's own test app, never an example or a client's app. selftest_build makes a variant of it
+# (scripts/selftest.py lists the options); selftest_deploy deploys a build, setting the webhook secrets first when it
+# declares them and the app isn't deployed yet (a missing secret fails the deploy, D19).
+SELFTEST=annex-selftest
+selftest_build() { python3 "$ROOT/scripts/selftest.py" build "$@"; }
+selftest_deploy() { # selftest_deploy DIR -> annex deploy's output; exit status is the deploy's
+  local dir=$1 app
+  app=$(sed -n 's/^name: //p' "$dir/annex.yaml")
+  if grep -q TRELLO_SECRET "$dir/annex.yaml" && ! "$ROOT/annex" status "$app" >/dev/null 2>&1; then
+    "$ROOT/annex" secret set "$app" TRELLO_SECRET=selftest-trello GH_SECRET=selftest-gh PLAIN_SECRET=selftest-plain >/dev/null 2>&1
+  fi
+  "$ROOT/annex" deploy "$dir" 2>&1
+}
+selftest_remove() { "$ROOT/annex" remove "$1" --yes >/dev/null 2>&1; }
 
 # Wait until every Annex container that has a healthcheck reports healthy (up to $1 seconds, default 90).
 # A deploy restarts Ofelia (D18), whose healthcheck runs every 30 s, so a suite that runs right after one
@@ -94,3 +121,5 @@ ids = [m["ID"] for m in json.load(sys.stdin)["messages"]
 print(ids[0] if ids else "")' "$@")
   [ -n "$id" ] && as kaldi-admin "$(setting ANNEX_URL_MAIL)/api/v1/message/$id" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Text"])'
 }
+
+test_mode on

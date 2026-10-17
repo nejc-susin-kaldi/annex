@@ -120,3 +120,10 @@ def test_fetch_follows_nothing_sends_accept_for_the_front_door_and_reports_error
         srv.shutdown()
     status, err, ms = h.fetch(h.Target("app:x", "x", "http://127.0.0.1:1/", "app"), 2)
     assert status is None and err and ms >= 0
+
+
+def test_a_result_from_before_the_container_started_is_not_current():
+    assert h.stale_for(None, 100.0) and h.stale_for(None, None)
+    assert h.stale_for({"ts": 50.0, "ok": True, "error": None}, 100.0)          # about the container that was replaced
+    assert not h.stale_for({"ts": 150.0, "ok": True, "error": None}, 100.0)
+    assert not h.stale_for({"ts": 50.0, "ok": True, "error": None}, None)       # start time unknown: use what there is

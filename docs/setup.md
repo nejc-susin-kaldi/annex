@@ -129,7 +129,7 @@ uv tool uninstall annex-cli
 Without this, Annex works but Slack posts return a clear "Slack isn't connected" error (503) and are logged as `unavailable`; email through Mailpit is unaffected. Do it in a **test** Slack workspace, not a real one.
 
 1. Create a Slack app at https://api.slack.com/apps ("From scratch"), in the test workspace. Under *OAuth & Permissions* add the **bot** scope `chat:write`, then *Install to Workspace* and copy the *Bot User OAuth Token* (`xoxb-...`).
-2. In Slack, create `#finance-reports` and `#annex-alerts` and invite the app to both (`/invite @<app name>`). Once Slack is connected, **every alert** (app problems and platform problems, and their "resolved" messages) is also posted to `#annex-alerts` (setting `ANNEX_ALERT_SLACK_CHANNEL`), and apps can list their own channels under `alerts.to`.
+2. In Slack, create `#finance-reports`, `#annex-alerts` and **`#annex-selftest`** and invite the app to all three (`/invite @<app name>`). `#annex-selftest` is where every test run posts (test mode, docs/operations.md): nobody should be in it who doesn't want to see tests. Once Slack is connected, **every alert** (app problems and platform problems, and their "resolved" messages) is also posted to `#annex-alerts` (setting `ANNEX_ALERT_SLACK_CHANNEL`), and apps can list their own channels under `alerts.to`.
 3. Put the token on the VM. The command reads the token from the terminal, so it doesn't land in your shell history. Paste `SLACK_BOT_TOKEN=xoxb-...`, press Enter, then Ctrl-D:
    ```bash
    ssh annex 'umask 077; cat > /srv/annex/secrets/slack.env'
@@ -139,7 +139,7 @@ Without this, Annex works but Slack posts return a clear "Slack isn't connected"
    scripts/push.sh --extras
    ```
    Compose recreates ops when the token file appears. If `ctl info` (next step) still says `False`, force it with `ssh annex 'cd /srv/annex/platform && docker compose up -d --force-recreate ops'`. A plain `docker restart` does **not** re-read the env file.
-5. Check: `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl info` should say `slack_connected: True`, and `scripts/test-notify.sh` then posts for real to `#finance-reports`.
+5. Check: `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl info` should say `slack_connected: True`, and `scripts/test-notify.sh` then posts for real to `#annex-selftest`.
 
 Undo (Annex goes back to "not connected"):
 ```bash

@@ -1,38 +1,51 @@
 #!/usr/bin/env bash
-# M0.3 job checks on examples/monthly-report: scheduled runs happen, `annex run`
-# works, and output (CSV in /data, history in the app DB) survives a redeploy.
+# M0.3 job checks on annex-selftest: scheduled runs happen, `annex run` works, and output (rows in the app's
+# database, files in /data) survives a redeploy.
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/testlib.sh"
-APP=monthly-report
-DB=app_monthly_report
+APP=$SELFTEST
+DB=app_annex_selftest
 C=annex-app-$APP
+DIR=$ROOT/.build/selftest-jobs
+on_exit "selftest_remove $APP"
 
 sql() { vm "docker exec annex-appdata-db-1 psql -U postgres -d $DB -Atc \"$1\""; }
 
-"$ROOT/annex" status "$APP" >/dev/null 2>&1 || "$ROOT/annex" deploy "$ROOT/examples/$APP" >/dev/null
+selftest_build "$DIR" --drop webhooks,notify
+selftest_deploy "$DIR" >/dev/null || { bad "deploy $APP" "failed"; finish; exit 1; }
 
 echo "Schedule"
 jobs=$(vm "docker logs annex-ofelia-1 2>&1 | sed 's/\x1b\[[0-9;]*m//g'")
-grep -q 'registered "monthly-report-monthly"' <<<"$jobs" && ok "monthly job registered (0 6 1 * *)" || bad "monthly job registered" "not in Ofelia log"
-grep -q 'registered "monthly-report-refresh"' <<<"$jobs" && ok "refresh job registered (*/10 * * * *)" || bad "refresh job registered" "not in Ofelia log"
-done_runs=$(grep -c 'monthly-report-refresh.*Finished in' <<<"$jobs" || true)
+grep -q "registered \"$APP-tick\"" <<<"$jobs" && ok "tick job registered (every minute)" || bad "tick job registered" "not in Ofelia log"
+grep -q "registered \"$APP-work\"" <<<"$jobs" && ok "work job registered (never on its own)" || bad "work job registered" "not in Ofelia log"
+for _ in $(seq 40); do
+  jobs=$(vm "docker logs annex-ofelia-1 2>&1 | sed 's/\x1b\[[0-9;]*m//g'")
+  grep -q "$APP-tick.*Finished in" <<<"$jobs" && break
+  sleep 3
+done
+done_runs=$(grep -c "$APP-tick.*Finished in" <<<"$jobs" || true)
 if [ "$done_runs" -gt 0 ]; then
-  ok "scheduler ran the refresh job $done_runs time(s): $(grep 'monthly-report-refresh.*Finished in' <<<"$jobs" | tail -1 | grep -o 'Finished in.*')"
+  ok "scheduler ran the tick job $done_runs time(s): $(grep "$APP-tick.*Finished in" <<<"$jobs" | tail -1 | grep -o 'Finished in.*')"
 else
-  bad "scheduler ran the refresh job" "no finished run yet; it fires every 10 minutes, try again after the next :x0"
+  bad "scheduler ran the tick job" "no finished run within two minutes"
 fi
 
 echo "Manual run"
-out=$("$ROOT/annex" run "$APP" monthly 2>&1) && ok "annex run: $(head -1 <<<"$out")" || bad "annex run" "$out"
+out=$("$ROOT/annex" run "$APP" work 2>&1) && ok "annex run: $(head -1 <<<"$out" | cut -c1-90)" || bad "annex run" "$out"
+"$ROOT/annex" run "$APP" work >/dev/null 2>&1
+bad_job=$("$ROOT/annex" run "$APP" nothing 2>&1 || true)
+has "an unknown job names the jobs there are" "tick" "$bad_job"
 
 echo "Output survives a redeploy"
-runs=$(sql "SELECT count(*) FROM report_runs")
-csv=$(vm "docker exec $C sha256sum /data/reports/monthly-positions-2026-09.csv" | cut -c1-16)
+runs=$(sql "SELECT count(*) FROM selftest_runs")
+files=$(vm "docker exec $C sh -c 'ls /data/runs | wc -l'")
+first=$(vm "docker exec $C sh -c 'cd /data/runs && sha256sum \$(ls | head -1)'" | cut -c1-16)
+[ "$runs" -ge 2 ] && ok "before: $runs rows in the run history, $files files" || bad "before the redeploy" "$runs rows"
 image=$("$ROOT/annex" status "$APP" | awk '/^image/ {print $2}')
-"$ROOT/annex" deploy "$ROOT/examples/$APP" >/dev/null 2>&1 || bad "redeploy" "failed"
+selftest_deploy "$DIR" >/dev/null || bad "redeploy" "failed"
 new_image=$("$ROOT/annex" status "$APP" | awk '/^image/ {print $2}')
 [ "$image" != "$new_image" ] && ok "redeployed ($new_image)" || bad "redeployed" "same image $image"
-[ "$(sql "SELECT count(*) FROM report_runs")" -ge "$runs" ] && ok "report history kept ($runs runs)" || bad "report history kept" "fewer runs"
-[ "$(vm "docker exec $C sha256sum /data/reports/monthly-positions-2026-09.csv" | cut -c1-16)" = "$csv" ] \
-  && ok "CSV in /data kept" || bad "CSV in /data kept" "changed or missing"
+[ "$(sql "SELECT count(*) FROM selftest_runs")" -ge "$runs" ] && ok "run history kept ($runs rows)" || bad "run history kept" "fewer rows"
+[ "$(vm "docker exec $C sh -c 'cd /data/runs && sha256sum \$(ls | head -1)'" | cut -c1-16)" = "$first" ] \
+  && ok "files in /data kept" || bad "files in /data kept" "changed or missing"
 finish

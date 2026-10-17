@@ -45,6 +45,7 @@ Plus annex-ops (`ops/`: email and Slack for apps, incidents and alerts, host and
 | `scripts/extras.sh on\|off` | Metabase and Dozzle on or off |
 | `scripts/tunnel.sh up\|down` | SSH tunnel `127.0.0.1:8443 → annex:443` |
 | `scripts/test-smoke.sh` | **after every push**: every part once (login, deploy, gateway, job, email, ops, host, webhooks), under a minute |
+| `scripts/test-examples.sh` | before a demo: do `examples/client-lookup` and `examples/monthly-report` still build, deploy and work? Never runs the notifying job. The platform suites don't touch them: they use `annex-selftest` |
 | `scripts/test-all.sh [--slow] [--only a,b]` | every check below in order, with a summary (30+ minutes; only when needed) |
 | `scripts/test-platform.sh` | M0.1 acceptance checks |
 | `scripts/backup.sh` | run the nightly backup now |

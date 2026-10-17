@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Smoke test: is everything up and wired together? Run it after every push (under a minute).
-# It touches each part once, cheaply, and changes nothing that matters: one redeploy of client-lookup
-# (cached build), one run of monthly-report's job (one more history row, one email to cm in Mailpit).
+# It touches each part once, cheaply, and changes nothing that matters: one deploy of Annex's own test app
+# (annex-selftest, removed again at the end), two runs of its jobs (one email to cm in Mailpit, one Slack post on #annex-selftest).
 # It doesn't prove timings, retries or "exactly one alert": that's what the full suites are for
 # (scripts/test-all.sh, 30+ minutes: run them only when you changed those parts).
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/testlib.sh"
 use_tunnel
 ANNEX="$ROOT/annex"
+APP=$SELFTEST   # Annex's own test app: platform tests never use an example or a client's app
+on_exit "selftest_remove $APP"
 url() { echo "https://$(setting ANNEX_HOST_PATTERN | sed "s/{name}/$1/")$(setting ANNEX_PORT_SUFFIX)"; }
 ctl() { vm "docker exec annex-ops-1 python -m annex_ops.ctl $* --json"; }
 py() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
@@ -38,60 +40,63 @@ expect "Mailpit is admins only" "403 200" "$(code -b "$TMP/cm.jar" "$(setting AN
 has "annex users lists the accounts" "kaldi-admin" "$("$ANNEX" users list 2>&1)"
 
 echo "Deploy, identity, gateway"
-out=$("$ANNEX" deploy "$ROOT/examples/client-lookup" 2>&1) && ok "annex deploy examples/client-lookup ($(grep -o 'r[0-9]* is live' <<<"$out"))" \
-  || bad "annex deploy client-lookup" "$(tail -3 <<<"$out")"
-page=$(c -b "$TMP/cm.jar" "$(url client-lookup)/" | sed 's/<[^>]*>/ /g' | tr -s ' ')
+selftest_build "$ROOT/.build/selftest-smoke"
+out=$(selftest_deploy "$ROOT/.build/selftest-smoke") && ok "annex deploy annex-selftest ($(grep -o 'r[0-9]* is live' <<<"$out" | head -1))" \
+  || bad "annex deploy annex-selftest" "$(tail -3 <<<"$out")"
+page=$(c -b "$TMP/cm.jar" "$(url $APP)/" | sed 's/<[^>]*>/ /g' | tr -s ' ')
 has "it greets the signed-in user" "Hello, Maja Horvat" "$page"
 has "a granted view is readable" "client_summary : allowed" "$page"
 has "an ungranted view is denied" "advisor_book : denied" "$page"
 has "a deploy of a conforming app has no logging warning" "is live" "$out"
 hasnt "  ...(logs are structured)" "logs aren't structured" "$out"
 # the logging convention (M2.1): one request carries one id in its response header, its log lines and Traefik's access log
-rid_headers=$(c -D - -o /dev/null -b "$TMP/cm.jar" "$(url client-lookup)/?q=novak")
+rid_headers=$(c -D - -o /dev/null -b "$TMP/cm.jar" "$(url $APP)/?q=novak")
 rid=$(tr -d '\r' <<<"$rid_headers" | sed -n 's/^[Xx]-[Rr]equest-[Ii]d: //p')
 expect "the response carries an X-Request-Id" 16 "${#rid}"
 sleep 2
-lines=$(vm "docker logs --tail 40 annex-app-client-lookup 2>&1")
+lines=$(vm "docker logs --tail 40 annex-app-$APP 2>&1")
 has "the app's log lines carry the same request_id" "\"request_id\": \"$rid\"" "$lines"
 expect "the app's last log line is structured (ts, level, msg)" True "$(tail -1 <<<"$lines" | py 'all(k in d for k in ("ts", "level", "msg")) and d["level"] in ("debug", "info", "warn", "error")')"
 has "Traefik's access log carries it too" "\"downstream_X-Request-Id\":\"$rid\"" "$(vm "docker logs --tail 60 annex-traefik-1 2>&1")"
 hasnt "no search text in the app's log" "novak" "$lines"
 # stored logs (M2.2): the same request is in annex-ops's table, found by its id, tagged with the release
 stored=""
-for _ in 1 2 3 4 5 6 7 8; do stored=$("$ANNEX" logs client-lookup --request "$rid" 2>&1) && grep -q "request" <<<"$stored" && break; sleep 2; done
-has "annex logs --request finds the request in the stored logs" " r$(py 'd["release"]' <<<"$("$ANNEX" --json status client-lookup)" | tr -d r) info  request" "$stored"
+for _ in 1 2 3 4 5 6 7 8; do stored=$("$ANNEX" logs $APP --request "$rid" 2>&1) && grep -q "request" <<<"$stored" && break; sleep 2; done
+has "annex logs --request finds the request in the stored logs" " r$(py 'd["release"]' <<<"$("$ANNEX" --json status $APP)" | tr -d r) info  request" "$stored"
 # the audit trail (M2.5): the deploy just made is in it, with who did it
-expect "annex audit shows this deploy of client-lookup" True "$("$ANNEX" --json audit --app client-lookup --action deploy --since 15m | py 'len(d) >= 1 and bool(d[0]["actor"])')"
+expect "annex audit shows this deploy of $APP" True "$("$ANNEX" --json audit --app $APP --action deploy --since 15m | py 'len(d) >= 1 and bool(d[0]["actor"])')"
 # error groups (M2.3): the list answers, and the app serves the browser error script
-expect "annex errors answers (a list)" list "$("$ANNEX" --json errors client-lookup | py 'type(d).__name__')"
-has "the app serves /annex-errors.js" "unhandledrejection" "$(c -b "$TMP/cm.jar" "$(url client-lookup)/annex-errors.js")"
-st=$("$ANNEX" --json status client-lookup)
+expect "annex errors answers (a list)" list "$("$ANNEX" --json errors $APP | py 'type(d).__name__')"
+has "the app serves /annex-errors.js" "unhandledrejection" "$(c -b "$TMP/cm.jar" "$(url $APP)/annex-errors.js")"
+st=$("$ANNEX" --json status $APP)
 expect "annex status: health check up" up "$(py '(d.get("health_check") or {}).get("state")' <<<"$st")"
 expect "annex status: no open incident" None "$(py 'd.get("incident")' <<<"$st")"
 
 echo "Jobs and email"
-mail_before=$(mail_count cm@annex.example "Monthly positions")
-out=$("$ANNEX" run monthly-report monthly 2>&1) && ok "annex run monthly-report monthly" || bad "annex run" "$(tail -3 <<<"$out")"
-mail_wait cm@annex.example "Monthly positions" $((mail_before + 1)) 30 && ok "cm got the report email (Mailpit)" \
-  || bad "report email" "none in Mailpit"
+out=$("$ANNEX" run $APP work 2>&1) && ok "annex run $APP work (the scheduler's exec path: gateway, database, files)" || bad "annex run work" "$(tail -3 <<<"$out")"
+has "  ...it read the gateway and wrote its run" '"msg": "job finished"' "$out"
+mail_before=$(mail_count cm@annex.example "annex-selftest: notification check")
+out=$("$ANNEX" run $APP notify 2>&1) && ok "annex run $APP notify (email, and Slack on the test channel)" || bad "annex run notify" "$(tail -3 <<<"$out")"
+mail_wait cm@annex.example "annex-selftest: notification check" $((mail_before + 1)) 30 && ok "cm got the email (Mailpit)" \
+  || bad "notify email" "none in Mailpit"
 
 echo "annex-ops"
 expect "no open platform incident" "" "$(ctl incidents --open | py '" ".join(i["subject"] for i in d if i["subject"].startswith("platform:"))')"
 h=$(ctl host)
 expect "host numbers are measured (disk, memory, backup)" True "$(py 'all(d[k] is not None for k in ("disk_used_pct", "mem_available_mb", "backup_age_h"))' <<<"$h")"
 expect "the newest backup is under 26 h old" True "$(py 'd["backup_age_h"] < 26' <<<"$h")"
-tile=$(vm "docker exec annex-ops-1 python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/tiles/client-lookup').read().decode())\"")
+tile=$(vm "docker exec annex-ops-1 python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/tiles/$APP').read().decode())\"")
 has "the usage tile answers, without logins" '"users_7d"' "$tile"
 hasnt "  ...and without any login in it" '"sam"' "$tile"
 hc=$(ctl health)
 expect "annex-ops checks the front door (a fresh result, up)" "up" "$(py 'd["platform:front-door"]["state"]' <<<"$hc")"
-expect "annex-ops checks client-lookup (a fresh result, up)" "up" "$(py 'd["app:client-lookup"]["state"]' <<<"$hc")"
+expect "annex-ops checks $APP (a fresh result, up)" "up" "$(py "d['app:$APP']['state']" <<<"$hc")"
 has "the discovery page's Status tile has counts" '"down"' "$(vm "docker exec annex-ops-1 python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/tiles/_status').read().decode())\"")"
 
 echo "Console (M2.4)"
 CONSOLE=$(setting ANNEX_URL_CONSOLE)
 expect "the console shows sam his app, and gives cm a 403 on it (and cm /status)" "200 403 200" \
-  "$(code -b "$TMP/sam.jar" "$CONSOLE/apps/client-lookup") $(code -b "$TMP/cm.jar" "$CONSOLE/apps/client-lookup") $(code -b "$TMP/cm.jar" "$CONSOLE/status")"
+  "$(code -b "$TMP/sam.jar" "$CONSOLE/apps/$APP") $(code -b "$TMP/cm.jar" "$CONSOLE/apps/$APP") $(code -b "$TMP/cm.jar" "$CONSOLE/status")"
 expect "the console is on no network apps are on" "annex-console annex-platform " "$(vm "docker inspect annex-console-1 -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}} {{end}}'" | tr ' ' '\n' | grep . | sort | tr '\n' ' ')"
 has "Homepage lists the Console and Status tiles (its services.yaml parses)" "$CONSOLE/status" "$(c -b "$TMP/cm.jar" "$HOME_URL/api/services")"
 

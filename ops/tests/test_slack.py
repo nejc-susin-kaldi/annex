@@ -44,3 +44,25 @@ def test_text_or_blocks_required_and_text_with_blocks():
     assert error_of(slack.parse_message, {}).status == 400
     assert error_of(slack.parse_message, {"text": "hi", "blocks": "x"}).status == 400
     assert error_of(slack.parse_message, {"text": " "}).status == 400
+
+
+def test_test_mode_sends_every_post_to_the_test_channel_marked_and_says_where_it_was_meant_for():
+    from annex_ops import slack
+    ch, text, note = slack.redirect("#finance-reports", "Report ready", True, "#annex-selftest")
+    assert ch == "#annex-selftest" and text.startswith("[TEST] Report ready") and "#finance-reports" in text
+    assert note == "test mode: posted to #annex-selftest"
+    assert slack.redirect("#finance-reports", "Report ready", False, "#annex-selftest") == ("#finance-reports", "Report ready", None)
+
+
+def test_test_mode_ends_by_itself(tmp_path, monkeypatch):
+    import time
+    from annex_ops import config
+    f = tmp_path / "test-mode"
+    monkeypatch.setattr(config, "TEST_MODE_FILE", str(f))
+    assert config.test_mode_until() is None                      # no file: off
+    f.write_text(str(time.time() + 600))
+    assert config.test_mode_until() is not None                  # in the future: on
+    f.write_text(str(time.time() - 1))
+    assert config.test_mode_until() is None                      # a forgotten file stops mattering
+    f.write_text("nonsense")
+    assert config.test_mode_until() is None

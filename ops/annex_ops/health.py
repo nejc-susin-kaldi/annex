@@ -142,6 +142,20 @@ def store(results: list[tuple[str, bool, int, str | None]]) -> None:
         cur.executemany("INSERT INTO annex_ops.health_checks (app, ok, ms, error) VALUES (%s, %s, %s, %s)", results)
 
 
+def check_now(t: Target, timeout: float) -> dict:
+    """One check right now, stored like the thread's: for a reader that finds no result newer than the app's start (a
+    fresh deploy has none for up to a minute). Doesn't touch the debounce: the thread catches up at its next round."""
+    status, err, ms = fetch(t, timeout)
+    ok = judge(t.kind, status)
+    store([(t.name, ok, ms, explain(t.kind, status, err))])
+    return {"ts": time.time(), "ok": ok, "ms": ms, "error": explain(t.kind, status, err)}
+
+
+def stale_for(row: dict | None, started_at: float | None) -> bool:
+    """No result, or none from after the container (re)started: what is on record is about an earlier container."""
+    return row is None or (started_at is not None and row["ts"] < started_at)
+
+
 def latest(names: list[str] | None = None) -> dict[str, dict]:
     """The newest result of every check, keyed by subject (`app:<name>`, `platform:front-door`)."""
     with db.connect() as conn:

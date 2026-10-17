@@ -18,7 +18,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# name and command; the order matters (apps before jobs and restore, rollback before notify)
+# name and command. Every platform suite deploys (and removes) annex-selftest, so the order no longer matters much;
+# "examples" is the demo apps' own check (they are not used by any other suite) and leaves them deployed.
 suites=(
   "smoke|scripts/test-smoke.sh"
   "runtime|scripts/sync-runtime.sh --check"
@@ -40,6 +41,7 @@ suites=(
   "console|scripts/test-console.sh"
   "audit|scripts/test-audit.sh"
   "host|scripts/test-host.sh"
+  "examples|scripts/test-examples.sh"
 )
 [ -n "$slow" ] && suites+=("alerts|scripts/test-alerts.sh")
 

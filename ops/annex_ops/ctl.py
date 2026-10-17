@@ -23,8 +23,10 @@ def grants() -> list[dict]:
 
 
 def info() -> dict:
+    until = config.test_mode_until()
     return {"email": f"smtp {config.SMTP_HOST}:{config.SMTP_PORT}", "slack_connected": config.slack_connected(),
-            "domains": config.EMAIL_DOMAINS}
+            "domains": config.EMAIL_DOMAINS,
+            "test_mode": f"ON until {time.strftime('%H:%M', time.localtime(until))}: Slack posts go to {config.TEST_SLACK_CHANNEL}" if until else "off"}
 
 
 def table(rows: list[dict], cols: list[str]) -> str:
