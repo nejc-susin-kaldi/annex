@@ -9,7 +9,7 @@ import json
 
 LEVELS = ("debug", "info", "warn", "error")
 MESSAGE = ("logs aren't structured: use `log` from annex_runtime.py instead of print() and plain logging, so every "
-           "line is JSON with ts, level and msg (see the Logging section of `annex contract`)")
+           "line is JSON with ts, level and msg (see `annex contract logging`)")
 
 
 def parse_log_line(line: str) -> dict | None:

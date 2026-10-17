@@ -182,14 +182,15 @@ def main(argv: list[str] | None = None) -> None:
     s = us.add_parser("reset", help="email the person a link to set a new password (or --print-password)")
     s.add_argument("login")
     s.add_argument("--print-password", action="store_true")
-    sub.add_parser("contract", help="print the app contract (for agents)")
+    s = sub.add_parser("contract", help="print the app contract: the core, or one topic (for agents)")
+    s.add_argument("topic", nargs="?", help="notify, webhooks, logging, stack, or all")
 
     a = p.parse_args(argv)
     emit = (lambda obj: print(json.dumps(obj, indent=2, default=str))) if a.json else None
     progress = (lambda msg: print(f"==> {msg}", file=sys.stderr))
     try:
         if a.cmd == "contract":
-            print(ops.contract())
+            print(ops.contract(a.topic), end="")
         elif a.cmd == "init":
             dest = ops.init(a.template, a.name, a.dir, a.owner)
             emit({"path": str(dest)}) if emit else print(

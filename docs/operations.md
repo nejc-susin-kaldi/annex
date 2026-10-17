@@ -41,7 +41,7 @@
 | `apps/<app>/data` | app files, mounted at `/data`, backed up |
 | `apps/<app>/releases.jsonl` | release history: image, manifest, who, when, git commit, result (backed up) |
 | `snapshots/<app>/pre-r<N>/` | database dump and `/data` archive taken before release N went live; the last 3 are kept (not backed up) |
-| `dumps/`, `backups/` | nightly pg_dump output and backup archives (7 days) |
+| `dumps/`, `backups/` | nightly pg_dump output and backup archives (7 days). The `annex_ops` dump leaves out the stored logs and health-check results (D74): restored, those tables come back empty |
 | `certs/` | mkcert wildcard certificate (local TLS mode) |
 
 ## Console (M2.4, D69–D70)

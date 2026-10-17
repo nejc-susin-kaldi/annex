@@ -9,7 +9,7 @@ my-tool/
   ...code
 ```
 
-Start from a template: `annex init <template> <name> --owner <login>`. Templates: `python-web` (FastAPI), `python-job` (scheduled script, no web), `node-web` (Express), `static` (built files plus a tiny server). Another language or framework works too: see [Bring your own stack](#bring-your-own-stack). Deploy with `annex deploy <folder>`.
+Start from a template: `annex init <template> <name> --owner <login>`. Templates: `python-web` (FastAPI), `python-job` (scheduled script, no web), `node-web` (Express), `static` (built files plus a tiny server). Another language or framework works too: `annex contract stack`. Deploy with `annex deploy <folder>`.
 
 ## annex.yaml
 ```yaml
@@ -61,28 +61,32 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `mail`, `ops`, `s
 
   Annex strips client-sent copies of these headers, so they can be trusted.
 - **Product data only through the gateway**, never directly from a database. Call `GET $ANNEX_GATEWAY_URL/<view>` with `Authorization: Bearer $ANNEX_GATEWAY_TOKEN`. The gateway is PostgREST, so filters work as query parameters, e.g. `/client_summary?client_name=ilike.*novak*&order=aum_eur.desc&limit=20`. Requesting a view you didn't declare returns 401/403. Every call is logged with your app's identity.
-- **Email and Slack only through Annex.** Never run an SMTP client or hold a Slack token. Declare `notify:` in `annex.yaml`; Annex injects `ANNEX_OPS_URL` and an `ANNEX_OPS_TOKEN` that can do exactly what you declared. The python and node templates ship helpers (`send_email`, `post_slack` / `sendEmail`, `postSlack`); the raw API is below.
-  - `POST $ANNEX_OPS_URL/v1/email` with `Authorization: Bearer $ANNEX_OPS_TOKEN` and JSON `{"to": ["cm", "sam@annex.example"], "subject": "Report ready", "template": "notice", "data": {"title": "...", "body": "...", "link": "https://...", "link_text": "Open"}}`. Instead of `template`+`data`, give `text` or `html` (exactly one of the three). Answers `{"id", "to": [resolved addresses]}`.
-  - `POST $ANNEX_OPS_URL/v1/slack` with `{"channel": "#finance-reports", "text": "...", "blocks": [...]}`. The channel must be one you declared; `text` is required (it's also the notification fallback when `blocks` is set). Answers `{"id", "channel", "ts"}`.
-  - `GET $ANNEX_OPS_URL/v1/me` shows what your token may do and whether Slack is connected.
-  - **Recipients** are logins (`"cm"`, as in `Remote-User`) or company addresses. Anything outside the client's domains is refused (403), and if one recipient is refused, **nothing is sent**. 1-20 recipients; subject 1-200 characters on one line; body up to 256 KB.
-  - **No attachments** (400). Save the file under `/data` and email a link to it in your app: it stays behind login and downloads are logged.
-  - **Limits:** 60 emails and 60 Slack posts per hour per app (429 when exceeded). Slack answers 503 if the platform team hasn't connected a workspace yet.
-  - Every attempt is logged (app, recipients, subject, time, result), never the body: `annex sends <app>`.
-  - Errors are JSON `{"error": "..."}` and say what to fix; the helpers raise `NotifyError` with that message and `.status`.
+- **Email and Slack only through Annex.** Never run an SMTP client or hold a Slack token: declare `notify:` in `annex.yaml` and use the template helpers (`send_email`, `post_slack`). Recipients are logins or company addresses; no attachments. Details: `annex contract notify`.
+- **Incoming webhooks** (Trello, Stripe, GitHub, Slack, a shared secret) reach a tool that stays behind login: `annex contract webhooks`.
 - **Alerts.** Annex watches every app, and the owner (plus every admin, plus anyone in `alerts.to`) gets one email when:
   - the health check fails (checked every minute, 2 failures in a row);
   - the container stops, or exits with an error 3 times in 10 minutes (crash loop), or runs out of memory;
   - a scheduled job exits non-zero;
   - 5xx responses spike (at least 10 in 5 minutes and at least 5 % of requests).
 
-  There is one alert per problem however many signals notice it, a reminder after an hour and then daily, and a "resolved" message when it recovers. So keep `/healthz` honest and fast (it must not depend on slow calls), and make a job **exit non-zero when it fails**: a job that catches its own error and exits 0 looks successful. Redeploys and rollbacks don't alert. `annex status <app>` shows the health check, any open incident and the last run of each job; everyone signed in can see every app's up/down on the status page (`status.` host, also a tile on the discovery page). Slack channels in `alerts.to` only work once Slack is connected.
+  There is one alert per problem however many signals notice it, a reminder after an hour and then daily, and a "resolved" message when it recovers. So keep `/healthz` honest and fast (it must not depend on slow calls), and make a job **exit non-zero when it fails**: a job that catches its own error and exits 0 looks successful. Redeploys and rollbacks don't alert. `annex status <app>` shows the health check, any open incident and the last run of each job; everyone signed in can see every app's up/down on the console's status page (`console.` host, `/status`, also the Status tile on the discovery page); owners and admins see each app's page there. Slack channels in `alerts.to` only work once Slack is connected.
 - **Usage** is counted for you from the front door's access log; the app does nothing. What counts: signed-in page requests to the app. Not counted: health checks, static files (`.js`, `.css`, images, fonts), anonymous requests, and anything a person did not request. Owners see totals on the app's discovery tile ("Users 7d" with a trend, status) and with `annex usage [app]`; Kaldi and the client see all apps in the "Annex usage" Metabase dashboard and a weekly email digest, which flags tools that are rising (graduation candidates) and ones nobody uses (dormant). Logins are never shown there: per-person counts exist only for admins (`annex usage <app> --by-user`), and raw request records, which never contain query strings, are deleted after 30 days.
 - **Secrets** arrive as environment variables at runtime. Never put them in code, the repo or the image.
 - **Never publish ports.** Only Annex's front door does.
-- **Log to stdout/stderr.** Read logs with `annex logs <app>`.
+- **Logging:** one JSON object per line on stdout through the template's `log` helper (`log.info("report written", rows=12)`), with the right level (`debug`, `info`, `warn`, `error`), and never secrets, tokens or personal data beyond the login. `annex logs <app>` searches 14 days of them, also after a rollback; errors are grouped and the owner is emailed once per new kind. Details: `annex contract logging`.
 - **Health gate.** Every deploy is a numbered release (`r1`, `r2`, …). A web app's new release must return 200 on its `healthcheck` within 60 s (a job-only app must keep running). If it doesn't, Annex switches back to the previous release automatically, and the deploy fails with the new release's last log lines. Your database and `/data` are left as they are, and so are any changes the failed release made to them.
 - **Jobs** run inside the app's container with the same environment (`docker exec`). In `type: job`, the container idles (`sleep infinity`) between runs. Trigger a job by hand with `annex run <app> <job>`. A job's exit code and output are its result.
+
+## Email and Slack
+Never run an SMTP client or hold a Slack token. Declare `notify:` in `annex.yaml`; Annex injects `ANNEX_OPS_URL` and an `ANNEX_OPS_TOKEN` that can do exactly what you declared. The python and node templates ship helpers (`send_email`, `post_slack` / `sendEmail`, `postSlack`); the raw API is below.
+- `POST $ANNEX_OPS_URL/v1/email` with `Authorization: Bearer $ANNEX_OPS_TOKEN` and JSON `{"to": ["cm", "sam@annex.example"], "subject": "Report ready", "template": "notice", "data": {"title": "...", "body": "...", "link": "https://...", "link_text": "Open"}}`. Instead of `template`+`data`, give `text` or `html` (exactly one of the three). Answers `{"id", "to": [resolved addresses]}`.
+- `POST $ANNEX_OPS_URL/v1/slack` with `{"channel": "#finance-reports", "text": "...", "blocks": [...]}`. The channel must be one you declared; `text` is required (it's also the notification fallback when `blocks` is set). Answers `{"id", "channel", "ts"}`.
+- `GET $ANNEX_OPS_URL/v1/me` shows what your token may do and whether Slack is connected.
+- **Recipients** are logins (`"cm"`, as in `Remote-User`) or company addresses. Anything outside the client's domains is refused (403), and if one recipient is refused, **nothing is sent**. 1-20 recipients; subject 1-200 characters on one line; body up to 256 KB.
+- **No attachments** (400). Save the file under `/data` and email a link to it in your app: it stays behind login and downloads are logged.
+- **Limits:** 60 emails and 60 Slack posts per hour per app (429 when exceeded). Slack answers 503 if the platform team hasn't connected a workspace yet.
+- Every attempt is logged (app, recipients, subject, time, result), never the body: `annex sends <app>`.
+- Errors are JSON `{"error": "..."}` and say what to fix; the helpers raise `NotifyError` with that message and `.status`.
 
 ## Webhooks
 Outside services (Trello, Stripe, GitHub, Slack, anything with a shared secret) can call your tool while the tool itself stays behind login. Declare the hooks in `annex.yaml` (block above); each needs a secret listed under `secrets:`, whose value a human sets with `annex secret set <app> TRELLO_SECRET=...`.

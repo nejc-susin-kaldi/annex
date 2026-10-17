@@ -23,7 +23,7 @@ server = MCPServer(
     name="annex",
     instructions=(
         "Annex deploys small internal web tools and jobs behind the client's login. "
-        "Call annex_contract first and follow it. Workflow: annex_init a template into an empty folder, "
+        "Call annex_contract first (the core) and follow it; fetch a topic (notify, webhooks, logging, stack) only if the app needs it. Workflow: annex_init a template into an empty folder, "
         "edit the code, annex_deploy the folder, then check the returned URL with annex_status/annex_logs. "
         "If a deploy fails, the error says exactly what to fix: fix it and deploy again. A deploy that fails its "
         "health check is rolled back automatically; annex_rollback switches back to an earlier release. "
@@ -48,10 +48,13 @@ async def _call(fn, *args):
 
 
 @server.tool()
-async def annex_contract() -> str:
-    """The Annex app contract: annex.yaml fields, runtime rules, injected environment, gateway views,
-    templates. Read this before creating or changing an app."""
-    return ops.contract()
+async def annex_contract(topic: str | None = None) -> str:
+    """The Annex app contract. Call it first, without a topic: the core every app needs (annex.yaml fields, runtime
+    rules, injected env, gateway views and their columns, templates, commands). Then only if the app needs it:
+    topic="notify" (sending email or Slack), "webhooks" (receiving calls from Trello, Stripe, GitHub...),
+    "logging" (the log format in detail, error grouping, browser errors), "stack" (no template: any other
+    language or framework). topic="all" is the whole contract."""
+    return await _call(ops.contract, topic)
 
 
 @server.tool()

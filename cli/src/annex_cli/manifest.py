@@ -39,8 +39,10 @@ class ManifestError(Exception):
     def __init__(self, path: Path, problems: list[str]):
         self.problems = problems
         lines = "\n".join(f"  - {p}" for p in problems)
+        topics = [t for t in ("notify", "webhooks") if any(p.startswith(t) for p in problems)]
+        more = "".join(f" and: annex contract {t}" for t in topics)
         super().__init__(f"{path} is not valid ({len(problems)} problem(s)):\n{lines}\n"
-                         "See the contract with: annex contract")
+                         f"See the contract with: annex contract{more}")
 
 
 @dataclass
@@ -338,7 +340,7 @@ def load(folder: Path) -> Manifest:
 
     if not (folder / "Dockerfile").exists():
         p.append("Dockerfile is missing next to annex.yaml. Copy it from a template (annex init <template> <name>), "
-                 "or write your own: see 'Bring your own stack' in annex contract")
+                 "or write your own: see: annex contract stack")
 
     if p:
         raise ManifestError(path, p)

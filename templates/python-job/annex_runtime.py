@@ -41,7 +41,7 @@ def current_user(headers) -> User:
     )
 
 
-# --- Logging: one JSON object per line on stdout (the Logging section of `annex contract`) ----------------------
+# --- Logging: one JSON object per line on stdout (`annex contract logging`) ----------------------
 # Required: ts, level (debug|info|warn|error), msg. Inside request_context() every line also gets request_id and
 # user. LOG_LEVEL (injected, default info) sets the threshold. Never log secrets, tokens, passwords, request
 # bodies or full product records: IDs and counts are fine.
@@ -134,7 +134,7 @@ def request_context(headers):
         _log_user.reset(t2)
 
 
-# --- Errors in the browser (the Logging section of `annex contract`) ------------------------------------------------
+# --- Errors in the browser (`annex contract logging`) ------------------------------------------------
 # A page that includes <script src="/annex-errors.js"> reports uncaught errors to POST /api/_errors on its own app,
 # which logs one error line (source=browser, with the user and request id) so they are grouped and emailed like
 # server errors. Wire it up with two routes: serve browser_errors_js() at /annex-errors.js, and call

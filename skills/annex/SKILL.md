@@ -10,7 +10,7 @@ Annex runs small internal tools on the client's own server, behind their login, 
 ## Tools (MCP server `annex`)
 | Tool | Use |
 |---|---|
-| `annex_contract` | **Call first.** The rules, `annex.yaml` fields, injected env, data views |
+| `annex_contract` | **Call first** (no topic): the rules, `annex.yaml` fields, injected env, data views. Then a topic only if the app needs it: `notify` (email/Slack), `webhooks`, `logging` (details), `stack` (no template) |
 | `annex_init(template, name, directory, owner)` | Start an app from a template in an empty folder (absolute path) |
 | `annex_deploy(path)` | Validate, build and run the folder; returns the URL or exactly what to fix |
 | `annex_list`, `annex_status(app)`, `annex_logs(app, tail, since, release, level, grep, request)` | Check what's running; logs are kept 14 days, also after a rollback |
@@ -30,7 +30,7 @@ Removing apps, setting secrets, restoring data and managing user accounts are **
 Prefer a template when the user hasn't asked for a specific stack: it already follows the rules.
 
 ## Workflow
-1. `annex_contract`. Note the gateway views and their columns.
+1. `annex_contract` (the core). Note the gateway views and their columns. If the app sends email or Slack, receives webhooks, or uses its own stack, also fetch that topic.
 2. Ask for the **owner** (the builder's Annex login, e.g. `sam`) if you don't know it. Choose a short **name** (lowercase, `-`); it becomes the hostname.
 3. `annex_init` into the current folder (or a new subfolder) using its **absolute** path. Read the returned AGENTS.md; it says which files you may change.
 4. Build the app. Keep to the template's structure: don't touch the Dockerfile, server/runtime helpers, users or ports. Use only the views you list under `data.views`, and set `description`.

@@ -1,6 +1,6 @@
 # AGENTS.md: building an Annex app (node-web)
 
-This folder is an **Annex app**: a small internal tool that runs behind the client's login on their Annex server. Read the full contract with `annex contract` (or the `annex_contract` MCP tool) before making structural changes.
+This folder is an **Annex app**: a small internal tool that runs behind the client's login on their Annex server. Read the contract with `annex contract` (or the `annex_contract` MCP tool; add a topic, e.g. `annex contract notify`, for email/Slack, webhooks, logging details or another stack) before making structural changes.
 
 ## What you may change
 - `server.js` and any new modules, views or static files.

@@ -53,8 +53,37 @@ def project(app: str) -> str:
 
 
 # --- contract and init -----------------------------------------------------
-def contract() -> str:
-    return CONTRACT.read_text()
+# The contract is one file (for people: docs/app-contract.md), served to agents in parts: the core every app needs,
+# and topics fetched only when an app uses them, so a simple dashboard doesn't load the webhook rules (D74).
+CONTRACT_TOPICS = {
+    "notify": ("Email and Slack", "sending email or Slack messages (notify:)"),
+    "webhooks": ("Webhooks", "receiving calls from Trello, Stripe, GitHub, Slack (webhooks:)"),
+    "logging": ("Logging", "the log format in detail, request ids, error grouping, browser errors, searching logs"),
+    "stack": ("Bring your own stack", "any language or framework without a template (Next.js, Streamlit, Django, Go...)"),
+}
+
+
+def _contract_sections() -> tuple[str, list[tuple[str, str]]]:
+    """(intro, [(heading, text)]) split on the '## ' headings."""
+    parts = CONTRACT.read_text().split("\n## ")
+    return parts[0], [(p.split("\n", 1)[0].strip(), "## " + p) for p in parts[1:]]
+
+
+def contract(topic: str | None = None) -> str:
+    """The core of the contract (no topic), one topic, or "all"."""
+    intro, sections = _contract_sections()
+    if topic == "all":
+        return CONTRACT.read_text()
+    if topic:
+        if topic not in CONTRACT_TOPICS:
+            raise AnnexError(f"No contract topic {topic!r}. Topics: {', '.join(CONTRACT_TOPICS)}, or all")
+        heading = CONTRACT_TOPICS[topic][0]
+        return next(text for h, text in sections if h == heading).rstrip() + "\n"
+    topic_headings = {h for h, _ in CONTRACT_TOPICS.values()}
+    core = [text.rstrip() for h, text in sections if h not in topic_headings]
+    more = "\n".join(f"- `annex contract {t}` (MCP: `annex_contract(topic=\"{t}\")`): {what}"
+                      for t, (_, what) in CONTRACT_TOPICS.items())
+    return "\n\n".join([intro.rstrip(), *core, "## More, only when the app needs it\n" + more]) + "\n"
 
 
 def templates() -> list[str]:

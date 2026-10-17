@@ -24,7 +24,7 @@ THRESHOLD = LEVELS.get(os.environ.get("LOG_LEVEL", "info").strip().lower().repla
 
 
 def log(level: str, msg: str, **fields) -> None:
-    """One JSON object per line on stdout, as annex_runtime.log does (the Logging section of `annex contract`)."""
+    """One JSON object per line on stdout, as annex_runtime.log does (`annex contract logging`)."""
     if LEVELS[level] >= THRESHOLD:
         line = {"ts": datetime.now().astimezone().isoformat(timespec="milliseconds"), "level": level, "msg": msg}
         line.update({(k + "_" if k in ("ts", "level", "msg") else k): v for k, v in fields.items()})

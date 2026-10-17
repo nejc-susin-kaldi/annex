@@ -1,6 +1,6 @@
 # AGENTS.md: building an Annex app (static)
 
-This folder is an **Annex app**: a small internal web page that runs behind the client's login on their Annex server. It's plain HTML, CSS and JavaScript in `public/`, served by a tiny server (`server.py`) that also provides the signed-in user and read-only product data. Read the full contract with `annex contract` (or the `annex_contract` MCP tool).
+This folder is an **Annex app**: a small internal web page that runs behind the client's login on their Annex server. It's plain HTML, CSS and JavaScript in `public/`, served by a tiny server (`server.py`) that also provides the signed-in user and read-only product data. Read the contract with `annex contract` (or the `annex_contract` MCP tool; add a topic, e.g. `annex contract notify`, for email/Slack, webhooks, logging details or another stack).
 
 ## What you may change
 - Everything in `public/`. `index.html` is the entry page; add CSS, JS, images and more pages as you like.
