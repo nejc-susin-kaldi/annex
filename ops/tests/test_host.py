@@ -72,3 +72,18 @@ def test_host_messages_are_admin_only_and_helpful():
         "sam": {"email": "sam@x", "groups": ["builders"]}, "kaldi-admin": {"email": "a@x", "groups": ["admins"]}},
         False, "#annex-alerts")
     assert emails == ["a@x"]
+
+
+def test_a_sample_is_stored_every_five_minutes_and_the_first_one_always():
+    assert host.due(None, 1000) and not host.due(1000, 1200) and host.due(1000, 1300) and host.due(1000, 4600, 3600)
+
+
+def test_a_failing_database_never_stops_the_sampler(monkeypatch, capsys):
+    from annex_ops.errors import OpsError
+
+    def boom():
+        raise OpsError(503, "no database")
+    monkeypatch.setattr(host.db, "connect", boom)
+    host.store(sample())          # must not raise
+    host.housekeeping()
+    assert "couldn't store a sample" in capsys.readouterr().err

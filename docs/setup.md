@@ -149,3 +149,21 @@ ssh annex rm /srv/annex/secrets/slack.env
 ssh annex 'cd /srv/annex/platform && docker compose up -d --force-recreate ops'
 ```
 Then delete the Slack app in the workspace (*Basic Information* → *Delete App*), or the test workspace. See `docs/teardown.md`.
+
+## 8. Retire Metabase's "Annex usage" dashboard (M2.9, only when you are ready)
+M2.9 moved usage to the console (an app's **Usage** tab; the **Overview** shows people and trends). The repo no longer sets the dashboard up, but an existing Metabase still has it: the "Annex usage" dashboard, its four cards, the "Annex" collection and the "Annex usage" connection. They are harmless; leaving them is fine. To remove them (this deletes things in Metabase's own database):
+```bash
+ssh annex 'ANNEX_DATA_DIR=/srv/annex bash /srv/annex/platform/vm/metabase-retire-usage.sh'
+```
+Run it after `scripts/push.sh --extras` (the script is synced with the platform). It is idempotent. The product-data connection, its questions and the demo users are not touched.
+
+The database role `metabase_usage` (read-only on the usage summaries) stays: nothing connects as it any more, and dropping it while Metabase still holds a connection that uses it would only make Metabase log errors. **After** the script above has run, you can drop it for good:
+```bash
+ssh annex 'docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops -v ON_ERROR_STOP=1' <<'SQL'
+DROP OWNED BY metabase_usage;
+DROP ROLE metabase_usage;
+SQL
+```
+and then tell the build agent to remove the role, `APPDATA_DB_METABASE_USAGE_PASSWORD` and `usage_pw` from `annex_ops.sql`, `scripts/push.sh` and `vm/bootstrap-secrets.sh` (until then a push would create the role again).
+
+Undo: check out the commit before M2.9 and run `scripts/push.sh --extras`; `vm/metabase-setup.sh` of that commit creates the connection, cards and dashboard again (the history in the usage tables is untouched, so the charts fill in at once).

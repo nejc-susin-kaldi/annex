@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# M2.4 acceptance checks: the console (about 5 minutes).
+# M2.4 acceptance checks, reshaped by M2.7-M2.9: the console (about 5 minutes).
 #   1. who sees what: sam his apps, kaldi-admin the fleet, cm /status and a 403 on app pages, anonymous the login;
 #   2. a forged Remote-User or Remote-Groups from the browser changes nothing;
 #   3. the console is on no network an app is on, and an app can't reach it (tested from an app with Postgres);
@@ -48,29 +48,40 @@ sleep 3   # the lines reach the table and the usage rows are written
 
 echo "1. Who sees what"
 expect "anonymous is sent to the login" 302 "$(code "$CON/")"
-for p in / /status /apps/annex-selftest /apps/annex-selftest; do expect "sam $p" 200 "$(code -b "$TMP/sam.jar" "$CON$p")"; done
+for p in / /apps /status /apps/annex-selftest /apps/annex-selftest/logs /apps/annex-selftest/errors /apps/annex-selftest/releases /apps/annex-selftest/usage /apps/annex-selftest/config; do
+  expect "sam $p" 200 "$(code -b "$TMP/sam.jar" "$CON$p")"
+done
 expect "sam is refused another owner's app (403)" 403 "$(code -b "$TMP/sam.jar" "$CON/apps/annex-selftest-other")"
-expect "  ...and its logs" 403 "$(code -b "$TMP/sam.jar" "$CON/apps/annex-selftest-other/logs")"
+for t in logs errors releases usage config; do expect "  ...and its $t tab" 403 "$(code -b "$TMP/sam.jar" "$CON/apps/annex-selftest-other/$t")"; done
+for p in /audit /activity /platform; do expect "sam is refused $p (admins only)" 403 "$(code -b "$TMP/sam.jar" "$CON$p")"; done
 expect "  ...and a name that doesn't exist looks the same (no listing of apps)" 403 "$(code -b "$TMP/sam.jar" "$CON/apps/no-such-app")"
 home=$(as sam "$CON/" | text)
 has "sam's overview has his apps" "annex-selftest" "$home"
 hasnt "  ...and not the others'" "annex-selftest-other" "$home"
 hasnt "  ...and no platform section" "Platform" "$home"
-for p in /status /; do expect "cm $p" 200 "$(code -b "$TMP/cm.jar" "$CON$p")"; done
+for p in /status / /apps; do expect "cm $p" 200 "$(code -b "$TMP/cm.jar" "$CON$p")"; done
+for p in /audit /platform; do expect "cm is refused $p (admins only)" 403 "$(code -b "$TMP/cm.jar" "$CON$p")"; done
 for a in annex-selftest annex-selftest-other; do expect "cm is refused /apps/$a (403)" 403 "$(code -b "$TMP/cm.jar" "$CON/apps/$a")"; done
 has "cm's overview points at the status page" "don't own any apps" "$(as cm "$CON/" | text)"
 st=$(as cm "$CON/status" | text)
 has "the status page lists apps by name and state for everyone" "annex-selftest" "$st"
 has "  ...and the platform's front door" "front door" "$st"
-admin=$(as kaldi-admin "$CON/" | text)
+admin=$(as kaldi-admin "$CON/apps" | text)
 for a in annex-selftest annex-selftest-other; do has "kaldi-admin's fleet has $a" "$a" "$admin"; expect "kaldi-admin opens /apps/$a" 200 "$(code -b "$TMP/kaldi-admin.jar" "$CON/apps/$a")"; done
-has "  ...with the platform section and the host numbers" "Memory available" "$admin"
+has "  ...the overview has the platform card" "Platform details" "$(as kaldi-admin "$CON/" | text)"
+for n in Overview Apps Activity Platform; do has "  ...and the $n tab in the nav" ">$n<" "$(as kaldi-admin "$CON/")"; done
+plat=$(as kaldi-admin "$CON/platform" | text)
+has "the platform page has the host numbers (from the stored samples)" "Memory available" "$plat"
+has "  ...the backup's age" "Newest backup" "$plat"
+has "  ...and a link to Dozzle" "Dozzle" "$plat"
+expect "an admin opens /apps?f=Dormant" 200 "$(code -b "$TMP/kaldi-admin.jar" "$CON/apps?f=Dormant")"
 expect "an admin gets a real 404 for an unknown app" 404 "$(code -b "$TMP/kaldi-admin.jar" "$CON/apps/no-such-app")"
 page=$(as kaldi-admin "$CON/apps/annex-selftest" | text)
-has "an app page has its owner and live release" "Owner: sam" "$page"
-for s in Status Releases Usage Errors Config; do has "  ...a $s section" "$s" "$page"; done
-has "an admin sees per-person usage, labelled as personal data" "Personal data" "$(as kaldi-admin "$CON/apps/annex-selftest" | text)"
-hasnt "the owner doesn't" "Personal data" "$(as sam "$CON/apps/annex-selftest" | text)"
+has "an app page has its owner and live release" "owner sam" "$page"
+for t in Summary Logs Errors Releases Usage Config; do has "  ...a $t tab" "$t" "$page"; done
+has "an admin sees per-person usage, labelled as personal data" "Personal data" "$(as kaldi-admin "$CON/apps/annex-selftest/usage" | text)"
+hasnt "the owner doesn't" "Personal data" "$(as sam "$CON/apps/annex-selftest/usage" | text)"
+hasnt "  ...and no other login is on the owner's usage page" "kaldi-admin" "$(as sam "$CON/apps/annex-selftest/usage" | text)"
 
 echo "2. Forged identity changes nothing"
 expect "sam with a forged Remote-User: kaldi-admin" 403 "$(code -b "$TMP/sam.jar" -H 'Remote-User: kaldi-admin' -H 'Remote-Groups: admins' "$CON/apps/annex-selftest-other")"
@@ -118,6 +129,8 @@ denied "  ...or its headers" "SELECT headers FROM annex_ops.hook_events LIMIT 1"
 denied "  ...or the apps' token hashes (app_grants)" "SELECT token_sha256 FROM annex_ops.app_grants LIMIT 1"
 denied "  ...or the log cursors" "SELECT * FROM annex_ops.log_cursors LIMIT 1"
 denied "  ...or the send log (not granted before the audit page)" "SELECT * FROM annex_ops.sends LIMIT 1"
+expect "  ...the host samples (M2.9)" "ok" "$(psql_as annex_console "SELECT 'ok' FROM (SELECT ts FROM annex_ops.host_samples LIMIT 1) x UNION SELECT 'ok'" | sort -u | head -1)"
+denied "  ...but can't write them" "INSERT INTO annex_ops.host_samples (disk_used_pct) VALUES (1)"
 denied "it can't insert" "INSERT INTO annex_ops.releases (app, release, image, result, deployed_at, manifest) VALUES ('x', 1, 'i', 'live', now(), '{}')"
 denied "  ...or update" "UPDATE annex_ops.error_groups SET count = 0"
 denied "  ...or delete" "DELETE FROM annex_ops.logs"
@@ -125,23 +138,26 @@ has "  ...or drop" "must be owner" "$(psql_as annex_console "DROP TABLE annex_op
 
 echo "5. The numbers match the CLI"
 use=$("$ANNEX" --json usage annex-selftest)
-page=$(as kaldi-admin "$CON/apps/annex-selftest" | text)
+page=$(as kaldi-admin "$CON/apps/annex-selftest/usage" | text)
 has "users and requests in 7 days are annex usage's" "$(py 'str(d["app"]["users_7d"]) + " user(s) in the last 7 days (" + d["app"]["trend"] + "), " + str(d["app"]["users_30d"]) + " in 30 days, " + str(d["app"]["requests_7d"]) + " requests"' <<<"$use")" "$page"
 rel=$("$ANNEX" --json releases annex-selftest)
-expect "the release list has as many rows as annex releases" "$(py 'len(d)' <<<"$rel")" "$(as kaldi-admin "$CON/apps/annex-selftest" | grep -o '/logs?release=[0-9]*' | sort -u | wc -l | tr -d ' ')"
-has "the live release is the one annex status shows" "live release: r$("$ANNEX" --json status annex-selftest | py 'd["release"][1:]')" "$page"
-has "the health check state is annex status's" "Health check: up" "$page"
+expect "the release list has as many rows as annex releases" "$(py 'len(d)' <<<"$rel")" "$(as kaldi-admin "$CON/apps/annex-selftest/releases" | grep -o '/logs?release=[0-9]*' | sort -u | wc -l | tr -d ' ')"
+summary=$(as kaldi-admin "$CON/apps/annex-selftest" | text)
+has "the live release is the one annex status shows" "live r$("$ANNEX" --json status annex-selftest | py 'd["release"][1:]')" "$summary"
+has "the health state is annex status's" "annex-selftest up" "$summary"
 cli=$("$ANNEX" logs annex-selftest --request "$RID")
 nlines=$(grep -c . <<<"$cli")
 expect "a request's log lines: as many as annex logs --request" "$nlines" "$(as sam "$CON/apps/annex-selftest/logs?request=$RID" | grep -o 'class="log' | wc -l | tr -d ' ')"
 for i in $(seq 1 15); do [ "$("$ANNEX" --json errors annex-selftest | py 'len(d)')" -ge 2 ] && break; sleep 4; done
 errs=$("$ANNEX" --json errors annex-selftest)
-expect "the error groups on the page are annex errors' (count)" "$(py 'len(d)' <<<"$errs")" "$(as sam "$CON/apps/annex-selftest" | grep -o '<span class="badge \(bad\|muted\)">\(active\|quiet\)</span>' | wc -l | tr -d ' ')"
-has "  ...with their request ids linked to the logs" "/apps/annex-selftest/logs?request=" "$(as sam "$CON/apps/annex-selftest")"
-has "  ...and what the error was" "ZeroDivisionError in handle_boom" "$(as sam "$CON/apps/annex-selftest" | text)"
-expect "an app with no errors says so" "no errors seen" "$(as kaldi-admin "$CON/apps/annex-selftest-other" | text | grep -o 'no errors seen')"
-has "the config shows names of injected variables, never values" "ANNEX_APP_NAME" "$(as sam "$CON/apps/annex-selftest" | text)"
-hasnt "  ...and no token in any page" "ANNEX_GATEWAY_TOKEN=" "$(as sam "$CON/apps/annex-selftest" | text)"
+expect "the error groups on the page are annex errors' (count)" "$(py 'len(d)' <<<"$errs")" "$(as sam "$CON/apps/annex-selftest/errors?s=all" | grep -oE 'class="st (bad|off)"><i aria-hidden="true"></i>(active|quiet)' | wc -l | tr -d ' ')"
+has "  ...with their request ids linked to the logs" "/apps/annex-selftest/logs?request=" "$(as sam "$CON/apps/annex-selftest/errors?s=all")"
+has "  ...and what the error was" "ZeroDivisionError in handle_boom" "$(as sam "$CON/apps/annex-selftest/errors?s=all" | text)"
+has "the summary lists the active error group under what needs attention" "ZeroDivisionError in handle_boom" "$summary"
+expect "an app with no errors says so" "no errors seen" "$(as kaldi-admin "$CON/apps/annex-selftest-other/errors" | text | grep -o 'no errors seen')"
+has "the config shows names of injected variables, never values" "ANNEX_APP_NAME" "$(as sam "$CON/apps/annex-selftest/config" | text)"
+hasnt "  ...and no token in any page" "ANNEX_GATEWAY_TOKEN=" "$(as sam "$CON/apps/annex-selftest/config" | text)"
+has "the overview of the owner lists his app with a sparkline" 'class="spark"' "$(as sam "$CON/")"
 gw=$(as kaldi-admin "$CON/apps/annex-selftest/logs?source=gateway" | text)
 has "the gateway reads are a source of the logs page" "GET /" "$gw"
 
@@ -154,7 +170,7 @@ has "Content-Security-Policy: no scripts at all" "default-src 'none'" "$hdrs"
 has "  ...and nosniff, no-store" "no-store" "$hdrs"
 expect "a POST is refused (405)" 405 "$(code -b "$TMP/sam.jar" -X POST -d x "$CON/apps/annex-selftest")"
 expect "so is a DELETE" 405 "$(code -b "$TMP/sam.jar" -X DELETE "$CON/apps/annex-selftest")"
-has "every page says it is read-only" "Read-only" "$(as sam "$CON/apps/annex-selftest" | text)"
+has "every page says it is read-only" "This console is read-only" "$(as sam "$CON/apps/annex-selftest" | text)"
 has "  ...and gives the CLI command" "annex rollback annex-selftest" "$(as sam "$CON/apps/annex-selftest" | text)"
 has "the logs page filters by release" 'name="release"' "$(as sam "$CON/apps/annex-selftest/logs?release=1" | grep -o 'name="release"')"
 has "an old, unmatched search is just empty" "no lines match" "$(as sam "$CON/apps/annex-selftest/logs?grep=zzz-nothing-$RANDOM" | text)"

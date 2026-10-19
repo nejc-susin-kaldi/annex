@@ -1,24 +1,27 @@
-"""The console (M2.4): read-only pages for builders and admins, in its own container (D69).
+"""The console (M2.4, reshaped in M2.7-M2.9): read-only pages for builders and admins, in its own container (D69).
 
 It trusts `Remote-User` and `Remote-Groups`, which only Traefik's forward-auth can set here: this container is on the
 `platform` network (Traefik) and a network shared only with appdata-db, never on `edge` or `appdata` where apps are, and
 `strip-identity` blanks anything a browser sends. Its database role may only SELECT. It has no Docker access, no SMTP, no
 Slack token and no secret of any app, and no route changes anything.
 
-  GET /status            every signed-in user: which apps and platform parts are up
-  GET /                  the apps you own (admins: all, with flags and the platform)
-  GET /apps/<app>        status, releases, usage, errors, warnings, config: the owner and admins
-  GET /apps/<app>/logs   search the stored logs: the owner and admins
-  GET /audit             the audit trail: admins only
+  GET /status                every signed-in user: which apps and platform parts are up
+  GET /                      the overview: what needs attention, the apps you own (admins: all, with the platform and the latest activity)
+  GET /apps                  the apps list, filtered
+  GET /apps/<app>[/tab]      summary, /logs, /errors, /releases, /usage, /config: the owner and admins
+  GET /audit  (/activity)    the activity timeline: admins only
+  GET /platform              the server and the platform's parts: admins only
 """
 import re
-from datetime import datetime
+import time
+from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import audit, console_data as data, console_view as v, db
+from . import config, console_data as data, console_pages_admin as pg, console_pages_app as pa, console_pages_overview as po, console_view as v, db
 from .errors import OpsError
 
 app = FastAPI(title="annex-console", docs_url=None, redoc_url=None, openapi_url=None)
@@ -65,16 +68,24 @@ def status(request: Request):
     if who is None:
         return NOT_SIGNED_IN
     apps, platform = data.status_view()
-    return reply(v.status_page(who, apps, platform))
+    _, newest = data.health_snapshot()
+    return reply(po.status_page(who, apps, platform, data.checker_stale(newest, time.time(), config.tuning().check_interval_s)))
 
 
 @app.get("/")
-def fleet(request: Request):
+def overview(request: Request):
     who = signed_in(request)
     if who is None:
         return NOT_SIGNED_IN
-    f = data.fleet(who)
-    return reply(v.fleet_page(who, f["rows"], f["platform"], f["host"]))
+    return reply(po.overview_page(who, data.overview(who)))
+
+
+@app.get("/apps")
+def apps_list(request: Request):
+    who = signed_in(request)
+    if who is None:
+        return NOT_SIGNED_IN
+    return reply(po.apps_page(who, data.overview(who), request.query_params.get("f", "All")[:20], request.query_params.get("q", "")[:60]))
 
 
 def authorised(who: v.Who, name: str):
@@ -90,6 +101,17 @@ def authorised(who: v.Who, name: str):
     return row, None
 
 
+def _guarded(request: Request, name: str):
+    """(who, core data of the app, response to send instead)."""
+    who = signed_in(request)
+    if who is None:
+        return None, None, NOT_SIGNED_IN
+    row, resp = authorised(who, name)
+    if resp is not None:
+        return who, None, resp
+    return who, data.app_core(who, name), None
+
+
 @app.get("/apps/{name}")
 def app_page(name: str, request: Request):
     who = signed_in(request)
@@ -98,15 +120,13 @@ def app_page(name: str, request: Request):
     row, resp = authorised(who, name)
     if resp is not None:
         return resp
-    return reply(v.app_page(who, data.app_detail(who, name)))
+    d = data.app_detail(who, name)
+    return reply(pa.summary_page(who, d, data.app_attention(d, datetime.now(timezone.utc))))
 
 
 @app.get("/apps/{name}/logs")
 def logs(name: str, request: Request):
-    who = signed_in(request)
-    if who is None:
-        return NOT_SIGNED_IN
-    row, resp = authorised(who, name)
+    who, d, resp = _guarded(request, name)
     if resp is not None:
         return resp
     q = {k: request.query_params.get(k, "").strip()[:200] for k in ("level", "release", "grep", "request", "since", "source")}
@@ -120,19 +140,69 @@ def logs(name: str, request: Request):
     older = None
     if len(rows) >= 100:
         params = {k: x for k, x in {**q, "before": rows[0]["ts"]}.items() if x}
-        from urllib.parse import urlencode
         older = f"/apps/{name}/logs?{urlencode(params)}"
-    return reply(v.logs_page(who, name, rows, q, older))
+    return reply(pa.logs_page(who, d, rows, q, older))
+
+
+@app.get("/apps/{name}/errors")
+def errors_tab(name: str, request: Request):
+    who, d, resp = _guarded(request, name)
+    if resp is not None:
+        return resp
+    return reply(pa.errors_page(who, d, request.query_params.get("s", "active")[:10]))
+
+
+@app.get("/apps/{name}/releases")
+def releases_tab(name: str, request: Request):
+    who, d, resp = _guarded(request, name)
+    if resp is not None:
+        return resp
+    return reply(pa.releases_page(who, d, show_all=request.query_params.get("all") == "1"))
+
+
+@app.get("/apps/{name}/usage")
+def usage_tab(name: str, request: Request):
+    who, d, resp = _guarded(request, name)
+    if resp is not None:
+        return resp
+    return reply(pa.usage_page(who, {**d, **data.usage_part(who, name)}))
+
+
+@app.get("/apps/{name}/config")
+def config_tab(name: str, request: Request):
+    who, d, resp = _guarded(request, name)
+    if resp is not None:
+        return resp
+    return reply(pa.config_page(who, d))
 
 
 @app.get("/audit")
+@app.get("/activity")
 def audit_page(request: Request):
     who = signed_in(request)
     if who is None:
         return NOT_SIGNED_IN
     if not who.admin:
-        return reply(v.forbidden(who, "the audit trail"), 403)
-    q = {k: request.query_params.get(k, "").strip()[:100] for k in ("app", "action", "actor", "since")}
-    secs = {"1h": 3600, "1d": 86400, "7d": 604800, "30d": 2592000, "365d": 31536000}.get(q["since"])
-    rows = audit.timeline(q["app"] or None, secs, q["action"] or None, q["actor"] or None, 300)
-    return reply(v.audit_page(who, rows, q))
+        return reply(v.forbidden(who, "the activity timeline"), 403)
+    q = {k: request.query_params.get(k, "").strip()[:100] for k in ("app", "chip", "actor", "since", "before")}
+    chip = q["chip"] if q["chip"] in data.CHIPS else "All"
+    q["chip"] = chip if chip != "All" else ""
+    before = None
+    if q["before"]:
+        try:
+            before = datetime.fromisoformat(q["before"].replace("Z", "+00:00"))
+        except ValueError:
+            q["before"] = ""
+    secs = pg.SINCE.get(q["since"])
+    events, more = data.activity(pg.PAGE, chip, q["app"] or None, q["actor"] or None, secs, before)
+    return reply(pg.activity_page(who, events, more, q, list(data.CHIPS)))
+
+
+@app.get("/platform")
+def platform(request: Request):
+    who = signed_in(request)
+    if who is None:
+        return NOT_SIGNED_IN
+    if not who.admin:
+        return reply(v.forbidden(who, "the platform page"), 403)
+    return reply(pg.platform_page(who, data.platform_view()))

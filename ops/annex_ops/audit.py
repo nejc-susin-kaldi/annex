@@ -137,9 +137,10 @@ def housekeeping(s: AuditSettings) -> None:
 
 
 # --- queries for ctl and the console ------------------------------------------------------------------------------
-def timeline(app: str | None = None, since_s: float | None = None, action: str | None = None, actor: str | None = None,
-             limit: int = 100) -> list[dict]:
-    """The audit trail, newest first: the audit rows and every email and Slack send (`audit_timeline`)."""
+def timeline(app: str | None = None, since_s: float | None = None, action: str | list[str] | None = None, actor: str | None = None,
+             limit: int = 100, before: datetime | None = None, failures: bool = False) -> list[dict]:
+    """The audit trail, newest first: the audit rows and every email and Slack send (`audit_timeline`). `action` is a
+    prefix or several (the console's chips); `failures` keeps only what failed or was rejected; `before` pages backwards."""
     where, args = ["TRUE"], []
     if app:
         where.append("app = %s")
@@ -148,11 +149,18 @@ def timeline(app: str | None = None, since_s: float | None = None, action: str |
         where.append("ts >= now() - make_interval(secs => %s)")
         args.append(since_s)
     if action:
-        where.append("(action = %s OR action LIKE %s)")
-        args += [action, action + ".%"]
+        acts = [action] if isinstance(action, str) else list(action)
+        where.append("(" + " OR ".join(["action = %s OR action LIKE %s"] * len(acts)) + ")")
+        for a in acts:
+            args += [a, a + ".%"]
     if actor:
         where.append("actor = %s")
         args.append(actor)
+    if failures:
+        where.append("action ~ '(failed|rejected)$'")
+    if before is not None:
+        where.append("ts < %s")
+        args.append(before)
     with db.connect() as conn:
         rows = conn.execute("SELECT ts, actor, app, action, details FROM annex_ops.audit_timeline WHERE " + " AND ".join(where) +
                             " ORDER BY ts DESC, action LIMIT %s", (*args, max(1, min(int(limit), 2000)))).fetchall()

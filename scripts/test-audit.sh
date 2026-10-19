@@ -111,11 +111,17 @@ expect "forged admin headers from sam change nothing" 403 "$(code -b "$TMP/sam.j
 page=$(as kaldi-admin "$CON/audit?app=$APP" | sed 's/<style>.*<\/style>//; s/<[^>]*>/ /g' | tr -s ' \n')
 for a in secret.set deploy deploy.failed rollback gateway.reads app.removed; do has "the page shows $a" "$a" "$page"; done
 has "  ...and who did it" "audit-tester" "$page"
-cli_n=$(trail --app $APP | py 'len(d)')
-page_n=$(as kaldi-admin "$CON/audit?app=$APP" | grep -o '<tr><td>' | wc -l | tr -d ' ')
-expect "the page's rows are annex audit's for the app" "$cli_n" "$page_n"
-hasnt "the nav shows Audit to admins only" ">Audit<" "$(as sam "$CON/" )"
-has "  ...and to admins" ">Audit<" "$(as kaldi-admin "$CON/")"
+cli_n=0
+for act in deploy rollback app; do cli_n=$((cli_n + $("$ANNEX" --json audit --since 1h --limit 2000 --app $APP --action $act | py 'len(d)'))); done
+html=$(as kaldi-admin "$CON/audit?app=$APP&chip=Deploys&since=1h")
+page_n=$(grep -o '<td data-label="When">' <<<"$html" | wc -l | tr -d ' ')
+expect "the Deploys chip's rows are annex audit's deploy, rollback and app rows for the app (same hour)" "$cli_n" "$page_n"
+expect "/activity is the same page" 200 "$(code -b "$TMP/kaldi-admin.jar" "$CON/activity")"
+hasnt "the nav shows Activity to admins only" ">Activity<" "$(as sam "$CON/" )"
+has "  ...and to admins" ">Activity<" "$(as kaldi-admin "$CON/")"
+has "the Deploys chip keeps deploys and rollbacks only" "deploy" "$(as kaldi-admin "$CON/audit?app=$APP&chip=Deploys" | sed 's/<style>.*<\/style>//; s/<[^>]*>/ /g' | tr -s ' \n')"
+hasnt "  ...and not the secret" "secret.set" "$(as kaldi-admin "$CON/audit?app=$APP&chip=Deploys" | sed 's/<style>.*<\/style>//; s/<[^>]*>/ /g' | tr -s ' \n')"
+has "the Failures chip finds the failed deploy" "deploy.failed" "$(as kaldi-admin "$CON/audit?app=$APP&chip=Failures" | sed 's/<style>.*<\/style>//; s/<[^>]*>/ /g' | tr -s ' \n')"
 has "the page says who may read it" "For admins" "$page"
 expect "the console's role reads the view, not the send log directly" "permission denied" "$(printf 'SET ROLE annex_console;\nSELECT 1 FROM annex_ops.sends LIMIT 1;\n' | ssh annex 'docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops -At -f -' 2>&1 | grep -o 'permission denied' | head -1)"
 expect "  ...and can't write to the trail" "permission denied" "$(printf 'SET ROLE annex_console;\nINSERT INTO annex_ops.audit_events (action) VALUES ($$x$$);\n' | ssh annex 'docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops -At -f -' 2>&1 | grep -o 'permission denied' | head -1)"

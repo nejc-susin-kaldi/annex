@@ -32,7 +32,7 @@ People sign in with Annex's own accounts (no company SSO needed): `./annex users
 | Dozzle (extras) | `logs` | admins |
 | PostgREST gateway | `gateway` | apps with a JWT; admins via browser |
 | Mailpit (caught outgoing email) | `mail` | admins |
-| Console (read-only pages per app: status, releases, usage, errors, logs, config; its own container) | `console` | signed in: `/status` for everyone, an app's pages for its owner and admins |
+| Console (read-only: an overview of what needs attention, a page per app with Summary, Logs, Errors, Releases, Usage and Config tabs, activity and platform for admins; its own container) | `console` | signed in: `/status` for everyone, an app's pages for its owner and admins |
 | Incoming webhooks (the receiver, its own container; only `/h/`) | `hooks` | **nobody logs in**: callers are checked by signature |
 
 Plus annex-ops (`ops/`: email and Slack for apps, incidents and alerts, host and backup monitoring, usage stats and the weekly digest, webhook delivery, stored logs and error groups), product-db and appdata-db (Postgres 16), Ofelia (jobs), offen backup (nightly, 7 days) and two Docker socket proxies. Hostnames come from `ANNEX_HOST_PATTERN`, `{name}.annex.home.arpa` by default.
@@ -54,11 +54,11 @@ Plus annex-ops (`ops/`: email and Slack for apps, incidents and alerts, host and
 | `scripts/test-rollback.sh` | M1.1 checks: automatic rollback, `annex rollback`, `--with-data` |
 | `scripts/test-notify.sh` | M1.2 checks: email through Mailpit, Slack allowlist, send log, grants |
 | `scripts/test-logs.sh` | M2.2 checks (about 4 minutes): stored logs searchable by release, level, text and request id; secrets never stored; a failed release keeps its lines; gateway, platform and sign-in lines; ops restart without gap or duplicates; the rate cap; a paused annex-ops never blocks a deploy; partitions roll; the job-only logging warning |
-| `scripts/test-audit.sh` | M2.5 checks (about 3 minutes): a scripted session (secret, deploy, broken deploy, rollback, gateway reads, an email, an account, failed and good sign-in, removal) is in the trail once each, in order, with the right actor, and no secret; the console's Audit page is admins only; copies are idempotent |
+| `scripts/test-audit.sh` | M2.5 checks (about 3 minutes): a scripted session (secret, deploy, broken deploy, rollback, gateway reads, an email, an account, failed and good sign-in, removal) is in the trail once each, in order, with the right actor, and no secret; the console's Activity page is admins only; copies are idempotent |
 | `scripts/test-console.sh` | M2.4 checks (about 2 minutes): who sees what, forged identity headers, no network path from an app, the container's and the database role's limits, numbers equal to the CLI's, escaping, Homepage tiles |
 | `scripts/test-errors.sh` | M2.3 checks (about 4 minutes): 50 identical errors are one group and one email, another kind another email, the hourly limit and its summary, quiet after a fix, back in a newer release, browser reports, printed tracebacks, groups removed with the app |
 | `scripts/test-hooks.sh` | M1.5 checks: signed events reach the app, bad ones don't, retries after a stop, replay, a tight route |
-| `scripts/test-usage.sh` | M1.4 checks: a scripted session shows the same numbers in `annex usage`, the tiles and Metabase; privacy, retention, restart, digest |
+| `scripts/test-usage.sh` | M1.4 checks: a scripted session shows the same numbers in `annex usage`, the tiles and the console; privacy, retention, restart, digest |
 | `scripts/seed-usage.sh [--clear]` | optional demo prep: 8 weeks of synthetic usage history for the dashboard |
 | `scripts/test-alerts.sh` | M1.3 checks: stop, crash loop, 500 burst, failing job and platform outage each give one alert and one "resolved" (12-20 minutes) |
 | `scripts/test-host.sh` | disk, memory and backup alerts: one alert and one "resolved" each, admins only |

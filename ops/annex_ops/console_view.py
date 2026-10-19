@@ -1,12 +1,17 @@
-"""The console's rules and pages (M2.4): who sees what, and server-rendered HTML. Pure: no database, no network.
+"""The console's rules and building blocks (M2.4, redone in M2.7): who sees what, and the HTML pieces every page is made of.
+Pure: no database, no network, no clock of its own (`rel_time` takes `now`).
 
-Every page is read-only and says so, with the CLI command that would change what it shows. Everything that comes
-from an app (a log line, an error message, a manifest value) is escaped. The identity comes from `Remote-User` and
-`Remote-Groups`, which can only be set by Traefik's forward-auth: the console isn't on any network apps are on (D69).
+The pages themselves are in `console_pages_overview.py` (overview, apps, status), `console_pages_app.py` (an app's tabs) and
+`console_pages_admin.py` (activity, platform). Every page is read-only and says so once, in a "From the CLI" block that names
+the commands which would change what it shows. Everything that comes from an app (a log line, an error message, a manifest
+value) is escaped. The identity comes from `Remote-User` and `Remote-Groups`, which can only be set by Traefik's
+forward-auth: the console isn't on any network apps are on (D69). No JavaScript: the CSP forbids it, so charts are inline
+SVG, filters are links and forms, and tabs are separate URLs.
 """
 import html
+import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Europe/Ljubljana")
@@ -49,248 +54,260 @@ def cell(value) -> str:
     return value if isinstance(value, Raw) else e(value)
 
 
+def raw(*parts) -> Raw:
+    """Join pieces (Raw as they are, anything else escaped) into markup."""
+    return Raw("".join(cell(p) for p in parts))
+
+
 def code(text: str) -> Raw:
     return Raw(f"<code>{e(text)}</code>")
 
 
 def link(href: str, text) -> Raw:
-    return Raw(f'<a href="{e(href)}">{e(text)}</a>')
+    return Raw(f'<a href="{e(href)}">{cell(text)}</a>')
+
+
+def host_url(name: str) -> str | None:
+    """The address of `name` on this server (an app, or a platform part such as `logs`), built the way Traefik's hosts are
+    (`ANNEX_HOST_PATTERN`, `ANNEX_PORT_SUFFIX`); None if the console wasn't given the pattern."""
+    pattern = os.environ.get("ANNEX_HOST_PATTERN", "")
+    if "{name}" not in pattern or not name.replace("-", "").isalnum():
+        return None
+    return f"https://{pattern.replace('{name}', name)}{os.environ.get('ANNEX_PORT_SUFFIX', '')}"
 
 
 def when(dt: datetime | None) -> str:
+    """Absolute local time, minutes."""
     return dt.astimezone(TZ).strftime("%Y-%m-%d %H:%M") if dt else ""
 
 
-def table(headers: list[str], rows: list[list], empty: str = "none") -> Raw:
+def to_dt(value) -> datetime | None:
+    """A datetime, an ISO string (with `Z` or an offset) or epoch seconds, as an aware datetime."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, timezone.utc)
+    try:
+        d = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def ago_text(seconds: float) -> str:
+    s = max(0, int(seconds))
+    if s < 60:
+        return "just now"
+    if s < 3600:
+        return f"{s // 60} min ago"
+    if s < 86400:
+        return f"{s // 3600} h ago"
+    return f"{s // 86400} d ago"
+
+
+def rel_time(value, now: datetime | None = None) -> Raw:
+    """"3 d ago" with the absolute local time in the title (hover); older than 60 days it is the date itself."""
+    dt = to_dt(value)
+    if dt is None:
+        return Raw("")
+    now = now or datetime.now(timezone.utc)
+    secs = (now - dt).total_seconds()
+    text = ago_text(secs) if secs < 60 * 86400 else dt.astimezone(TZ).strftime("%Y-%m-%d")
+    return Raw(f'<time datetime="{e(dt.isoformat())}" title="{e(when(dt))}">{e(text)}</time>')
+
+
+# --- states: one scheme everywhere ---------------------------------------------------------------------
+STATES = {"up": "ok", "ok": "ok", "live": "ok", "good": "ok",
+          "unknown": "warn", "warn": "warn", "warning": "warn", "dormant": "warn",
+          "down": "bad", "failed": "bad", "error": "bad", "active": "bad", "bad": "bad", "rejected": "bad",
+          "quiet": "off", "none": "off", "off": "off", "superseded": "off", "graduation": "off"}
+
+
+def state_class(word: str) -> str:
+    return STATES.get(word, "off")
+
+
+def state(word: str, label: str | None = None) -> Raw:
+    """A dot and a word: ok (green), warn (amber), bad (red) or off (grey). The word is what the data says."""
+    return Raw(f'<span class="st {state_class(word)}"><i aria-hidden="true"></i>{e(label if label is not None else word)}</span>')
+
+
+def chip(text, kind: str = "off") -> Raw:
+    return Raw(f'<span class="chip {e(kind)}">{e(text)}</span>')
+
+
+def table(headers: list[str], rows: list[list], empty: str = "none", cls: str = "") -> Raw:
+    """A table that stacks into labelled rows on a narrow screen (each cell carries its column's name)."""
     if not rows:
         return Raw(f'<p class="muted">{e(empty)}</p>')
     head = "".join(f"<th>{e(h)}</th>" for h in headers)
-    body = "".join("<tr>" + "".join(f"<td>{cell(c)}</td>" for c in r) + "</tr>" for r in rows)
-    return Raw(f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>')
+    body = "".join("<tr>" + "".join(f'<td data-label="{e(h)}">{cell(c)}</td>' for h, c in zip(headers, r)) + "</tr>" for r in rows)
+    return Raw(f'<div class="scroll"><table class="stack {e(cls)}"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>')
 
 
-def badge(state: str) -> Raw:
-    cls = {"up": "good", "ok": "good", "live": "good", "active": "bad", "down": "bad", "failed": "bad", "error": "bad",
-           "quiet": "muted", "unknown": "warn", "warn": "warn", "none": "muted"}.get(state, "muted")
-    return Raw(f'<span class="badge {cls}">{e(state)}</span>')
+def section(title: str, body, hint: str = "", extra: str = "") -> Raw:
+    return Raw(f'<section><h2>{e(title)}{extra}</h2>{cell(body)}' + (f'<p class="muted hint">{cell(hint)}</p>' if hint else "") + "</section>")
 
 
-def section(title: str, body, hint: str = "") -> Raw:
-    return Raw(f'<section><h2>{e(title)}</h2>{body if isinstance(body, Raw) else e(body)}'
-               + (f'<p class="muted hint">{hint}</p>' if hint else "") + "</section>")
+def card(title: str, body, cls: str = "") -> Raw:
+    return Raw(f'<section class="card {e(cls)}"><h2>{e(title)}</h2>{cell(body)}</section>')
 
 
+def kpi(label: str, value, note="", chart=None) -> Raw:
+    """One number with a label; `chart` is a sparkline."""
+    return Raw(f'<div class="kpi"><div class="k">{e(label)}</div><div class="n">{cell(value)}</div>'
+               f'<div class="note muted">{cell(note)}{cell(chart) if chart else ""}</div></div>')
+
+
+def kpis(*tiles: Raw) -> Raw:
+    return Raw('<div class="kpis">' + "".join(tiles) + "</div>")
+
+
+def chips(items: list[tuple[str, str, int | None]], current: str) -> Raw:
+    """Filter links: (key, href, count). The current one is marked."""
+    out = []
+    for key, href, n in items:
+        label = e(key) + (f' <span class="muted">{n}</span>' if n is not None else "")
+        out.append(f'<a class="fc{" on" if key == current else ""}" href="{e(href)}"' + (' aria-current="true"' if key == current else "") + f">{label}</a>")
+    return Raw('<nav class="filters-row" aria-label="Filter">' + "".join(out) + "</nav>")
+
+
+def cli_block(*commands: str) -> Raw:
+    """The one place a page says what changes things: nothing in the console does."""
+    cmds = "".join(f"<div><code>{e(c)}</code></div>" for c in commands)
+    return Raw(f'<details class="cli"><summary>From the CLI. This console is read-only.</summary>{cmds}</details>')
+
+
+# --- charts: inline SVG, no script ---------------------------------------------------------------------
+def _nums(values) -> list[float]:
+    return [float(x or 0) for x in values]
+
+
+def sparkline(values: list, label: str = "per day", w: int = 84, h: int = 22) -> Raw:
+    """A line of the last values (oldest first). Flat when there is nothing to draw."""
+    vs = _nums(values)
+    desc = f"{label}: " + ", ".join(str(int(x)) if x == int(x) else str(x) for x in vs) if vs else f"{label}: no data"
+    if len(vs) < 2:
+        pts = f"0,{h - 2} {w},{h - 2}"
+    else:
+        top = max(vs) or 1.0
+        step = w / (len(vs) - 1)
+        pts = " ".join(f"{i * step:.1f},{h - 2 - (v / top) * (h - 4):.1f}" for i, v in enumerate(vs))
+    return Raw(f'<svg class="spark" viewBox="0 0 {w} {h}" width="{w}" height="{h}" role="img" aria-label="{e(desc)}"><title>{e(desc)}</title>'
+               f'<polyline points="{pts}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>')
+
+
+def bars(values: list, labels: list[str], marks: list | None = None, unit: str = "", w: int = 640, h: int = 120) -> Raw:
+    """A bar chart (oldest first), each bar with its label and value on hover; `marks` (for example errors) are drawn in red on top."""
+    vs = _nums(values)
+    if not vs:
+        return Raw('<p class="muted">no data yet</p>')
+    ms = _nums(marks) if marks else [0.0] * len(vs)
+    top = max(vs + ms) or 1.0
+    pad_l, pad_b = 34, 16
+    cw, ch = w - pad_l, h - pad_b
+    bw = cw / len(vs)
+    out = [f'<svg class="chart" viewBox="0 0 {w} {h}" role="img" aria-label="{e(unit)} per day, {len(vs)} days" preserveAspectRatio="none">',
+           f'<text x="0" y="10" class="ax">{int(top)}</text><text x="0" y="{ch}" class="ax">0</text>',
+           f'<line x1="{pad_l}" y1="{ch}" x2="{w}" y2="{ch}" class="axis"/>']
+    for i, (v, m) in enumerate(zip(vs, ms)):
+        x = pad_l + i * bw
+        bh = (v / top) * (ch - 4)
+        tip = f"{labels[i] if i < len(labels) else ''}: {int(v)} {unit}" + (f", {int(m)} errors" if marks else "")
+        out.append(f'<g><title>{e(tip.strip())}</title><rect x="{x + 1:.1f}" y="{ch - bh:.1f}" width="{max(bw - 2, 1):.1f}" height="{max(bh, 0):.1f}" class="bar"/>')
+        if m:
+            mh = (m / top) * (ch - 4)
+            out.append(f'<rect x="{x + 1:.1f}" y="{ch - mh:.1f}" width="{max(bw - 2, 1):.1f}" height="{max(mh, 0):.1f}" class="bar bad"/>')
+        out.append("</g>")
+    if labels:
+        out.append(f'<text x="{pad_l}" y="{h - 3}" class="ax">{e(labels[0])}</text><text x="{w}" y="{h - 3}" class="ax" text-anchor="end">{e(labels[-1])}</text>')
+    out.append("</svg>")
+    return Raw("".join(out))
+
+
+def meter(pct: float | None, warn_at: float, bad_at: float, label: str) -> Raw:
+    """A horizontal bar for a percentage (disk used)."""
+    if pct is None:
+        return Raw('<span class="muted">not sampled</span>')
+    kind = "bad" if pct >= bad_at else "warn" if pct >= warn_at else "ok"
+    return Raw(f'<div class="meter {kind}" role="img" aria-label="{e(label)}: {pct:.0f} %"><span style="width:{min(max(pct, 0), 100):.0f}%"></span></div>')
+
+
+# --- the shell -----------------------------------------------------------------------------------------
 STYLE = """
-:root{--bg:#fff;--fg:#1f2933;--muted:#667;--line:#e4e7eb;--card:#f7f8fa;--good:#1a7f4b;--bad:#b42318;--warn:#a15c07;--link:#0b5cad}
-@media (prefers-color-scheme: dark){:root{--bg:#14171a;--fg:#e6e8eb;--muted:#9aa3ad;--line:#2b3138;--card:#1c2127;--good:#4cc38a;--bad:#ff8a80;--warn:#e5b567;--link:#7db7ff}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
-header{border-bottom:1px solid var(--line);padding:.6rem 1rem;display:flex;gap:1.2rem;flex-wrap:wrap;align-items:center}
-header b{font-size:1.05rem}header .who{margin-left:auto;color:var(--muted)}
-main{max-width:70rem;margin:0 auto;padding:1rem}h1{font-size:1.4rem;margin:.2rem 0 .8rem}h2{font-size:1.1rem;margin:1.6rem 0 .5rem;border-bottom:1px solid var(--line);padding-bottom:.2rem}
+:root{--bg:#fff;--fg:#1f2933;--muted:#5b6672;--line:#e4e7eb;--card:#f6f7f9;--ok:#1a7f4b;--warn:#a15c07;--bad:#b42318;--off:#7b8794;--link:#0b5cad;
+--bad-bg:#fdecea;--warn-bg:#fff4e0;--ok-bg:#e8f6ee;--r:8px;--s1:.4rem;--s2:.8rem;--s3:1.4rem}
+@media (prefers-color-scheme: dark){:root{--bg:#14171a;--fg:#e6e8eb;--muted:#9aa3ad;--line:#2b3138;--card:#1c2127;--ok:#4cc38a;--warn:#e5b567;--bad:#ff8a80;--off:#8a95a1;--link:#7db7ff;
+--bad-bg:#3a1f1d;--warn-bg:#33281a;--ok-bg:#16291f}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;font-variant-numeric:tabular-nums}
+header.top{border-bottom:1px solid var(--line);padding:.5rem 1rem;display:flex;gap:1.2rem;flex-wrap:wrap;align-items:center}
+header.top b{font-size:1.05rem}header.top nav{display:flex;gap:.2rem;flex-wrap:wrap}
+header.top nav a{padding:.35rem .7rem;border-radius:var(--r);text-decoration:none;color:var(--muted)}
+header.top nav a[aria-current]{color:var(--fg);font-weight:600;background:var(--card)}
+header.top .who{margin-left:auto;color:var(--muted);font-size:14px}
+main{max-width:72rem;margin:0 auto;padding:1rem}h1{font-size:1.45rem;margin:.2rem 0 .6rem;display:flex;gap:.7rem;align-items:center;flex-wrap:wrap}
+h2{font-size:1.05rem;margin:0 0 .5rem}section{margin:1.4rem 0}
+.crumbs{color:var(--muted);font-size:14px;margin:.2rem 0}.crumbs a{color:var(--muted)}
 a{color:var(--link)}code,pre{background:var(--card);border-radius:4px;font:13px ui-monospace,Menlo,monospace}code{padding:.05rem .3rem}pre{padding:.6rem;overflow:auto;white-space:pre-wrap;word-break:break-word}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}th,td{padding:.35rem .6rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--muted);font-weight:600;white-space:nowrap}
-.muted{color:var(--muted)}.hint{font-size:13px}.badge{padding:.05rem .45rem;border-radius:999px;border:1px solid currentColor;font-size:13px}
-.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}.box{background:var(--card);border-radius:6px;padding:.6rem .8rem;margin:.6rem 0}
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}th,td{padding:.4rem .6rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--muted);font-weight:600;white-space:nowrap;font-size:13px}
+.muted{color:var(--muted)}time{white-space:nowrap}.hint{font-size:13px}small,.sub{color:var(--muted);font-size:13px;display:block}
+.st{display:inline-flex;align-items:center;gap:.4rem;white-space:nowrap}.st i{width:.62rem;height:.62rem;border-radius:50%;background:var(--off);flex:none}
+.st.ok i{background:var(--ok)}.st.warn i{background:var(--warn)}.st.bad i{background:var(--bad)}
+.chip{padding:.05rem .5rem;border-radius:999px;font-size:12px;background:var(--card);color:var(--muted);white-space:nowrap}
+.chip.warn{background:var(--warn-bg);color:var(--warn)}.chip.bad{background:var(--bad-bg);color:var(--bad)}.chip.ok{background:var(--ok-bg);color:var(--ok)}
+.card,.box{background:var(--card);border-radius:var(--r);padding:.8rem 1rem;margin:0}.card h2{font-size:.95rem;color:var(--muted);font-weight:600}
+.attn{border-radius:var(--r);padding:.7rem 1rem;margin:.6rem 0 1rem;border:1px solid var(--line)}.attn.bad{background:var(--bad-bg);border-color:var(--bad)}.attn.warn{background:var(--warn-bg);border-color:var(--warn)}
+.attn.ok{background:var(--ok-bg);border-color:var(--ok)}.attn h2{margin:0 0 .3rem}.attn ul,.card ul{margin:0;padding-left:0;list-style:none}.attn li{margin:.2rem 0}.attn li .st,.card li .st{margin-right:.5rem}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(9.5rem,1fr));gap:.7rem;margin:.6rem 0 1rem}
+.kpi{background:var(--card);border-radius:var(--r);padding:.6rem .8rem}.kpi .k{color:var(--muted);font-size:13px}.kpi .n{font-size:1.6rem;font-weight:600;line-height:1.2}.kpi .note{font-size:13px;display:flex;gap:.5rem;align-items:center}
+.cols{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:1rem;align-items:start}@media (max-width:56rem){.cols{grid-template-columns:minmax(0,1fr)}}
+.spark{color:var(--link);vertical-align:middle}.chart{width:100%;height:auto;max-height:9rem}.chart .bar{fill:var(--link);opacity:.75}.chart .bar.bad{fill:var(--bad);opacity:1}
+.chart .ax{fill:var(--muted);font-size:10px}.chart .axis{stroke:var(--line)}
+.meter{background:var(--line);border-radius:99px;height:.6rem;overflow:hidden;min-width:6rem}.meter span{display:block;height:100%;background:var(--ok)}.meter.warn span{background:var(--warn)}.meter.bad span{background:var(--bad)}
+.tabs{display:flex;gap:.2rem;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:.4rem 0 1rem}.tabs a{padding:.45rem .8rem;text-decoration:none;color:var(--muted);border-bottom:2px solid transparent}
+.tabs a[aria-current]{color:var(--fg);font-weight:600;border-bottom-color:var(--link)}.tabs .n{background:var(--card);border-radius:999px;padding:0 .45rem;font-size:12px;margin-left:.25rem}
+.filters-row{display:flex;gap:.4rem;flex-wrap:wrap;margin:.4rem 0 .8rem}.fc{padding:.2rem .7rem;border:1px solid var(--line);border-radius:999px;text-decoration:none;color:var(--fg);font-size:14px}.fc.on{background:var(--card);font-weight:600;border-color:var(--muted)}
 form.filters{display:flex;gap:.5rem;flex-wrap:wrap;margin:.5rem 0}form.filters input,form.filters select{padding:.3rem .4rem;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}
-.log{font:13px ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word}.log .err{color:var(--bad)}.log .wrn{color:var(--warn)}
-footer{max-width:70rem;margin:2rem auto;padding:0 1rem;color:var(--muted);font-size:13px}
+.log{font:13px ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word;padding-left:.5rem;border-left:3px solid transparent}.log.err{color:var(--bad);border-left-color:var(--bad)}.log.wrn{color:var(--warn);border-left-color:var(--warn)}
+details.cli{margin:1.6rem 0 .4rem;font-size:14px;color:var(--muted)}details.cli summary{cursor:pointer}details.cli div{margin:.25rem 0 0 1rem}
+details.more summary{cursor:pointer;color:var(--link)}dl.kv{display:grid;grid-template-columns:minmax(8rem,14rem) 1fr;gap:.25rem .8rem;margin:0}dl.kv dt{color:var(--muted)}dl.kv dd{margin:0;word-break:break-word}
+.feed{list-style:none;margin:0;padding:0}.feed li{padding:.3rem 0;border-bottom:1px solid var(--line);font-size:14px}.feed li:last-child{border:0}
+footer{max-width:72rem;margin:2rem auto;padding:0 1rem;color:var(--muted);font-size:13px}
+@media (max-width:40rem){table.stack thead{display:none}table.stack tr{display:block;border-bottom:1px solid var(--line);padding:.35rem 0}
+table.stack td{display:flex;gap:.6rem;justify-content:space-between;border:0;padding:.15rem .2rem;text-align:right}
+table.stack td::before{content:attr(data-label);color:var(--muted);font-size:13px;text-align:left;flex:none}dl.kv{grid-template-columns:1fr}}
 """
 
 
-def page(title: str, who: Who, body: str, active: str = "") -> str:
-    links = [("fleet", "/", "Apps"), ("status", "/status", "Status")] + ([("audit", "/audit", "Audit")] if who.admin else [])
-    nav = "".join(f'<a href="{href}"{" style=\"font-weight:700\"" if name == active else ""}>{label}</a>' for name, href, label in links)
+def nav_links(who: Who) -> list[tuple[str, str, str]]:
+    links = [("overview", "/", "Overview"), ("apps", "/apps", "Apps")]
+    if who.admin:
+        links += [("activity", "/audit", "Activity"), ("platform", "/platform", "Platform")]
+    else:
+        links.append(("status", "/status", "Status"))
+    return links
+
+
+def page(title: str, who: Who, body: str, active: str = "", crumbs: list[tuple[str, str]] | None = None) -> str:
+    nav = "".join(f'<a href="{href}"' + (' aria-current="page"' if name == active else "") + f">{label}</a>" for name, href, label in nav_links(who))
     role = "admin" if who.admin else "signed in"
+    trail = ""
+    if crumbs:
+        trail = '<p class="crumbs">' + " / ".join(f'<a href="{e(h)}">{e(t)}</a>' for h, t in crumbs) + "</p>"
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
             f"<title>{e(title)} · Annex console</title><style>{STYLE}</style></head><body>"
-            f'<header><b>Annex console</b>{nav}<span class="who">{e(who.login)} ({role})</span></header>'
-            f"<main>{body}</main>"
-            '<footer>Read-only: nothing here changes anything. Times are Europe/Ljubljana. An app\'s owner is what its '
-            "annex.yaml says (a claim, not a verified identity yet), so who sees an app rests on that.</footer></body></html>")
+            f'<header class="top"><b>Annex console</b><nav aria-label="Console">{nav}</nav><span class="who">{e(who.login)} ({role})</span></header>'
+            f"<main>{trail}{body}</main>"
+            '<footer>Times are Europe/Ljubljana (log lines are UTC). An app\'s owner is what its annex.yaml says, a claim and not a verified '
+            "identity yet, so who sees an app rests on that.</footer></body></html>")
 
 
-def readonly_note(*commands: str) -> Raw:
-    cmds = " ".join(f"<code>{e(c)}</code>" for c in commands)
-    return Raw(f'<p class="box muted">Read-only. To change something use the CLI, e.g. {cmds}</p>')
-
-
-# --- pages --------------------------------------------------------------------------------------------------
 def forbidden(who: Who, what: str = "this page") -> str:
     return page("Not allowed", who, f"<h1>Not allowed</h1><p>You can't see {e(what)}: it is for its owner and the admins. "
-                "<a href=\"/status\">Status</a> shows whether everything is up.</p>")
+                '<a href="/status">Status</a> shows whether everything is up.</p>')
 
 
 def not_found(who: Who, what: str) -> str:
-    return page("Not found", who, f"<h1>Not found</h1><p>{e(what)}. <a href=\"/\">Back to the apps</a>.</p>")
-
-
-def status_page(who: Who, apps: list[dict], platform: list[dict]) -> str:
-    """Everyone signed in sees this: which apps and platform parts are up. Names and up/down only, like the discovery page."""
-    bad = [a for a in apps + platform if a["state"] in ("down", "error")]
-    head = ('<p class="box good"><b>Everything is up.</b></p>' if not bad else
-            f'<p class="box bad"><b>{len(bad)} thing{"s" if len(bad) != 1 else ""} down.</b> The owners and admins have been told.</p>')
-    body = (f"<h1>Status</h1>{head}"
-            + section("Apps", table(["App", "State", "Detail"], [[a["app"], badge(a["state"]), a.get("detail", "")] for a in apps], "no apps"))
-            + section("Platform", table(["Part", "State", "Detail"], [[p["name"], badge(p["state"]), p.get("detail", "")] for p in platform], "nothing to show")))
-    return page("Status", who, body, "status")
-
-
-def fleet_page(who: Who, rows: list[dict], platform_incidents: list[dict], host: dict | None) -> str:
-    if not rows and not who.admin:
-        body = ("<h1>Apps</h1><p>You don't own any apps, so there is nothing to show here. "
-                '<a href="/status">Status</a> shows whether everything is up.</p>')
-        return page("Apps", who, body, "fleet")
-    trs = []
-    for r in rows:
-        flags = " ".join(str(badge(f)) for f in r["flags"])
-        trs.append([link(f"/apps/{r['app']}", r["app"]), r["owner"] or "unknown", badge(r["health"]),
-                    f"{r['users_7d']} {r['trend']}" if r["users_7d"] is not None else "", r["open_errors"] or "",
-                    r["last_deploy"], Raw(flags), r["warnings"] or ""])
-    body = ["<h1>" + ("All apps" if who.admin else "Your apps") + "</h1>",
-            table(["App", "Owner", "Health", "Users 7d", "Open errors", "Last deploy", "Flags", "Warnings"], trs, "no apps")]
-    if who.admin:
-        body.append(section("Platform", table(["Subject", "Since", "What"], [[i["subject"], i["opened_at"], i["what"]] for i in platform_incidents],
-                                             "no open platform incidents")))
-        if host:
-            body.append(section("Host", table(["Disk used", "Memory available"],
-                                              [[f"{host['disk_used_pct']:.0f} %" if host.get("disk_used_pct") is not None else "?",
-                                                f"{host['mem_available_mb']:.0f} MB" if host.get("mem_available_mb") is not None else "?"]]),
-                                "The newest backup's age is an alert (platform:backup) when it is overdue; it isn't measured here."))
-    body.append(readonly_note("annex list", "annex status <app>"))
-    return page("Apps", who, "".join(body), "fleet")
-
-
-def injected_names(m: dict) -> list[str]:
-    """The names (never values) of the variables Annex puts in the app's environment, from its manifest."""
-    names = {"ANNEX_APP_NAME", "ANNEX_BASE_URL", "LOG_LEVEL"}
-    if m.get("type") in ("web", "web+job"):
-        names.add("PORT")
-    if m.get("postgres"):
-        names.add("DATABASE_URL")
-    if m.get("files"):
-        names.add("DATA_DIR")
-    if m.get("views"):
-        names |= {"ANNEX_GATEWAY_URL", "ANNEX_GATEWAY_TOKEN"}
-    if m.get("notify_email") or m.get("notify_slack"):
-        names |= {"ANNEX_OPS_URL", "ANNEX_OPS_TOKEN"}
-    if m.get("webhooks"):
-        names |= {"ANNEX_HOOKS_URL", "ANNEX_HOOK_TOKEN"}
-    names |= set(m.get("secrets") or [])
-    return sorted(names)
-
-
-def config_rows(m: dict) -> list[list]:
-    j = lambda xs: ", ".join(map(str, xs)) if xs else "none"  # noqa: E731
-    return [["type", m.get("type")], ["description", m.get("description") or ""], ["port / health check", f"{m.get('port')} {m.get('healthcheck') or ''}".strip()],
-            ["storage", j([k for k in ("postgres", "files") if m.get(k)])], ["gateway views", j(m.get("views"))],
-            ["schedule", j([f"{x['name']} ({x['cron']})" for x in m.get("schedule") or []])],
-            ["memory", f"{m.get('memory_mb', 256)} MB"], ["email", "allowed" if m.get("notify_email") else "no"],
-            ["Slack channels", j(m.get("notify_slack"))], ["alerts to", j(m.get("alerts_to") or ["owner"])],
-            ["webhooks", j([f"{w['name']} ({w['verify']})" for w in m.get("webhooks") or []])],
-            ["env (set in annex.yaml)", j([f"{k}={v}" for k, v in sorted((m.get("env") or {}).items())])],
-            ["secrets (names only)", j(m.get("secrets"))], ["injected variables (names only)", j(injected_names(m))]]
-
-
-def app_page(who: Who, d: dict) -> str:
-    app = d["app"]
-    o = [f"<h1>{e(app)}</h1>",
-         f'<p class="muted">Owner: {e(d["owner"] or "unknown")} · live release: {e("r%s" % d["live"] if d["live"] else "none recorded")} · '
-         f'<a href="/apps/{e(app)}/logs">Logs</a></p>']
-    health = d["health"]
-    inc = d["incidents"]
-    status = [f"<p>Health check: {badge(health['state'])} {e(health.get('detail', ''))}</p>"]
-    status.append(table(["Opened", "Subject", "Signals"], [[i["opened_at"], i["subject"], ", ".join(f"{k}: {v}" if v else k for k, v in i["signals"].items())] for i in inc],
-                        "no open incident"))
-    if d["jobs"]:
-        status.append(table(["Job", "Last run", "Result", "Took", "Error"], [[j["job"], j["last_run"], badge("ok" if j["ok"] else "failed"),
-                            f"{j['duration_ms']} ms" if j["duration_ms"] is not None else "", j["error"] or ""] for j in d["jobs"]]))
-    o.append(section("Status", Raw("".join(map(str, status))), f"CLI: {e('annex status ' + app)}"))
-    if d["warnings"]:
-        o.append(section("Warnings", Raw("<ul>" + "".join(f"<li>{e(w)}</li>" for w in d["warnings"]) + "</ul>")))
-    rel_rows = []
-    for r in d["releases"]:
-        what = link(f"/apps/{app}/logs?release={r['release']}", "logs")
-        rel_rows.append([f"r{r['release']}", badge("live" if r["live"] else r["result"]), r["deployed_at"], r["deployed_by"] or "", r["via"] or "",
-                         r["git"] or "", r["note"] or "", what])
-    o.append(section("Releases", table(["Release", "Result", "When", "By", "Via", "Git", "Note", ""], rel_rows, "no release history (deployed before releases were recorded)"),
-                     f"CLI: {e('annex releases ' + app)}, {e('annex rollback ' + app)}"))
-    u = d["usage"]
-    if u and u.get("app"):
-        a = u["app"]
-        us = [f"<p>{a['users_7d']} user(s) in the last 7 days ({e(a['trend'])}), {a['users_30d']} in 30 days, {a['requests_7d']} requests, "
-              f"{a['errors_7d']} server errors, p95 {a['p95_7d'] if a['p95_7d'] is not None else '-'} ms. Signal: {e(a['signal'] or 'none')}.</p>",
-              f"<p class=muted>Last 4 complete weeks (users): {' → '.join('-' if a[k] is None else str(a[k]) for k in ('week1', 'week2', 'week3', 'week4'))}</p>"]
-        us.append(str(table(["Day", "Users", "Requests", "Errors", "p95 ms"], [[x["day"], x["users"], x["requests"], x["errors"], x["p95_ms"] if x["p95_ms"] is not None else ""] for x in u["days"][:14]],
-                            "no daily numbers yet")))
-        if who.admin and u.get("by_user") is not None:
-            us.append("<p class=box>Per person (last 30 days). <b>Personal data: for admins, don't share it.</b></p>")
-            us.append(str(table(["Login", "Requests"], [[x["login"], x["requests"]] for x in u["by_user"]], "nobody")))
-        o.append(section("Usage", Raw("".join(us)), f"CLI: {e('annex usage ' + app)}"))
-    else:
-        o.append(section("Usage", Raw("<p class=muted>No usage recorded yet.</p>")))
-    errs = d["errors"]
-    o.append(section("Errors", table(["State", "Kind", "What", "Seen", "Last", "Release", "User", "Request"],
-                                     [[badge(g["state"]), g["kind"], g["title"], g["count"], g["last_seen"][5:16].replace("T", " ") + "Z",
-                                       f"r{g['first_release']}" if g["first_release"] == g["last_release"] else f"r{g['first_release']}–r{g['last_release']}",
-                                       g["user"] or "", link(f"/apps/{app}/logs?request={g['request_id']}", g["request_id"]) if g["request_id"] else ""] for g in errs],
-                                     "no errors seen"), f"A new kind of error emails the owner once. CLI: {e('annex errors ' + app)}"))
-    o.append(section("Config", table(["", ""], [[a, b] for a, b in config_rows(d["manifest"])] if d["manifest"] else [],
-                                     "no manifest recorded"), "The live release's annex.yaml as deployed. Secret and token values are never shown (they aren't here)."))
-    o.append(readonly_note(f"annex deploy <folder>", f"annex rollback {app}", f"annex run {app} <job>"))
-    return page(app, who, "".join(map(str, o)), "fleet")
-
-
-def log_line(r: dict) -> str:
-    cls = " err" if r["level"] == "error" else " wrn" if r["level"] == "warn" else ""
-    fields = r.get("fields") or {}
-    extra = " ".join(f"{k}={v if isinstance(v, str) and v.replace('.', '').replace('_', '').replace('-', '').isalnum() else _j(v)}"
-                     for k, v in fields.items() if k != "stack")
-    tag = f"[{r['container']}] " if r["container"] == "gateway" or r["container"].startswith("job:") else ""
-    rel = f"r{r['release']} " if r["release"] is not None else ""
-    rid = f" request_id={r['request_id']}" if r["request_id"] else ""
-    text = f"{r['ts'][:23]}Z {rel}{tag}{(r['level'] or '').ljust(5)} {r['msg']}{rid}{('  ' + extra) if extra else ''}"
-    return f'<div class="log{cls}">{e(text)}</div>'
-
-
-def _j(v) -> str:
-    import json
-    return json.dumps(v, ensure_ascii=False, default=str)
-
-
-def logs_page(who: Who, app: str, rows: list[dict], f: dict, older: str | None) -> str:
-    sel = lambda cur, opts: "".join(f'<option value="{o}"{" selected" if o == cur else ""}>{o or "any"}</option>' for o in opts)  # noqa: E731
-    form = (f'<form class="filters" method="get" action="/apps/{e(app)}/logs">'
-            f'<select name="level">{sel(f.get("level") or "", ["", "debug", "info", "warn", "error"])}</select>'
-            f'<input name="release" placeholder="release, e.g. r4" value="{e(f.get("release") or "")}" size="12">'
-            f'<input name="grep" placeholder="text" value="{e(f.get("grep") or "")}">'
-            f'<input name="request" placeholder="request id" value="{e(f.get("request") or "")}" size="18">'
-            f'<select name="since">{sel(f.get("since") or "", ["", "1h", "6h", "1d", "7d"])}</select>'
-            f'<select name="source">{sel(f.get("source") or "app", ["app", "gateway", "all"])}</select><button>Search</button></form>')
-    body = [f'<h1>{e(app)} · logs</h1><p class="muted"><a href="/apps/{e(app)}">Back to {e(app)}</a> · stored for 14 days, also after a release was rolled back or a container replaced</p>', form]
-    body.append("".join(log_line(r) for r in rows) if rows else '<p class="muted">no lines match</p>')
-    if older:
-        body.append(f'<p><a href="{e(older)}">Older lines</a></p>')
-    cmd = "annex logs " + app + "".join(f" --{k} {v}" for k, v in f.items() if v and k not in ("source",) and not (k == "since" and not v))
-    body.append(readonly_note(cmd))
-    return page(f"{app} logs", who, "".join(body), "fleet")
-
-
-def audit_page(who: Who, rows: list[dict], f: dict) -> str:
-    """The audit trail (admins only): who did what, to which app, which data it read, what was sent."""
-    sel = lambda cur, opts: "".join(f'<option value="{o}"{" selected" if o == cur else ""}>{o or "any"}</option>' for o in opts)  # noqa: E731
-    form = (f'<form class="filters" method="get" action="/audit"><input name="app" placeholder="app" value="{e(f.get("app") or "")}" size="14">'
-            f'<select name="action">{sel(f.get("action") or "", ["", "deploy", "rollback", "secret", "app", "user", "signin", "gateway", "email", "slack", "webhook", "data"])}</select>'
-            f'<input name="actor" placeholder="actor" value="{e(f.get("actor") or "")}" size="16">'
-            f'<select name="since">{sel(f.get("since") or "", ["", "1h", "1d", "7d", "30d", "365d"])}</select><button>Show</button></form>')
-
-    def detail(d: dict) -> str:
-        return " ".join(f"{k}={_j(x) if not isinstance(x, str) else x}" for k, x in (d or {}).items())
-
-    trs = [[r["ts"][:19].replace("T", " ") + "Z", r["actor"] or "", r["app"] or "", badge(r["action"]) if r["action"].endswith(("failed", "rejected")) else r["action"],
-            detail(r["details"])] for r in rows]
-    body = ["<h1>Audit trail</h1>",
-            '<p class="muted">Who did what, to which app, which data it read, what was sent. Kept a year. For admins: it holds logins and the recipients of emails. '
-            "Times are UTC. A CLI actor is user@host as the CLI reports it (not verified yet, D58); gateway reads are summed per app, view and hour.</p>",
-            form, table(["When", "Actor", "App", "Action", "Details"], trs, "nothing matches"),
-            readonly_note("annex audit --since 7d", "annex audit --app <app> --action deploy")]
-    return page("Audit", who, "".join(map(str, body)), "audit")
+    return page("Not found", who, f'<h1>Not found</h1><p>{e(what)}. <a href="/apps">Back to the apps</a>.</p>', "apps")

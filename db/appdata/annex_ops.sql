@@ -12,7 +12,8 @@ SELECT 'CREATE DATABASE annex_ops OWNER annex_ops' WHERE NOT EXISTS (SELECT FROM
 \gexec
 REVOKE CONNECT ON DATABASE annex_ops FROM PUBLIC;
 GRANT CONNECT ON DATABASE annex_ops TO annex_ops;
--- Metabase's read-only usage role (M1.4): what it may read is granted at the end of this file
+-- Metabase's read-only usage role (M1.4; retired in M2.9: the console shows usage and nothing connects as this role any more.
+-- Kept until a human has removed Metabase's "Annex usage" connection and dropped it: docs/setup.md, step 8)
 DO $$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'metabase_usage') THEN CREATE ROLE metabase_usage LOGIN; END IF;
 END $$;
@@ -315,3 +316,17 @@ CREATE TABLE IF NOT EXISTS annex_ops.health_checks (
 CREATE INDEX IF NOT EXISTS health_checks_app_ts ON annex_ops.health_checks (app, ts DESC);
 CREATE INDEX IF NOT EXISTS health_checks_ts ON annex_ops.health_checks (ts);
 GRANT SELECT ON annex_ops.health_checks TO annex_console;
+
+-- --- M2.9: host samples ----------------------------------------------------------------------------------------
+-- annex-ops measures the VM every host_sample_s (ops/annex_ops/host.py) and stores one sample every 5 minutes, kept 30 days
+-- (about 8,600 rows), so the console's Platform page can show the newest numbers and a 7-day trend. A value that couldn't
+-- be measured is NULL. The alert engine reads its own samples, not this table.
+CREATE TABLE IF NOT EXISTS annex_ops.host_samples (
+  ts               timestamptz NOT NULL DEFAULT now(),
+  disk_used_pct    real,
+  disk_free_gb     real,
+  mem_available_mb real,
+  backup_at        timestamptz
+);
+CREATE INDEX IF NOT EXISTS host_samples_ts ON annex_ops.host_samples (ts);
+GRANT SELECT ON annex_ops.host_samples TO annex_console;

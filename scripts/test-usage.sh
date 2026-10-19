@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # M1.4 acceptance checks for usage stats, run from the Mac through the SSH tunnel:
 # a scripted session with `sam` and `cm` across three apps (two static ones and annex-selftest) must show up with the same numbers in `annex usage`,
-# the discovery tiles and (extras on) Metabase, and match the script; requests that must not count don't;
+# the discovery tiles and the console's Usage tab, and match the script; requests that must not count don't;
 # nothing personal leaks; raw rows are deleted after 30 days; a restart neither loses nor repeats rows; the
 # weekly digest flags a dormant app. Deploys two throwaway static apps (usage-probe, usage-idle) and annex-selftest, and removes them.
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/testlib.sh"
 use_tunnel
 
-MB_URL=$(setting ANNEX_URL_METABASE)
 MAIL_URL=$(setting ANNEX_URL_MAIL)
 PATTERN=$(setting ANNEX_HOST_PATTERN)
 SUFFIX=${ANNEX_PUBLIC_PORT:+:$ANNEX_PUBLIC_PORT}
@@ -100,34 +99,19 @@ has "Homepage lists the customapi widget for $LOOKUP" "\"service_name\":\"$LOOKU
 has "  ...with the 'Users 7d' mapping" '"label":"Users 7d"' "$services"
 proxied=$(as cm "$HOME_URL/api/services/proxy?type=customapi&group=Tools&service=$LOOKUP&index=0")
 expect "Homepage serves the tile data (users_7d)" "$(field $LOOKUP users_7d)" "$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["users_7d"])' "$proxied")"
-has "the Usage tile is on the discovery page" '"name":"Usage"' "$services"
+hasnt "the retired Usage tile (M2.9) is not on the discovery page" '"name":"Usage"' "$services"
 
-if vm "docker ps --format '{{.Names}}' | grep -qx annex-metabase-1"; then
-  mbpw=$(password kaldi-admin)
-  mbs=$(as kaldi-admin -H 'Content-Type: application/json' --data "{\"username\":\"admin@annex.example\",\"password\":\"$mbpw\"}" "$MB_URL/api/session" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
-  cards=$(as kaldi-admin -H "X-Metabase-Session: $mbs" "$MB_URL/api/card")
-  cid=$(python3 -c 'import json,sys; print(next(c["id"] for c in json.loads(sys.argv[1]) if c["name"].startswith("Annex usage: last 7 days")))' "$cards" 2>/dev/null || true)
-  rows=$(as kaldi-admin -H "X-Metabase-Session: $mbs" -H 'Content-Type: application/json' --data '{}' "$MB_URL/api/card/${cid:-0}/query")
-  for app in $LOOKUP $PROBE $IDLE; do
-    expect "Metabase's per-app card equals annex usage for $app (users, requests)" \
-      "$(python3 -c 'import json,sys; r=next(r for r in json.loads(sys.argv[1]) if r["app"]==sys.argv[2]); print(r["users_7d"], r["requests_7d"])' "$usage_json" "$app")" \
-      "$(python3 -c '
-import json, sys
-d = json.loads(sys.argv[1])["data"]; cols = [c["name"] for c in d["cols"]]
-r = next((dict(zip(cols, row)) for row in d["rows"] if row[0] == sys.argv[2]), {})
-print(r.get("users_7d"), r.get("requests_7d"))' "$rows" "$app")"
-  done
-else
-  echo "  (skipped the Metabase checks: the extras profile is off)"
-fi
+CON=$(setting ANNEX_URL_CONSOLE)
+page=$(as kaldi-admin "$CON/apps/$LOOKUP/usage" | sed 's/<style>.*<\/style>//; s/<[^>]*>/ /g' | tr -s ' \n')
+for app in $LOOKUP; do
+  want=$(python3 -c 'import json,sys; r=next(r for r in json.loads(sys.argv[1]) if r["app"]==sys.argv[2]); print(f'"'"'{r["users_7d"]} user(s) in the last 7 days ({r["trend"]}), {r["users_30d"]} in 30 days, {r["requests_7d"]} requests'"'"')' "$usage_json" "$app")
+  has "the console's Usage tab for $app says what annex usage says (users, trend, requests)" "$want" "$page"
+done
+has "  ...and draws its charts (inline SVG, no script)" '<svg class="chart"' "$(as kaldi-admin "$CON/apps/$LOOKUP/usage")"
 
 echo "Privacy"
 expect "no stored path has a query string" 0 "$(sql "SELECT count(*) FROM annex_ops.requests WHERE path LIKE '%?%'")"
 expect "cm's 2 requests for /?q=novak are stored as plain /" "$((B_L_ROOT + 2))" "$(sql "SELECT count(*) FROM annex_ops.requests WHERE app = '$LOOKUP' AND login = 'cm' AND path = '/'")"
-denied=$(vm "docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops 2>&1" <<<"SET ROLE metabase_usage; SELECT count(*) FROM annex_ops.requests;")
-has "metabase_usage is denied on annex_ops.requests" "permission denied" "$denied"
-allowed=$(vm "docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops -Atc 'SET ROLE metabase_usage' -c 'SELECT count(*) FROM annex_ops.usage_apps' 2>&1")
-has "metabase_usage can read usage_apps" "$(ctl usage | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" "$allowed"
 if grep -qE '"(login|logins)"' <<<"$usage_json" || grep -qE '"(sam|cm|kaldi-admin)"' <<<"$usage_json"; then bad "annex usage (no --by-user) shows no logins" "found one"; else ok "annex usage (no --by-user) shows no logins"; fi
 all_tiles="$(tile_json $LOOKUP)$(tile_json $PROBE)$(tile_json $IDLE)"
 if grep -qE '(sam|cm|kaldi-admin)' <<<"$all_tiles"; then bad "tile JSON shows no logins" "$all_tiles"; else ok "tile JSON shows no logins"; fi
