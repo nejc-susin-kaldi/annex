@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SSH tunnel from the Mac to the VM's Traefik: localhost:<port> -> annex:443
 # (or :80 in upstream mode). Port defaults to ANNEX_PUBLIC_PORT, else 8443.
-# Usage: scripts/tunnel.sh up|down|status
+# Usage: scripts/tunnel.sh up|down|status   (no argument: status)
 source "$(dirname "$0")/lib.sh"
 PORT=${ANNEX_PUBLIC_PORT:-8443}
 TARGET=443
@@ -17,6 +17,11 @@ case "${1:-status}" in
   down)
     ssh -S "$SOCK" -O exit "$SSH_HOST" 2>/dev/null || true ;;
   status)
-    ssh -S "$SOCK" -O check "$SSH_HOST" ;;
+    if ssh -S "$SOCK" -O check "$SSH_HOST" 2>/dev/null; then
+      echo "tunnel: up (127.0.0.1:$PORT -> $SSH_HOST:$TARGET)"
+    else
+      echo "tunnel: down. Start it with: scripts/tunnel.sh up"
+      exit 1
+    fi ;;
   *) echo "usage: $0 up|down|status" >&2; exit 2 ;;
 esac
