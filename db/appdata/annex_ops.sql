@@ -1,9 +1,14 @@
 -- The annex-ops service's database (apps' email/Slack grants and the send log).
 -- Idempotent: scripts/push.sh applies it on every push, as postgres, with
---   psql -v ops_pw=<APPDATA_DB_OPS_PASSWORD> -v usage_pw=<APPDATA_DB_METABASE_USAGE_PASSWORD>
---        -v hooks_pw=<APPDATA_DB_HOOKS_PASSWORD> -v console_pw=<APPDATA_DB_CONSOLE_PASSWORD> -d postgres -f -
+--   psql -d postgres -f -
+-- with APPDATA_DB_OPS_PASSWORD, APPDATA_DB_METABASE_USAGE_PASSWORD, APPDATA_DB_HOOKS_PASSWORD and
+-- APPDATA_DB_CONSOLE_PASSWORD in psql's environment (read by \getenv below; D80: no password on a command line).
 -- It lives here and not in init/, because init/ only runs on a fresh database.
 -- Later milestones append their tables to this file.
+\getenv ops_pw APPDATA_DB_OPS_PASSWORD
+\getenv usage_pw APPDATA_DB_METABASE_USAGE_PASSWORD
+\getenv hooks_pw APPDATA_DB_HOOKS_PASSWORD
+\getenv console_pw APPDATA_DB_CONSOLE_PASSWORD
 DO $$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'annex_ops') THEN CREATE ROLE annex_ops LOGIN; END IF;
 END $$;
