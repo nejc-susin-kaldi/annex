@@ -116,7 +116,8 @@ services:
       LOG_TARGETS: stdout
       ANNEX_CONFIG_HASH: ${ANNEX_CONFIG_HASH_HOMEPAGE}
     volumes:
-      - ./config/homepage:/app/config
+      - ./config/homepage:/app/config:ro
+    # socket-ro stays (D80): deployed apps' tiles come from their Docker labels, which only the Docker provider reads
     networks: [platform, socket-ro]
     mem_limit: 256m
     labels:
