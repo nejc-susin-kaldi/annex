@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from hashlib import md5
 from typing import Callable
 
-from . import config, db, docker_api, engine, follow_logs, logstore, watch_docker
+from . import config, db, docker_api, engine, follow_logs, logstore, threads, watch_docker
 from .errors import OpsError
 
 LEVELS = ("debug", "info", "warn", "error")
@@ -446,6 +446,23 @@ class Shipper(threading.Thread):
         self.q: queue.Queue = queue.Queue()
         self.followers: dict[str, follow_logs.Follower] = {}
         self.handlers: dict[str, ContainerHandler] = {}
+        self.inputs: dict[str, object] = {}  # cid -> the Seen/Start that started its follower (to start another)
+        self.last_revive = 0.0
+
+    def status(self) -> dict:
+        """Followers and the inputs waiting for the shipper (/healthz)."""
+        return {"followers": len(self.followers), "waiting": self.q.qsize()}
+
+    def revive(self) -> None:
+        """A follower that ended without being stopped (it shouldn't: Follower.run catches everything) is started again
+        from its saved cursor. Checked every few seconds; a failed start is tried again at the next check."""
+        if time.monotonic() - self.last_revive < 5:
+            return
+        self.last_revive = time.monotonic()
+        for cid, f in list(self.followers.items()):
+            if not f.is_alive() and not f.stopping.is_set() and cid in self.inputs:
+                log(f"follower {f.key} had ended; starting it again from its cursor")
+                self.start_for(self.inputs[cid])
 
     def submit(self, inp) -> None:
         """The watcher's inputs (called from its thread: never blocks). Only containers coming and going matter."""
@@ -456,12 +473,15 @@ class Shipper(threading.Thread):
 
     def run(self) -> None:
         last_drops = 0.0
+        threads.register(self.name, 60)  # stop() waits up to 15 s for a follower
         while True:
+            threads.beat(self.name)
             try:
                 inp = self.q.get(timeout=1)
             except queue.Empty:
                 inp = None
             try:
+                self.revive()
                 if isinstance(inp, engine.Destroy):
                     self.stop(inp.cid)
                 elif inp is not None:
@@ -478,7 +498,7 @@ class Shipper(threading.Thread):
             if self.followers[inp.cid].is_alive():
                 self.followers[inp.cid].poke()  # restarted: ask again now
                 return
-            self.followers.pop(inp.cid)  # it died (a bug, not a Docker hiccup): start another from the cursor
+            # it died (a bug, not a Docker hiccup): start another from the cursor, replacing it once that works
         try:
             info = docker_api.inspect(inp.cid)
         except (docker_api.DockerError, OSError):
@@ -493,12 +513,13 @@ class Shipper(threading.Thread):
         f = follow_logs.Follower(inp.cid, handler, self.store, key=ship_key(name, inp.cid), exact=True,
                                  before_save=self.sink.flush,
                                  start_ns=started_ns(info, config.log_settings().log_retention_days))
-        self.followers[inp.cid], self.handlers[inp.cid] = f, handler
+        self.followers[inp.cid], self.handlers[inp.cid], self.inputs[inp.cid] = f, handler, inp
         f.start()
 
     def stop(self, cid: str) -> None:
         f = self.followers.pop(cid, None)
         self.handlers.pop(cid, None)
+        self.inputs.pop(cid, None)
         if f is None:
             return
         f.stop()
@@ -521,7 +542,9 @@ class Keeper(threading.Thread):
 
     def run(self) -> None:
         last = 0.0
+        threads.register(self.name, 120)  # a cycle can drop partitions
         while True:
+            threads.beat(self.name)
             try:
                 if time.time() - last >= config.log_settings().log_housekeeping_s:
                     last = time.time()

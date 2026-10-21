@@ -127,3 +127,13 @@ def test_a_result_from_before_the_container_started_is_not_current():
     assert h.stale_for({"ts": 50.0, "ok": True, "error": None}, 100.0)          # about the container that was replaced
     assert not h.stale_for({"ts": 150.0, "ok": True, "error": None}, 100.0)
     assert not h.stale_for({"ts": 50.0, "ok": True, "error": None}, None)       # start time unknown: use what there is
+
+
+def test_ops_is_a_platform_check_that_is_up_on_a_200():
+    ts = h.targets([], "https://home.annex.home.arpa/", "http://ops:8000/healthz")
+    ops = ts[-1]
+    assert (ops.subject, ops.name, ops.url, ops.kind) == ("platform:ops", "_ops", "http://ops:8000/healthz", "platform")
+    assert [t.subject for t in h.targets([], "", "")] == []          # no URL, no check
+    assert h.judge("platform", 200) and not h.judge("platform", 503) and not h.judge("platform", 302) and not h.judge("platform", None)
+    assert h.explain("platform", 503, None).startswith("got HTTP 503, want 200") and "thread" in h.explain("platform", 503, None)
+    assert h.PLATFORM_CHECKS == {"_front-door": "platform:front-door", "_ops": "platform:ops"}

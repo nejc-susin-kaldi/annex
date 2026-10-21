@@ -121,7 +121,7 @@ def rel_time(value, now: datetime | None = None) -> Raw:
 # --- states: one scheme everywhere ---------------------------------------------------------------------
 STATES = {"up": "ok", "ok": "ok", "live": "ok", "good": "ok",
           "unknown": "warn", "warn": "warn", "warning": "warn", "dormant": "warn",
-          "down": "bad", "failed": "bad", "error": "bad", "active": "bad", "bad": "bad", "rejected": "bad",
+          "down": "bad", "dead": "bad", "stale": "bad", "unreachable": "bad", "failed": "bad", "error": "bad", "active": "bad", "bad": "bad", "rejected": "bad",
           "quiet": "off", "none": "off", "off": "off", "superseded": "off", "graduation": "off"}
 
 

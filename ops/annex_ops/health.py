@@ -20,11 +20,14 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
-from . import config, db, docker_api, engine
+from . import config, db, docker_api, engine, threads
 from .errors import OpsError
 
 FRONT_DOOR = "platform:front-door"
 FRONT_DOOR_NAME = "_front-door"  # the `app` column of its results
+OPS = "platform:ops"  # annex-ops's own /healthz (a dead thread is a 503, D81)
+OPS_NAME = "_ops"
+PLATFORM_CHECKS = {FRONT_DOOR_NAME: FRONT_DOOR, OPS_NAME: OPS}  # `app` column -> subject
 RETENTION_DAYS = 7
 MIN_FRESH_S = 180  # a result older than this (and three intervals) isn't current: the checker isn't running
 
@@ -34,7 +37,7 @@ class Target:
     subject: str   # app:<name> or platform:front-door: what the engine calls it
     name: str      # the `app` column of its results
     url: str
-    kind: str      # app | front-door
+    kind: str      # app | front-door | platform (up on a 200)
 
 
 def log(msg: str) -> None:
@@ -42,8 +45,8 @@ def log(msg: str) -> None:
 
 
 # --- pure ------------------------------------------------------------------------------------------
-def targets(containers: list[dict], frontdoor_url: str) -> list[Target]:
-    """One target per web app (a container with a health-check label and a port label), plus the front door.
+def targets(containers: list[dict], frontdoor_url: str, ops_url: str = "") -> list[Target]:
+    """One target per web app (a container with a health-check label and a port label), plus the front door and ops itself.
     Job-only apps have no web page and no check: ops watches their jobs instead."""
     out = []
     for c in containers:
@@ -55,6 +58,8 @@ def targets(containers: list[dict], frontdoor_url: str) -> list[Target]:
     out.sort(key=lambda t: t.name)
     if frontdoor_url:
         out.append(Target(FRONT_DOOR, FRONT_DOOR_NAME, frontdoor_url, "front-door"))
+    if ops_url:
+        out.append(Target(OPS, OPS_NAME, ops_url, "platform"))
     return out
 
 
@@ -70,7 +75,8 @@ def explain(kind: str, status: int | None, error: str | None) -> str | None:
     if status is None:
         return (error or "no answer")[:200]
     want = 302 if kind == "front-door" else 200
-    return f"got HTTP {status}, want {want}" + (" (the login redirect)" if want == 302 else "")
+    return f"got HTTP {status}, want {want}" + (" (the login redirect)" if want == 302 else
+                                                " (a thread of annex-ops is dead or stuck: `ctl health` lists them)" if kind == "platform" else "")
 
 
 class Debounce:
@@ -161,7 +167,7 @@ def latest(names: list[str] | None = None) -> dict[str, dict]:
     with db.connect() as conn:
         rows = conn.execute("SELECT DISTINCT ON (app) app, extract(epoch FROM ts), ok, ms, error FROM annex_ops.health_checks "
                             "WHERE ts > now() - interval '1 hour' ORDER BY app, ts DESC").fetchall()
-    return {(FRONT_DOOR if a == FRONT_DOOR_NAME else f"app:{a}"): {"ts": float(ts), "ok": ok, "ms": ms, "error": err}
+    return {PLATFORM_CHECKS.get(a) or f"app:{a}": {"ts": float(ts), "ok": ok, "ms": ms, "error": err}
             for a, ts, ok, ms, err in rows if names is None or a in names}
 
 
@@ -197,7 +203,7 @@ class Checker(threading.Thread):
             self.submit(engine.HealthState(t.subject, d.state, "" if not d.state else "the health check was failing before annex-ops restarted"))
 
     def round(self, tuning) -> int:
-        ts = targets(docker_api.containers(), config.FRONTDOOR_URL)
+        ts = targets(docker_api.containers(), config.FRONTDOOR_URL, config.OPS_URL + "/healthz")
         known = {t.subject for t in ts}
         for gone in [s for s in self.debounce if s not in known]:
             del self.debounce[gone]
@@ -214,8 +220,10 @@ class Checker(threading.Thread):
         return len(ts)
 
     def run(self) -> None:
+        threads.register(self.name, 90)
         while True:
             tuning = config.tuning()
+            threads.beat(self.name, max(1.0, tuning.check_interval_s) + 30)  # sleep plus a slow round
             try:
                 self.round(tuning)
                 if time.time() - self.last_housekeeping > 3600:

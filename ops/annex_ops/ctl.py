@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from . import audit, config, db, digest, directory, errors_run, hooks_store, incidents, logship, logstore, sends, usage
+from . import audit, config, db, digest, directory, errors_run, hooks_store, incidents, logship, logstore, sends, threads, usage
 from .errors import OpsError
 
 
@@ -178,13 +178,22 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "health":
             from . import health
             now, interval = time.time(), config.tuning().check_interval_s
-            data, cols = {k: {**health.state_of(r, now, interval), "ms": r["ms"], "age_s": round(now - r["ts"])} for k, r in sorted(health.latest().items())}, []
+            data = {k: {**health.state_of(r, now, interval), "ms": r["ms"], "age_s": round(now - r["ts"])} for k, r in sorted(health.latest().items())}
+            # annex-ops's own threads (D81), in the same shape: `thread:<name>` -> state ok | stale | dead
+            live = threads.fetch(config.OPS_SELF_URL)
+            if "unreachable" in live:
+                data["thread:_ops"] = {"state": "unreachable", "detail": live["unreachable"]}
+            for t in live.get("threads", []):
+                data[f"thread:{t['name']}"] = {"state": t["state"], "age_s": round(t["age_s"]), "period_s": round(t["period_s"])}
+            cols = []
         elif a.cmd == "audit":
             data, cols = audit.timeline(a.app, parse_since(a.since) if a.since else None, a.action, a.actor, a.limit), []
         elif a.cmd == "logs-drain":
             data, cols = logship.drain(a.container, a.timeout), []
         elif a.cmd == "logs-stats":
-            data, cols = logstore.stats(), []
+            live = threads.fetch(config.OPS_SELF_URL)  # the buffers live in the running annex-ops, not in this process
+            data, cols = {**logstore.stats(), "sink": live.get("queues", {}).get("log-sink") or live.get("unreachable"),
+                          "queues": live.get("queues") or live.get("unreachable")}, []
         elif a.cmd == "rollup":
             data, cols = usage.rollup(), []
         elif a.cmd == "host":

@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import auth, config, db, email, health, incidents, sends, slack, usage
+from . import auth, config, db, email, health, incidents, sends, slack, threads, usage
 from .errors import OpsError
 
 
@@ -85,12 +85,18 @@ async def _json_body(request: Request) -> object:
 
 @app.get("/healthz")
 def healthz():
+    """The database answers and every background thread is alive and recently active (threads.py, D81). 503 otherwise,
+    with the thread table and the queue depths either way: the health checker, `ctl` and the console read them."""
+    report = threads.report() if config.WATCHERS else {"threads_ok": True, "threads": [], "queues": {}}
     try:
         with db.connect() as conn:
             conn.execute("SELECT 1")
     except OpsError as e:
-        return JSONResponse({"ok": False, "error": e.message}, status_code=503)
-    return {"ok": True}
+        return JSONResponse({"ok": False, "error": e.message, **report}, status_code=503)
+    if not report["threads_ok"]:
+        bad = [f"{t['name']} ({t['state']})" for t in report["threads"] if t["state"] != "ok"]
+        return JSONResponse({"ok": False, "error": "a thread is not running: " + ", ".join(bad), **report}, status_code=503)
+    return {"ok": True, **report}
 
 
 @app.get("/v1/me")

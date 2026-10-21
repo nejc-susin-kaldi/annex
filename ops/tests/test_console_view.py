@@ -302,3 +302,17 @@ def test_the_releases_tab_shows_the_newest_25_and_can_show_all():
     page = pa.releases_page(SAM, d, now=NOW)
     assert page.count("/logs?release=") == 25 and "of 40" in page and "releases?all=1" in page
     assert pa.releases_page(SAM, d, now=NOW, show_all=True).count("/logs?release=") == 40
+
+
+def test_the_platform_page_lists_ops_threads_worst_first_and_what_was_lost():
+    t = {"disk_alert_pct": 85, "disk_clear_pct": 80, "mem_alert_mb": 256, "mem_clear_mb": 400, "backup_max_age_s": 93600}
+    ops = {"ok": False, "threads": [{"name": "engine", "state": "ok", "age_s": 2.0, "period_s": 30.0},
+                                    {"name": "follow-ship:x", "state": "dead", "age_s": 400.0, "period_s": 150.0}],
+           "queues": {"log-sink": {"buffered": 12, "max": 20000, "lost": 40}, "usage": {"buffered": 0, "dropped": 0}}}
+    p = {"front_door": "up", "incidents": [], "host": None, "series": {"disk": [], "mem": []}, "tuning": t, "links": [], "ops": ops}
+    page = pg.platform_page(ADMIN, p, NOW.timestamp())
+    assert page.index("follow-ship:x") < page.index(">engine<")          # the dead one first
+    assert "dead" in page and "6 min ago" in page and "buffered 12" in page and "40 log or usage rows dropped" in page
+    down = pg.platform_page(ADMIN, {**p, "ops": {"unreachable": "timed out"}}, NOW.timestamp())
+    assert "annex-ops did not answer" in down and "timed out" in down
+    assert "Expected every" not in pg.platform_page(ADMIN, {k: x for k, x in p.items() if k != "ops"}, NOW.timestamp())

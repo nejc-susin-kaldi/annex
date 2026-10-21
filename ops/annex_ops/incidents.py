@@ -12,7 +12,7 @@ import traceback
 
 from psycopg.types.json import Jsonb
 
-from . import config, db, directory, docker_api, email, engine as eng, messages, slack
+from . import config, db, directory, docker_api, email, engine as eng, messages, slack, threads
 from .errors import OpsError
 
 OFELIA = "annex-ofelia-1"
@@ -39,7 +39,9 @@ class Manager(threading.Thread):
 
     # --- thread ------------------------------------------------------------
     def run(self) -> None:
+        threads.register(self.name, 30)  # a pass can wait on an SMTP, a Slack and a log-tail call (10 s each)
         while True:
+            threads.beat(self.name)
             try:
                 self.restore()
                 break
@@ -47,6 +49,7 @@ class Manager(threading.Thread):
                 log(f"can't load open incidents yet ({type(e).__name__}: {e}); retrying in 5 s")
                 time.sleep(5)
         while True:
+            threads.beat(self.name)
             try:
                 inp = self.q.get(timeout=1)
             except queue.Empty:
@@ -323,7 +326,10 @@ def start_background() -> Manager:
 
     mgr = _manager = Manager()
     mgr.start()
+    threads.gauge("engine", lambda: {"waiting": mgr.q.qsize()})
     ingest = _ingest = usage.Ingest()
+    # the usage buffer; B2 adds a byte budget and a `dropped` count, which this picks up
+    threads.gauge("usage", lambda: {"buffered": len(ingest.buf), "dropped": getattr(ingest, "dropped", 0)})
     usage.Worker(ingest).start()
     digest.Worker().start()
     hooks_delivery.Worker(mgr.submit).start()
@@ -331,12 +337,14 @@ def start_background() -> Manager:
     # logs that outlive containers (M2.2): one follower per shipped container, started and stopped by the watcher's events
     sink = _sink = logstore.Sink()
     sink.start()
+    threads.gauge("log-sink", sink.status)
     releases = logship.Releases()
     logship.Keeper(mgr.submit, sink).start()
     errors_run.ErrorScanner().start()  # error groups and their emails (M2.3)
     audit.Auditor().start()  # sign-ins, webhook events and gateway reads into the audit trail (M2.5)
     shipper = logship.Shipper(sink, releases)
     shipper.start()
+    threads.gauge("log-shipper", shipper.status)
 
     def submit(inp) -> None:
         mgr.submit(inp)

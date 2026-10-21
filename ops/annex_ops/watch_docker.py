@@ -3,7 +3,7 @@ import sys
 import threading
 import time
 
-from . import docker_api, engine
+from . import docker_api, engine, threads
 
 EVENTS = ["die", "start", "stop", "destroy", "oom", "health_status"]
 FILTERS = {"type": ["container"], "label": ["com.kaldi.annex=true"], "event": EVENTS}
@@ -91,7 +91,9 @@ class Watcher(threading.Thread):
         last_nano = 0
         since = time.time() - 1
         reconcile = True
+        threads.register(self.name, 150)  # the event stream is re-opened after 120 s of quiet
         while True:
+            threads.beat(self.name)
             try:
                 if reconcile:
                     started = time.time()
@@ -102,6 +104,7 @@ class Watcher(threading.Thread):
                     if nano <= last_nano:
                         continue  # replayed after a reconnect
                     last_nano = nano
+                    threads.beat(self.name)
                     since = nano / 1e9
                     inp = event_to_input(ev)
                     if inp:

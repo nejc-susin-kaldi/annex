@@ -589,3 +589,30 @@ It takes about 63 MB on disk and seeds in under a minute.
 - `connect-your-database.md`, the client-side recipe.
 
 **Alternatives.** Fixed dates, like D14: stable, but stale within weeks. Real machine titles (IPDB): ruled out, synthetic only. A Python generator writing CSV: a second toolchain on the VM, and the files would be too big to commit.
+
+
+## D81. annex-ops reports its own threads (21 Oct, hardening B1)
+**What.** `ops/annex_ops/threads.py` is a registry: every long-running thread registers a name and the longest one pass may take (sleep included), then calls `beat(name)` on every pass.
+- `/healthz` lists each thread with its state and the age of its last beat, and answers **503** when one is `dead` (the thread ended) or `stale` (no beat for more than 3 periods). It also lists the buffers (`queues`): the log sink's rows waiting and `lost`, the shipper's followers and queue, the engine's queue, and the usage buffer with a `dropped` hook that B2 fills.
+- Expected periods (stale = 3 times these): engine 30 s (a pass can wait on SMTP, Slack and a log tail, 10 s each), usage 60 s, digest 90 s, hooks delivery 60 s, host sampler `host_sample_s + 30`, health checker `check_interval_s + 30`, error scanner `errors_scan_s + 60`, auditor `audit_scan_s + 60`, log sink 30 s, log shipper 60 s, log keeper 120 s, Docker watcher and each log follower 150 s (Docker ends a quiet stream after 120 s). A loop whose sleep is a setting updates its period at each beat.
+- **Followers never die.** `Follower.run` wraps the whole body: an unexpected exception is logged once a minute per follower, waited out with a doubling delay (2 s up to 60 s) and the follower starts again from its saved cursor; the loops catch `Exception` per pass too. Handler and cursor-save errors share the once-a-minute log. A follower stopped on purpose retires from the registry; one that is still listed after its thread ended is shown `dead`.
+- **The shipper restarts dead followers** from their cursor, checked every 5 s (`Shipper.revive`, using the Seen/Start it kept for each container). A failed restart (Docker busy) keeps the dead entry and is tried again.
+- `Sink.lost` now also counts the rows dropped when a failed insert is put back over the limit (before, only `add` counted).
+- **Health checker.** A new platform check, `platform:ops`, requests `http://ops:8000/healthz` (`config.OPS_URL`) every round and is up on a 200. After two failures the engine raises `down` on `platform:ops`, the subject the Docker watcher already uses for ops, so a dead thread alerts admins as "platform: ops is down". The check goes through the platform network, so it also proves the network path the console uses. Docker's own healthcheck of the ops container hits the same URL and now goes unhealthy too: that is the second signal on the same subject, not a second incident.
+- **How the thread table reaches the console.** The console fetches ops' `/healthz` over the platform network (`threads.fetch`, 2 s timeout, standard library only) when it renders the Platform page. Considered instead: ops writing the table into the database for the console's read-only role. Fetching needs no new table or grant, shows the live state (a database outage included, where a table would go stale) and keeps the console without access to ops internals; a failed fetch is shown as "annex-ops did not answer". The cost: `/healthz` is also readable by apps on `edge` (it already was). It carries thread names (`follow-ship:annex-app-<name>:<id>` names containers), queue numbers and no data, like `/tiles`.
+- **`ctl`.** `ctl health` adds `thread:<name>` rows in the shape of the checks (`state` ok, stale or dead) and `thread:_ops` `unreachable` when ops doesn't answer, so `--json` consumers that read `["state"]` keep working. `ctl logs-stats` adds `sink` (buffered, max, lost) and `queues`. Both read the running ops through `http://127.0.0.1:8000/healthz`, because the buffers live in that process, not in `ctl`'s.
+- **Console.** The Platform page has an "annex-ops" section: threads (worst first), their last progress and period, the buffers and the rows dropped.
+
+**Why.** A thread that died (or hung on a socket) left no trace: `/healthz` only ran `SELECT 1`, a follower that hit a driver error outside `OpsError` ended silently and was never restarted, and `Sink.lost` was never shown (review finding, hardening plan "What was found").
+
+**Alternatives.**
+- A restart policy on the unhealthy container: `restart: unless-stopped` ignores health, and `autoheal` is a new component and a socket with write access.
+- One heartbeat table in Postgres: blind in the failure that matters most (the database), and a write per thread per pass.
+- Failing `/healthz` on a stale thread only: rejected because a restart loop caused by one slow thread hides the others; the table names the culprit and the incident carries the 503 text.
+- Registering threads in `__init__`: a thread that never started would read as stale; they register at the top of `run()`, so a thread that crashes before that is not listed (nothing in ops does work there).
+
+**Not done.** The usage ingest's dropped count and the byte budgets are B2 (`threads.gauge("usage", ...)` already reads `ingest.dropped` if it exists). The alert engine's own sender thread is B5.
+
+**Tests.** `ops/tests/test_threads.py` (verdict, registry, `/healthz` 503, `fetch`), a follower surviving an unexpected store error and an unexpected loop error (`test_follow_exact.py`), `Shipper.revive` (`test_logship.py`), the `platform:ops` target (`test_health.py`) and the console's table (`test_console_view.py`). `test-logs.sh` checks that `/healthz` lists the followers and the sink's counters after ops restarts. Not run here (VM): `test-smoke.sh`, `test-logs.sh`.
+
+**Prod:** metrics (Prometheus or CloudWatch) replace the thread table; `/healthz` stays.

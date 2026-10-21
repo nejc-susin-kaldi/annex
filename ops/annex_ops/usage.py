@@ -11,7 +11,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from . import config, db, docker_api, follow_logs
+from . import config, db, docker_api, follow_logs, threads
 from .errors import OpsError
 
 STATIC_EXT = (".js", ".mjs", ".css", ".map", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp",
@@ -293,8 +293,10 @@ class Worker(threading.Thread):
 
     def run(self) -> None:
         last_rollup = 0.0
+        threads.register(self.name, 60)  # a rollup can take a while
         while True:
             time.sleep(1)
+            threads.beat(self.name)
             try:
                 if time.monotonic() - self.ingest.last_flush >= 5:
                     self.ingest.flush()
