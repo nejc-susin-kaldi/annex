@@ -99,14 +99,19 @@ def secret_file(path: Path, nbytes: int = 24) -> str:
     return path.read_text().strip()
 
 
-def jwt(role: str, app: str) -> str:
-    key = read_kv(SECRETS / "master.env")["GATEWAY_JWT_SECRET"]
+JWT_LIFETIME = 365 * 24 * 3600  # D80: the token is regenerated on every provision, so a year is a ceiling, not a plan
+
+
+def jwt(role: str, app: str, key: str | None = None, now: int | None = None) -> str:
+    if key is None:
+        key = read_kv(SECRETS / "master.env")["GATEWAY_JWT_SECRET"]
+    now = int(time.time()) if now is None else now
 
     def b64(b: bytes) -> str:
         return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
 
     header = b64(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
-    payload = b64(json.dumps({"role": role, "app": app, "iat": int(time.time())}, separators=(",", ":")).encode())
+    payload = b64(json.dumps({"role": role, "app": app, "iat": now, "exp": now + JWT_LIFETIME}, separators=(",", ":")).encode())
     sig = b64(hmac.new(key.encode(), f"{header}.{payload}".encode(), hashlib.sha256).digest())
     return f"{header}.{payload}.{sig}"
 
@@ -158,12 +163,16 @@ GRANT USAGE ON SCHEMA annex_api TO {role};
 {grants}
 GRANT {role} TO authenticator;
 """)
+    # a new token on every provision (D80); written beside the old one and renamed, so a reader never sees half a file
     token_path = app_secrets_dir(app) / "gateway_token"
-    if not token_path.exists():
-        fd = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(jwt(role, app))
-    return token_path.read_text().strip()
+    token = jwt(role, app)
+    tmp = token_path.with_name(".gateway_token.tmp")
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(token)
+    tmp.replace(token_path)
+    return token
 
 
 def drop_product_role(app: str) -> None:
