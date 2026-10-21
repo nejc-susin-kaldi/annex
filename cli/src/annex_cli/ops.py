@@ -44,12 +44,32 @@ def _quiet(_: str) -> None:
     pass
 
 
+BAD_NAME = ("{what} {name!r} is not valid: use 2-32 lowercase letters, digits and '-', starting with a letter{extra}")
+
+
+def _name(app: str, what: str = "App name") -> str:
+    """An app name that is safe to put in a shell command. Every public function and every helper that builds a
+    command from a name goes through here before it talks to the VM (D79)."""
+    if not isinstance(app, str) or not mf.NAME_RE.fullmatch(app):  # fullmatch: '$' would let a trailing newline through
+        raise AnnexError(BAD_NAME.format(what=what, name=app, extra=""))
+    if app in mf.RESERVED_NAMES:
+        raise AnnexError(f"{app!r} is reserved by the platform. Use a name that is not one of "
+                         f"{', '.join(sorted(mf.RESERVED_NAMES))}")
+    return app
+
+
+def _job(job: str) -> str:
+    if not isinstance(job, str) or not mf.NAME_RE.fullmatch(job):
+        raise AnnexError(BAD_NAME.format(what="Job name", name=job, extra=""))
+    return job
+
+
 def container(app: str) -> str:
-    return f"annex-app-{app}"
+    return f"annex-app-{_name(app)}"
 
 
 def project(app: str) -> str:
-    return f"annex-app-{app}"
+    return f"annex-app-{_name(app)}"
 
 
 # --- contract and init -----------------------------------------------------
@@ -225,7 +245,7 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
 
 
 def _record(r: Remote, app: str) -> dict | None:
-    res = r.run(f"cat {r.data}/deploy/{app}/deploy.json", check=False)
+    res = r.run(f"cat {r.path('deploy', _name(app), 'deploy.json')}", check=False)
     return json.loads(res.stdout) if res.returncode == 0 else None
 
 
@@ -252,7 +272,7 @@ def _git(folder: Path) -> dict | None:
 # release number, image, manifest, who/when/where from, data snapshot and result
 # ("live", or "failed" when it didn't pass the health gate).
 def _releases(r: Remote, app: str) -> list[dict]:
-    res = r.run(f"cat {r.data}/apps/{app}/releases.jsonl", check=False)
+    res = r.run(f"cat {r.path('apps', _name(app), 'releases.jsonl')}", check=False)
     if res.returncode != 0:
         return []
     return [json.loads(line) for line in res.stdout.decode().splitlines() if line.strip()]
@@ -260,7 +280,7 @@ def _releases(r: Remote, app: str) -> list[dict]:
 
 def _append_release(r: Remote, app: str, rel: dict) -> None:
     line = json.dumps(rel, default=str) + "\n"
-    r.run(f"mkdir -p {r.data}/apps/{app} && cat >> {r.data}/apps/{app}/releases.jsonl", input=line)
+    r.run(f"mkdir -p {r.path('apps', _name(app))} && cat >> {r.path('apps', app, 'releases.jsonl')}", input=line)
     try:  # the database copy (annex_ops.releases) is for the console and the audit trail; the file stays the record
         r.vm("release-record", app, input=line)
     except (AnnexError, subprocess.SubprocessError, OSError):
@@ -274,11 +294,11 @@ def _live(releases: list[dict]) -> dict | None:
 
 
 def _images(r: Remote, app: str) -> set[str]:
-    return set(r.out(f"docker image ls --format '{{{{.Repository}}}}:{{{{.Tag}}}}' annex-app/{app}").split())
+    return set(r.out(f"docker image ls --format '{{{{.Repository}}}}:{{{{.Tag}}}}' annex-app/{_name(app)}").split())
 
 
 def _build(r: Remote, m: mf.Manifest, image: str) -> None:
-    d = f"{r.data}/deploy/{m.name}"
+    d = r.path("deploy", _name(m.name))
     build = r.run(f"docker build --progress=plain --label com.kaldi.annex=true --label com.kaldi.annex.app={m.name} "
                   f"-t {image} {d}/src 2>&1", check=False)
     if build.returncode != 0:
@@ -361,7 +381,7 @@ def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Pro
               ) -> tuple[tuple[str, str] | None, dict]:
     """Provision what manifest `m` asks for, switch the app to `image` and run the health gate.
     Returns (gate failure or None, provision result)."""
-    d = f"{r.data}/deploy/{m.name}"
+    d = r.path("deploy", _name(m.name))
     progress("Provisioning storage, data access and secrets")
     prov = r.vm("provision", *_provision_args(m.name, postgres=m.postgres, files=m.files, views=m.views,
                                               secrets=m.secrets, notify_email=m.notify_email,
@@ -403,7 +423,7 @@ def _write_record(r: Remote, m: mf.Manifest, image: str, release: int) -> dict:
               "files": m.files, "views": m.views, "secrets": m.secrets, "schedule": [j.__dict__ for j in m.schedule],
               "memory_mb": m.memory_mb, "notify_email": m.notify_email, "notify_slack": m.notify_slack,
               "alerts_to": m.alerts_to, "webhooks": [w.__dict__ for w in m.webhooks], "port": m.port}
-    r.run(f"cat > {r.data}/deploy/{m.name}/deploy.json", input=json.dumps(record, indent=2))
+    r.run(f"cat > {r.path('deploy', _name(m.name), 'deploy.json')}", input=json.dumps(record, indent=2))
     return record
 
 
@@ -446,7 +466,7 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
     live = _live(releases)
     n = max((x["release"] for x in releases), default=0) + 1
     image = f"annex-app/{m.name}:r{n}"
-    d = f"{r.data}/deploy/{m.name}"
+    d = r.path("deploy", _name(m.name))
     progress("Uploading source")
     r.run(f"set -e; mkdir -p {d}; rm -rf {d}/src.new; mkdir {d}/src.new; tar -xzf - -C {d}/src.new; "
           f"rm -rf {d}/src; mv {d}/src.new {d}/src", input=_tar(folder))
@@ -556,12 +576,16 @@ def usage(app: str | None = None, by_user: bool = False) -> dict | list:
     for admins (in the prototype, CLI access is SSH access, which is admin)."""
     if by_user and not app:
         raise AnnexError("--by-user needs an app: annex usage <app> --by-user")
+    if app is not None:
+        _name(app)
     return _ops_ctl(Remote(), "usage", *(["--app", app] if app else []), *(["--by-user"] if by_user else []))
 
 
 def errors(app: str | None = None, state: str | None = None) -> list[dict]:
     """The kinds of error seen in the logs (server, browser and jobs), newest first: active, or quiet (a newer
     release is live and it hasn't come back, or it hasn't been seen for a day)."""
+    if app is not None:
+        _name(app)
     return _ops_ctl(Remote(), "errors", *([app] if app else []), *(["--state", state] if state else []))
 
 
@@ -570,6 +594,8 @@ def audit(app: str | None = None, since: str | None = None, action: str | None =
     """The audit trail, newest first: deploys, rollbacks, restores, secrets set (names only), apps removed, accounts,
     sign-ins, reads of product data (per app, view and hour), emails, Slack posts and webhook events. Admins, by
     convention (in the prototype CLI access is SSH access)."""
+    if app is not None:
+        _name(app)
     return _ops_ctl(Remote(), "audit", *(["--app", app] if app else []), *(["--since", since] if since else []),
                     *(["--action", action] if action else []), *(["--actor", actor] if actor else []),
                     "--limit", str(max(1, min(int(limit), 2000))))
@@ -577,6 +603,8 @@ def audit(app: str | None = None, since: str | None = None, action: str | None =
 
 def hooks(app: str | None = None, status: str | None = None, limit: int = 50) -> list[dict]:
     """Incoming webhook events, newest first: metadata only (never a body)."""
+    if app is not None:
+        _name(app)
     return _ops_ctl(Remote(), "hooks", "list", *(["--app", app] if app else []), *(["--status", status] if status else []),
                     "--limit", str(max(1, min(int(limit), 500))))
 
@@ -588,6 +616,7 @@ def hook_show(event_id: int) -> dict:
 
 def hooks_replay(app: str, event_id: int | None = None, failed: bool = False, since: str | None = None) -> dict:
     """Queue copies of stored events for delivery again (the app sees the same X-Annex-Hook-Event). Human-only."""
+    _name(app)
     if sum(x is not None and x is not False for x in (event_id, failed or None, since)) != 1:
         raise AnnexError("Choose what to replay: --id N, --failed, or --since 1h")
     return _ops_ctl(Remote(), "hooks", "replay", app, *(["--id", str(event_id)] if event_id is not None else []),
@@ -596,11 +625,14 @@ def hooks_replay(app: str, event_id: int | None = None, failed: bool = False, si
 
 def sends(app: str | None = None, limit: int = 50) -> list[dict]:
     """Email and Slack send attempts, newest first (every attempt, rejections too; never a body)."""
+    if app is not None:
+        _name(app)
     return _ops_ctl(Remote(), "sends", *(["--app", app] if app else []), "--limit", str(max(1, min(int(limit), 500))))
 
 
 def releases(app: str) -> list[dict]:
     """An app's releases, newest first, with which can be rolled back to (and with data)."""
+    _name(app)
     r = Remote()
     rels = _releases(r, app)
     if not rels:
@@ -636,6 +668,7 @@ def rollback(app: str, to: int | None = None, with_data: bool = False, progress:
              via: str = "cli") -> dict:
     """Switch an app back to an earlier release (see _rollback). A data restore holds the app's alerts while the
     container is stopped (annex_vm opens the maintenance window); it ends once the app is back."""
+    _name(app)
     try:
         return _rollback(app, to, with_data, progress, via)
     finally:
@@ -646,7 +679,7 @@ def rollback(app: str, to: int | None = None, with_data: bool = False, progress:
 def _maintenance(r: Remote, app: str, minutes: int | None) -> None:
     """Hold (or release, with None) alerts for an app. Best effort: a failure must never block the operation."""
     args = ["--minutes", str(minutes)] if minutes else ["--end"]
-    r.run(f"docker exec {OPS_CONTAINER} python -m annex_ops.ctl maintenance app:{app} {' '.join(args)} --json", check=False)
+    r.run(f"docker exec {OPS_CONTAINER} python -m annex_ops.ctl maintenance app:{_name(app)} {' '.join(args)} --json", check=False)
 
 
 def _rollback(app: str, to: int | None = None, with_data: bool = False, progress: Progress = _quiet,
@@ -654,6 +687,7 @@ def _rollback(app: str, to: int | None = None, with_data: bool = False, progress
     """Switch an app back to an earlier release (default: the one before the current), re-applying that
     release's manifest. with_data also restores the database and /data snapshot from that release's time,
     losing writes since (human only)."""
+    _name(app)
     r = Remote()
     rels = _releases(r, app)
     live = _live(rels)
@@ -723,7 +757,7 @@ def _rollback(app: str, to: int | None = None, with_data: bool = False, progress
 
 # --- inspect ---------------------------------------------------------------
 def _containers(r: Remote, app: str | None = None) -> list[dict]:
-    flt = f"label=com.kaldi.annex.app={app}" if app else "label=com.kaldi.annex.app"
+    flt = f"label=com.kaldi.annex.app={_name(app)}" if app is not None else "label=com.kaldi.annex.app"
     raw = r.out(f"ids=$(docker ps -aq --filter {flt}); [ -n \"$ids\" ] && docker inspect $ids || echo []")
     return json.loads(raw)
 
@@ -751,6 +785,7 @@ def list_apps() -> list[dict]:
 
 
 def status(app: str) -> dict:
+    _name(app)
     r = Remote()
     cs = _containers(r, app)
     record = _record(r, app)
@@ -808,6 +843,7 @@ def stored_logs(app: str, tail: int = 100, since: str | None = None, release: in
                 level: str | None = None, grep: str | None = None, request: str | None = None,
                 source: str = "app") -> list[dict]:
     """`annex logs --json`: the matching stored lines, oldest first."""
+    _name(app)
     r = Remote()
     rows = _stored_logs(r, app, tail, since, release, level, grep, request, source)
     if not rows and not _containers(r, app) and not _record(r, app):
@@ -820,6 +856,7 @@ def logs(app: str, tail: int = 100, since: str | None = None, release: int | str
     """An app's logs from annex-ops' store: the live container's lines and those of containers that are gone (a
     rolled-back release, last week). Filter by release (r4), level (this and above), text, request id and age.
     If annex-ops can't be reached, the live container's own log is shown instead, unfiltered."""
+    _name(app)
     r = Remote()
     try:
         rows = _stored_logs(r, app, tail, since, release, level, grep, request, source)
@@ -840,10 +877,13 @@ def logs(app: str, tail: int = 100, since: str | None = None, release: int | str
 
 
 def follow_logs(app: str, tail: int = 100) -> int:
+    _name(app)
     return Remote().stream(f"docker logs --timestamps --tail {int(tail)} -f {container(app)}")
 
 
 def run_job(app: str, job: str) -> dict:
+    _name(app)
+    _job(job)
     r = Remote()
     record = _record(r, app)
     if not record:
@@ -859,9 +899,10 @@ def run_job(app: str, job: str) -> dict:
 
 # --- human-only ------------------------------------------------------------
 def secret_set(app: str, pairs: list[str]) -> dict:
+    _name(app)
     for p in pairs:
         k, sep, _ = p.partition("=")
-        if not sep or not mf.KEY_RE.match(k):
+        if not sep or not mf.KEY_RE.fullmatch(k):
             raise AnnexError(f"{k!r}: use KEY=VALUE with an UPPER_SNAKE_CASE key")
     r = Remote()
     res = r.vm("secret-set", app, "--actor", _who(), input="\n".join(pairs) + "\n")
@@ -873,7 +914,7 @@ def secret_set(app: str, pairs: list[str]) -> dict:
             notify_email=record.get("notify_email", False), notify_slack=record.get("notify_slack", []),
             webhooks=record.get("webhooks", []), port=record.get("port")))
         _drain(r, app)
-        r.run(f"cd {r.data}/deploy/{app} && docker compose up -d 2>&1")
+        r.run(f"cd {r.path('deploy', app)} && docker compose up -d 2>&1")
         res["applied"] = "restarted with new values"
         if undeclared:
             res["warning"] = (f"{', '.join(undeclared)} not declared under secrets: in annex.yaml, "
@@ -884,11 +925,12 @@ def secret_set(app: str, pairs: list[str]) -> dict:
 
 
 def remove(app: str, keep_data: bool = False) -> dict:
+    _name(app)
     r = Remote()
     record = _record(r, app)
     if not record and not _containers(r, app):
         raise AnnexError(f"No app named {app!r}. See deployed apps with: annex list")
-    d = f"{r.data}/deploy/{app}"
+    d = r.path("deploy", app)
     _drain(r, app)
     r.run(f"if [ -f {d}/compose.yaml ]; then cd {d} && docker compose down --remove-orphans 2>&1; "
           f"else docker rm -f {container(app)} >/dev/null 2>&1 || true; fi; "
