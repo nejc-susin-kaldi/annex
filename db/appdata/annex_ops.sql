@@ -9,6 +9,9 @@
 \getenv usage_pw APPDATA_DB_METABASE_USAGE_PASSWORD
 \getenv hooks_pw APPDATA_DB_HOOKS_PASSWORD
 \getenv console_pw APPDATA_DB_CONSOLE_PASSWORD
+-- template1 is where every new database starts: nobody but superusers needs to connect to it (D80). init/ does the
+-- same on a fresh database; this line covers one that already exists.
+REVOKE CONNECT ON DATABASE template1 FROM PUBLIC;
 DO $$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'annex_ops') THEN CREATE ROLE annex_ops LOGIN; END IF;
 END $$;
