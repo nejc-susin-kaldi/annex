@@ -118,16 +118,40 @@ def scan_webhooks(store: follow_logs.CursorStore, now: float) -> int:
     return len(events)
 
 
-def scan_gateway(now: float, bucket_s: float, window_s: float = 172800) -> int:
-    """Reads of product data per app, view and bucket, for the finished buckets of the last `window_s`: from the stored gateway lines."""
+GATEWAY_KEY = "audit:gateway"
+
+
+def gateway_window(now: float, bucket_s: float, cursor: float | None, window_s: float = 172800) -> tuple[float, float] | None:
+    """(from, end) of the buckets to aggregate now, or None if no bucket has closed since the cursor. `end` is the start of
+    the current (open) bucket, which is also the new cursor. The scan replays one bucket before the cursor (a late line of
+    the last bucket counted still lands), and never reaches back further than `window_s`. No cursor: nothing before `end - window_s`."""
     end = bucket_start(now, bucket_s)
+    if cursor is not None and end <= cursor:
+        return None
+    start = end - window_s if cursor is None else bucket_start(cursor, bucket_s) - bucket_s
+    return max(start, end - window_s), end
+
+
+def scan_gateway(store: follow_logs.CursorStore, now: float, bucket_s: float, window_s: float = 172800) -> int:
+    """Reads of product data per app, view and bucket, from the stored gateway lines: each closed bucket once (plus one
+    bucket replayed), from a cursor. The first run after an upgrade starts at the newest gateway aggregate already stored."""
+    cursor = store.get(GATEWAY_KEY)
+    if cursor is None:
+        with db.connect() as conn:
+            row = conn.execute("SELECT extract(epoch FROM max(ts)) FROM annex_ops.audit_events WHERE action = 'gateway.reads'").fetchone()
+        cursor = float(row[0]) if row and row[0] is not None else None
+    window = gateway_window(now, bucket_s, cursor, window_s)
+    if window is None:
+        return 0
+    start, end = window
     with db.connect() as conn:
         rows = conn.execute(
             "SELECT app, fields->>'view', floor(extract(epoch FROM ts) / %(b)s) * %(b)s AS start, count(*) FROM annex_ops.logs "
             "WHERE container = 'gateway' AND app IS NOT NULL AND ts >= to_timestamp(%(from)s) AND ts < to_timestamp(%(end)s) "
-            "GROUP BY 1, 2, 3 ORDER BY 3", {"b": bucket_s, "from": end - window_s, "end": end}).fetchall()
+            "GROUP BY 1, 2, 3 ORDER BY 3", {"b": bucket_s, "from": start, "end": end}).fetchall()
     events = [gateway_event(app, view or "?", float(start), bucket_s, n) for app, view, start, n in rows]
     write(events)
+    store.set(GATEWAY_KEY, end)
     return len(events)
 
 
@@ -181,7 +205,7 @@ class Auditor(threading.Thread):
                 now = time.time()
                 scan_signins(self.cursors, now)
                 scan_webhooks(self.cursors, now)
-                scan_gateway(now, s.audit_bucket_s)
+                scan_gateway(self.cursors, now, s.audit_bucket_s)
                 if now - self.last_housekeeping > 86400:
                     self.last_housekeeping = now
                     housekeeping(s)

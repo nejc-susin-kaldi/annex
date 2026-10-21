@@ -147,6 +147,15 @@ LEFT JOIN r7 USING (app) LEFT JOIN rprev USING (app) LEFT JOIN r30 USING (app) L
 LEFT JOIN wk USING (app) LEFT JOIN annex_ops.app_signals g USING (app)
 WHERE s.removed_at IS NULL;
 
+-- B3: the view's result, stored by the 10-minute rollup, so a page or a status call reads one row per app instead of
+-- aggregating the raw requests (which D76's console does on every load). Same columns as `usage_apps`; `signal` is
+-- refreshed by the rollup after the verdicts are written. The view stays for one release.
+CREATE TABLE IF NOT EXISTS annex_ops.usage_rollup_apps (
+  app text PRIMARY KEY, first_seen timestamptz NOT NULL, last_used timestamptz,
+  users_7d bigint NOT NULL, users_prev_7d bigint NOT NULL, users_30d bigint NOT NULL,
+  requests_7d int NOT NULL, errors_7d int NOT NULL, error_rate_7d numeric NOT NULL, p95_7d int,
+  week1 int, week2 int, week3 int, week4 int, signal text, refreshed_at timestamptz NOT NULL DEFAULT now());
+
 -- Metabase's usage connection: summaries and the view, and nothing else (not requests, sends, incidents or grants)
 REVOKE ALL ON ALL TABLES IN SCHEMA annex_ops FROM metabase_usage;
 GRANT USAGE ON SCHEMA annex_ops TO metabase_usage;
@@ -205,6 +214,8 @@ CREATE TABLE IF NOT EXISTS annex_ops.logs (
 CREATE UNIQUE INDEX IF NOT EXISTS logs_dedupe ON annex_ops.logs (ts, h);
 CREATE INDEX IF NOT EXISTS logs_app_ts ON annex_ops.logs (app, ts DESC);
 CREATE INDEX IF NOT EXISTS logs_app_release ON annex_ops.logs (app, release, ts DESC);
+-- B3: the gateway scan and the per-container readers (a parent index: existing partitions get it now, new ones are born with it)
+CREATE INDEX IF NOT EXISTS logs_container_ts ON annex_ops.logs (container, ts DESC);
 CREATE INDEX IF NOT EXISTS logs_request ON annex_ops.logs (request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS logs_search ON annex_ops.logs USING gin ((msg || ' ' || coalesce(fields::text, '')) gin_trgm_ops);
 
@@ -272,7 +283,7 @@ REVOKE ALL ON ALL TABLES IN SCHEMA annex_ops FROM annex_console;
 GRANT USAGE ON SCHEMA annex_ops TO annex_console;
 GRANT SELECT ON annex_ops.logs, annex_ops.releases, annex_ops.error_groups, annex_ops.error_events,
   annex_ops.incidents, annex_ops.job_runs, annex_ops.requests, annex_ops.usage_daily, annex_ops.usage_weekly,
-  annex_ops.usage_apps, annex_ops.app_seen, annex_ops.app_signals TO annex_console;
+  annex_ops.usage_apps, annex_ops.usage_rollup_apps, annex_ops.app_seen, annex_ops.app_signals TO annex_console;
 GRANT SELECT (id, app, hook, received_at, status, content_type, attempts, next_attempt_at, delivered_at, last_error, replay_of)
   ON annex_ops.hook_events TO annex_console;
 

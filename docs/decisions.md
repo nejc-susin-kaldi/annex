@@ -589,3 +589,20 @@ It takes about 63 MB on disk and seeds in under a minute.
 - `connect-your-database.md`, the client-side recipe.
 
 **Alternatives.** Fixed dates, like D14: stable, but stale within weeks. Real machine titles (IPDB): ruled out, synthetic only. A Python generator writing CSV: a second toolchain on the VM, and the files would be too big to commit.
+
+## D82. Gateway audit cursor, usage rollup table, logs index (21 Oct, hardening B3)
+**What.**
+- `audit.scan_gateway` keeps a cursor (`log_cursors`, key `audit:gateway`) like the other scans. It aggregates only buckets that closed since the cursor, plus one bucket before it (a late line still lands; the upsert by `ref` makes the replay harmless), and never reaches back more than the 48-hour window. The first run after the upgrade starts from the newest `gateway.reads` event already stored. Before, every 60-second pass counted two days of gateway lines.
+- `logs_container_ts` on `annex_ops.logs (container, ts DESC)`: a parent index on the partitioned table. Creating it builds it on the existing partitions, and `logstore.create_partition_sql` makes new partitions with `PARTITION OF`, which copies the parent's indexes.
+- `annex_ops.usage_rollup_apps`: the `usage_apps` view's rows, stored by the 10-minute `usage.rollup` in one transaction, with `signal` refreshed after the verdicts are written. `usage_rows()` (so `tile_for`, `app_status`, the digest, the console) reads it. `annex_console` has SELECT on it.
+
+**Why.** The console and status calls aggregated the raw `requests` (7, 14 and 30-day distinct users, p95) on every page load, and the auditor scanned the gateway lines every minute. Both grow with traffic; the new reads are one row per app.
+
+**Alternatives.**
+- A materialized view: needs a refresh with its own privileges, and `REFRESH` locks readers unless it has a unique index and is `CONCURRENTLY`. A table written by the existing rollup is simpler.
+- Dropping `usage_apps` now: it stays for one release (Metabase's role is granted it, the rollup copies from it). C3's migration drops it.
+
+**Notes.**
+- New tables and indexes only; `annex_ops.sql` stays idempotent and alters nothing existing.
+- Numbers on the usage pages are up to 10 minutes old (they were live). An app that appears for the first time shows after the next rollup (the worker runs one at start).
+- The first rollup after the upgrade fills the table; until then `usage_rows()` is empty, so run `scripts/push.sh` and wait for it (or restart annex-ops) before the smoke test.

@@ -245,7 +245,9 @@ def rollup(now: datetime | None = None) -> dict:
         deleted = conn.execute("DELETE FROM annex_ops.requests WHERE ts < now() - make_interval(days => %s)",
                                (s.usage_retention_days,)).rowcount
     mark_removed()
+    refresh_rollup()
     signals = write_signals(now or datetime.now(timezone.utc), s)
+    refresh_signals()
     return {"daily_rows": daily, "weekly_rows": weekly, "deleted_requests": deleted, "signals": signals}
 
 
@@ -264,9 +266,28 @@ def mark_removed() -> None:
         conn.execute("UPDATE annex_ops.app_seen SET removed_at = NULL WHERE removed_at IS NOT NULL AND app = ANY(%s)", (present,))
 
 
-def usage_rows() -> list[dict]:
+ROLLUP_COLUMNS = ("app, first_seen, last_used, users_7d, users_prev_7d, users_30d, requests_7d, errors_7d, error_rate_7d, p95_7d, "
+                  "week1, week2, week3, week4, signal")
+
+
+def refresh_rollup() -> None:
+    """Store the `usage_apps` view's rows in `usage_rollup_apps` (one transaction: readers see the old or the new set)."""
+    with db.connect() as conn, conn.transaction():
+        conn.execute("DELETE FROM annex_ops.usage_rollup_apps")
+        conn.execute(f"INSERT INTO annex_ops.usage_rollup_apps ({ROLLUP_COLUMNS}) SELECT {ROLLUP_COLUMNS} FROM annex_ops.usage_apps")
+
+
+def refresh_signals() -> None:
+    """The verdicts were just written to `app_signals`: copy them to the stored rows."""
     with db.connect() as conn:
-        cur = conn.execute("SELECT * FROM annex_ops.usage_apps ORDER BY app")
+        conn.execute("UPDATE annex_ops.usage_rollup_apps r SET signal = g.signal FROM (SELECT s.app, a.signal FROM annex_ops.usage_rollup_apps s "
+                     "LEFT JOIN annex_ops.app_signals a USING (app)) g WHERE r.app = g.app AND r.signal IS DISTINCT FROM g.signal")
+
+
+def usage_rows() -> list[dict]:
+    """One row per app, as of the last rollup (at most `rollup_s` old; an app seen for the first time appears at the next one)."""
+    with db.connect() as conn:
+        cur = conn.execute(f"SELECT {ROLLUP_COLUMNS} FROM annex_ops.usage_rollup_apps ORDER BY app")
         cols = [d.name for d in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
