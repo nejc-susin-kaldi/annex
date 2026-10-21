@@ -589,3 +589,20 @@ It takes about 63 MB on disk and seeds in under a minute.
 - `connect-your-database.md`, the client-side recipe.
 
 **Alternatives.** Fixed dates, like D14: stable, but stale within weeks. Real machine titles (IPDB): ruled out, synthetic only. A Python generator writing CSV: a second toolchain on the VM, and the files would be too big to commit.
+
+## D80. Small security items (21 Oct, hardening A3)
+**What.** Five small fixes from the technical review:
+1. **Gateway token.** `annex_vm.py` signs the JWT with `exp` (one year after `iat`) and regenerates it on every `provision`, writing it beside the old file and renaming. Deploys recreate the container anyway and a rollback re-provisions, so every release gets a fresh token. The contract says so: read the token from the environment at startup, never store it. Unit test: `vm/tests/test_jwt.py`. PostgREST enforces `exp` on its own.
+2. **Homepage.** The config folder is mounted read-only (`:ro`). **`socket-ro` stays**: a deployed app's tile comes from its Docker labels (`homepage.group`, `homepage.widget.*`, written by `annex deploy`), and only Homepage's Docker provider reads labels, so the provider (and `docker.yaml`) can't go while apps get tiles that way. The static platform tiles keep their `server`/`container` status dots for the same reason: they cost nothing extra once the socket is there, and the only existing `customapi` tile is Status (`/tiles/_status`), which doesn't say which service is down. Homepage's own access is already read-only (`socket-ro` has no POST).
+3. **`owner` and `description`.** `owner` must match `LOGIN_RE` (it decides who sees the app in the console, so free text is an authorisation question), `description` is at most 200 characters with no control characters. Messages say why. The `CHANGE-ME` placeholder `annex init` writes when no owner is given is now refused at deploy, which is the point.
+4. **Demo passwords and ops database passwords off command lines.** `vm/bootstrap-secrets.sh` lets Authelia generate each demo password (`--random`, as `annex_vm.py` does) and writes `users.txt` and `users.yml` together, so `scripts/show-users.sh` still works; if either file is missing, both are made again (new demo passwords). `push.sh` passes the four ops-database passwords to psql through its environment (`docker compose exec -e NAME`) and `annex_ops.sql` reads them with `\getenv` (psql 15+; the image is 16), and the Metabase init script does the same. None shows in `ps` or `docker top`.
+5. **`template1`.** `REVOKE CONNECT ON DATABASE template1 FROM PUBLIC` in `db/appdata/init` (a fresh database) and in `annex_ops.sql` (every push, so the existing VM gets it). product-db is not changed; it is a read-only data store with no per-app databases.
+
+**Why.** Each one closes a small door that was open for convenience in the prototype, with no change to what apps or builders do (apart from `owner`, which was a convention).
+
+**Alternatives.**
+- Homepage without the Docker provider: a static list of apps rendered by `push.sh` or by ops. A new component or a new publish path for every deploy; not worth it for one read-only socket.
+- A shorter token life (a day): needs a way to renew while the app runs; a year with regeneration on every deploy is the smallest change that bounds a leaked token.
+- Passwords from a file with `\set x \`cat ...\``: the same as `\getenv`, with a mount to add.
+
+**Prod:** short-lived tokens minted per request by a deploy API, and rotation of `GATEWAY_JWT_SECRET` (changing it invalidates every token at once; deploys then reissue them).
