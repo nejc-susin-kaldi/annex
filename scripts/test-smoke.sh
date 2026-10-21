@@ -38,6 +38,14 @@ expect "anonymous is sent to login" 302 "$(code "$HOME_URL/")"
 expect "the status page (the console's /status)" 200 "$(code -b "$TMP/cm.jar" "$(setting ANNEX_URL_CONSOLE)/status")"
 expect "Mailpit is admins only" "403 200" "$(code -b "$TMP/cm.jar" "$(setting ANNEX_URL_MAIL)/") $(code -b "$TMP/kaldi-admin.jar" "$(setting ANNEX_URL_MAIL)/")"
 has "annex users lists the accounts" "kaldi-admin" "$("$ANNEX" users list 2>&1)"
+# the demo client's database (Goat Arcade, D77), when it runs and product-db is linked to it
+if [ -n "$(vm "docker ps -q --filter name=^democlient-arcade-db-1\$ --filter health=healthy")" ] \
+   && vm "docker exec annex-product-db-1 psql -XAt -U postgres -d product -c \"SELECT 1 FROM pg_namespace WHERE nspname = 'src_arcade'\"" | grep -qx 1; then
+  expect "Goat Arcade's data answers through the link (machine_floor)" t \
+    "$(vm "docker exec annex-product-db-1 psql -XAt -U postgres -d product -c 'SELECT count(*) > 100 FROM annex_api.machine_floor'" 2>&1)"
+else
+  echo "  skip: Goat Arcade's database isn't running or linked (scripts/democlient.sh up, link)"
+fi
 
 echo "Deploy, identity, gateway"
 selftest_build "$ROOT/.build/selftest-smoke"

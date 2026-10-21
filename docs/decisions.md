@@ -543,3 +543,49 @@ From the review after M2 (Nejc approved fixes 1, 2, 3 and 5; the full test run a
 **Also changed.** `audit.timeline` takes several action prefixes, `failures` and `before` (the CLI's calls are unchanged). Incidents (opening and closing) are merged into the Activity timeline in `console_data`, not in the `audit_timeline` view (D71 stands). Dozzle stays, linked from Platform: the console holds stored app logs, Dozzle the live logs of platform containers. App and platform links are built from `ANNEX_HOST_PATTERN` and `ANNEX_PORT_SUFFIX`, which the console already had. Deploy and rollback rows older than a rollback show as "superseded" instead of "live" (the old page called every successful release "live").
 **Alternatives.** One long app page with anchors (no JavaScript needed, but the point was a short first screen); a client-side dashboard (the CSP and the attack surface were the reasons for none); keeping the Metabase dashboard next to the console's Usage tab (two homes for usage); showing Status to admins as its own tab (Overview contains it).
 **Not done.** A "next run" time for jobs on the Summary (the plan allowed leaving it out). Dropping `metabase_usage` (above).
+
+## D77. A client's own database behind the gateway: Goat Arcade (21 Oct, approved by Nejc)
+**What.** A second, separate Postgres stands in for a client's production database: Goat Arcade d.o.o., a chain of pinball and retro arcades (data: D78). The plan is `docs/plans/democlient.md`. It runs on the VM as its own compose project, `democlient` (`democlient/`, synced to `/srv/annex/democlient` and run by `scripts/democlient.sh`). It has no `com.kaldi.annex` label: Annex doesn't manage, back up, monitor or ship logs from a client's system.
+- **Its one network** is `annex-clientlink` (internal), shared with product-db only. Annex's `compose.yaml` defines the network, because Annex owns the connection; the client's compose file uses it as `external`.
+- **The client gives Annex one login**, `annex_reader`: `SELECT` on schema `arcade`, read-only by default, a 30 s statement timeout, 10 connections at most. Its password is in `secrets/democlient.env`, which the client side generates (`democlient/vm.sh`), not `bootstrap-secrets.sh`.
+- **The link:** product-db uses `postgres_fdw`, already in the official image (`db/product/clientlink/link.sql`):
+  - a server `goat_arcade`, with a user mapping **for `postgres` only**;
+  - the client's tables imported into `src_arcade`, where nobody has grants.
+- **The views:** the curated views in `annex_api` (`db/product/clientlink/api_views_arcade.sql`) read `src_arcade` and run as their owner. So app roles need `SELECT` on the view and nothing else. They have no user mapping and can't reach `src_arcade`, which a test proves.
+- **Applying them:** `scripts/democlient.sh link` connects and applies the views. `push.sh` re-applies the views once `src_arcade` exists. The link SQL is in a subfolder of product-db's init directory, so a fresh product-db never runs it on first start.
+- **The contract is unchanged:** `data.views` and the gateway work as before. The contract's allowlist section now lists both data sets, and says that `GET $ANNEX_GATEWAY_URL/` returns the OpenAPI description, which carries the views' column comments.
+
+**Why.** This is the real engagement: the client's database exists outside Annex, the client grants read-only access, and Annex exposes curated views of it. The demo shows that pattern instead of a database we seeded inside the platform. FDW keeps the gateway exactly as it is: one PostgREST, one allowlist and one place for per-app roles. The client's database stays untouched apart from one login.
+
+**Alternatives.**
+- On `dronky` (option B): realistic as a separate host. But it breaks "never touch dronky", `dronky` is short on memory, and product-db would need a network with LAN access, which also reaches the internet.
+- A second PostgREST pointed at the client's database: the views and per-app roles would then live in the client's database, which a client wouldn't allow. It would also double the gateway, and apps would need a second URL and token (a contract change).
+- Views in the client's database: same objection.
+- Materialized copies in product-db: the data goes stale, and a refresh job is needed. Every view answers in under 0.4 s through FDW, so there's no need.
+
+**Notes.**
+- Filters on `now()` must be written `(SELECT now() - interval ...)` so postgres_fdw sends them to the client as parameters. A plain `now()` isn't shippable, and the whole table would come over.
+- `IMPORT FOREIGN SCHEMA` only adds tables that are missing. Dropping `src_arcade` would drop the views and every app's grants on them, so a changed client table needs its foreign table re-imported by hand (`DROP FOREIGN TABLE src_arcade.x`, link, then `CREATE OR REPLACE` the views).
+- `wipe-vm.sh` removes the democlient container first: it isn't labelled, and it holds `annex-clientlink`.
+- Memory: arcade-db is limited to 192 MiB (86 MiB after the tests); product-db is unchanged (32 MiB).
+
+## D78. The Goat Arcade data (21 Oct, Nejc: arcade chain, emphasis on pinball)
+**What.** `democlient/initdb/sql/seed.sql` generates the data:
+- 9 venues (one closed 120 days ago), 61 fictional models (48 pinball over four eras, plus video and other), 151 cabinets (144 on floors now);
+- 2,500 players and about 245k games over the 180 days before the anchor;
+- about 86k machine events, 670 service tickets, 3.7k weekly coin collections, and 12 tournaments with 750 match rows.
+
+It takes about 63 MB on disk and seeds in under a minute.
+- **Randomness:** every choice comes from `pg_temp.r(key)`, a hash of a text key, never `random()`. The data doesn't depend on row order or plans, and two seeds with the same anchor are identical (checked by md5 of games, events, tickets and collections).
+- **Dates:** relative to an anchor, by default the seed day, so the data ends yesterday. `scripts/democlient.sh reseed [--anchor D]` makes it current before a demo. This differs from D14's fixed dates, because "last 7 days" apps are what people build.
+- **Seven planted stories**, each proven by `democlient/checks.sql` (`scripts/democlient.sh check`): a dying machine, a champion player, a venue that lost its stars, weekly rhythm with a league night, era taste, a tilt-happy cabinet, an upcoming tournament.
+- **The schema is written like a real one:** free-text status and condition with inconsistent casing, soft deletes, GDPR-erased players, a legacy `cab_no`, JSON hours and status history. The views clean it up.
+- **Personal data stays out of the views:** player and technician names (except the technician's name on a ticket), emails, phones, birth dates, pay and venue rent. A test proves it.
+
+**Handoff.** `docs/goat-arcade/` holds:
+- `README.md` for the person;
+- `agent-brief.md` for their coding agent;
+- `data-dictionary.md`, generated from the view comments by `scripts/democlient.sh dictionary`;
+- `connect-your-database.md`, the client-side recipe.
+
+**Alternatives.** Fixed dates, like D14: stable, but stale within weeks. Real machine titles (IPDB): ruled out, synthetic only. A Python generator writing CSV: a second toolchain on the VM, and the files would be too big to commit.

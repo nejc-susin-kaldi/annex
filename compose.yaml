@@ -151,7 +151,7 @@ services:
     volumes:
       - ${ANNEX_DATA_DIR}/state/product-db:/var/lib/postgresql/data
       - ./db/product:/docker-entrypoint-initdb.d:ro
-    networks: [product]
+    networks: [product, clientlink]
     shm_size: 128m
     mem_limit: 384m
     healthcheck:
@@ -512,6 +512,11 @@ networks:
   # product-db, gateway, metabase; apps are never on it
   product:
     name: annex-product
+    internal: true
+    labels: {com.kaldi.annex: "true"}
+  # product-db and a client's own database (democlient/, D77): product-db reads it through postgres_fdw
+  clientlink:
+    name: annex-clientlink
     internal: true
     labels: {com.kaldi.annex: "true"}
   # appdata-db, apps, metabase

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Return the VM to empty: removes every Annex container, network, volume and image,
-# the build cache, and everything under /srv/annex (secrets included).
+# Return the VM to empty: removes every Annex container, network, volume and image, the demo client's
+# database (democlient, D77), the build cache, and everything under /srv/annex (secrets included).
 # bootstrap.sh + push.sh bring it back with new secrets and passwords.
 source "$(dirname "$0")/lib.sh"
 
@@ -16,6 +16,8 @@ vm bash -s -- "$DATA" "$HELPER" <<'REMOTE'
 set -euo pipefail
 DATA=$1 HELPER=$2
 platform_images=$(sed -n 's/^ *image: //p' "$DATA"/platform/compose*.yaml 2>/dev/null | sort -u || true)
+# the demo client's database isn't labelled (it isn't Annex's), but it holds annex-clientlink and lives in /srv/annex
+echo "-- demo client"; docker ps -aq --filter label=com.docker.compose.project=democlient | xargs -r docker rm -f
 echo "-- containers"; docker ps -aq --filter label=com.kaldi.annex=true | xargs -r docker rm -f
 echo "-- networks";   docker network ls -q --filter label=com.kaldi.annex=true | xargs -r docker network rm
 echo "-- volumes";    docker volume ls -q --filter label=com.kaldi.annex=true | xargs -r docker volume rm

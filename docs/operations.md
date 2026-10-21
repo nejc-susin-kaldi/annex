@@ -142,3 +142,12 @@ Annex doesn't need a company SSO: it has its own accounts (Authelia's file backe
 - **Metabase** keeps its own accounts (D9): add one there too if the person needs Metabase.
 - **The three demo users** (`sam`, `cm`, `kaldi-admin`) have their passwords in `secrets/users.txt` for `scripts/show-users.sh` and the test suites. `annex users reset <demo-user> --print-password` updates that file; if a demo user changes or resets their own password by email, the file no longer matches.
 
+## The demo client's database: Goat Arcade (D77, D78)
+A stand-in for a client's own production database: compose project `democlient` (`democlient/`, on the VM in `/srv/annex/democlient`). It isn't part of the platform, so `push.sh` doesn't start it, and backups, alerts, the console and log shipping ignore it. product-db reads it through postgres_fdw, and apps see it only as the Goat Arcade views on the gateway. Handoff docs: `docs/goat-arcade/`.
+- **Start and link** (once, after `push.sh`): `scripts/democlient.sh up`, then `scripts/democlient.sh link`.
+- **Before a demo or a handoff:** `scripts/democlient.sh reseed` (asks first). The data then ends yesterday. `scripts/democlient.sh check` should print seven `t` rows (the planted stories), and `status` prints the counts, the anchor date and the link.
+- **A view changed:** edit `db/product/clientlink/api_views_arcade.sql`, then `scripts/push.sh` (it re-applies the views once linked) and `scripts/democlient.sh dictionary` (regenerates `docs/goat-arcade/data-dictionary.md`). `CREATE OR REPLACE VIEW` keeps apps' grants. A view whose columns change shape must be dropped, and every app reading it must be deployed again to get its grant back.
+- **A client table changed:** drop its foreign table (`DROP FOREIGN TABLE src_arcade.<t>`) and run `link` again. Never drop `src_arcade`: that drops the views and every app's grants on them.
+- **Stop:** `scripts/democlient.sh down` keeps the data. While it's down, the Goat Arcade views fail with a connection error, and everything else works.
+- **Where:** `/srv/annex/democlient` (compose and SQL), `state/democlient-db` (its data), `secrets/democlient.env` (its admin password, and `annex_reader`'s password, which product-db's user mapping also holds).
+

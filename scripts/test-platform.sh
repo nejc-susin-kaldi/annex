@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # M0.1 acceptance checks, run from the Mac through the SSH tunnel:
 #   health of every container, login for all demo users, access rules,
-#   identity-header spoofing, Metabase, and network isolation of product-db.
+#   identity-header spoofing, Metabase, network isolation of product-db, and the demo client's
+#   database behind the gateway (D77; skipped when it isn't running).
 # Needs the extras profile running (scripts/extras.sh on) for the Metabase and
 # Dozzle checks; they are skipped otherwise.
 source "$(dirname "$0")/lib.sh"
@@ -109,4 +110,44 @@ for net in annex-edge annex-appdata; do
   expect "app network $net cannot reach product-db by IP" 2 "$(probe "$net" "$pdb_ip")"
 done
 expect "control: appdata network reaches appdata-db" 0 "$(probe annex-appdata appdata-db)"
+
+echo "Demo client database (Goat Arcade, D77)"
+pdb() { vm "docker exec -i annex-product-db-1 psql -XAt -U postgres -d product" 2>&1; }
+if [ -z "$(vm "docker ps -q --filter name=^democlient-arcade-db-1\$ --filter health=healthy")" ]; then
+  echo "  skip: the demo client's database isn't running (scripts/democlient.sh up, then link)"
+elif [ "$(pdb <<<"SELECT 1 FROM pg_namespace WHERE nspname = 'src_arcade'")" != 1 ]; then
+  echo "  skip: product-db isn't linked to the demo client's database (scripts/democlient.sh link)"
+else
+  ARC=annex-selftest-arcade
+  on_exit "selftest_remove $ARC"
+  selftest_build "$ROOT/.build/selftest-arcade" --name $ARC --drop notify,webhooks --views leaderboard,machine_floor
+  out=$(selftest_deploy "$ROOT/.build/selftest-arcade") && ok "deploy $ARC with views leaderboard, machine_floor" \
+    || bad "deploy $ARC" "$(tail -3 <<<"$out")"
+  ARC_URL="https://${PATTERN//\{name\}/$ARC}$(setting ANNEX_PORT_SUFFIX)"
+  gw() { c -b "$TMP/cm.jar" "$ARC_URL/gateway/$1"; }
+  has "a granted view reads the client's data: leaderboard" '"rows": 5' "$(gw leaderboard)"
+  has "a granted view reads the client's data: machine_floor" '"rows": 5' "$(gw machine_floor)"
+  has_re "a view the app didn't request is denied: player_profiles" '"status": 40[13]' "$(gw player_profiles)"
+  has "the app's role can't read the client's raw tables (src_arcade)" "permission denied for schema src_arcade" \
+    "$(pdb <<<"SET ROLE app_${ARC//-/_}; SELECT count(*) FROM src_arcade.games;")"
+  expect "only postgres (the views' owner) has a user mapping to the client's database" postgres \
+    "$(pdb <<<"SELECT string_agg(usename, ',') FROM pg_user_mappings WHERE srvname = 'goat_arcade';")"
+  expect "the views run as their owner (no security_invoker)" 0 \
+    "$(pdb <<<"SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'annex_api' AND 'security_invoker=true' = ANY (c.reloptions);")"
+  expect "no personal data in the views (names, emails, phones, birth dates, pay, rent)" "" \
+    "$(pdb <<<"SELECT string_agg(table_name || '.' || column_name, ', ') FROM information_schema.columns WHERE table_schema = 'annex_api' AND column_name ~ '(full_name|email|phone|birth|hourly_rate|monthly_rent)';")"
+  spec=$(vm "docker exec annex-app-$ARC python -c 'import os, urllib.request; print(urllib.request.urlopen(urllib.request.Request(os.environ[\"ANNEX_GATEWAY_URL\"] + \"/\", headers={\"Authorization\": \"Bearer \" + os.environ[\"ANNEX_GATEWAY_TOKEN\"]})).read().decode())'" 2>&1)
+  has "the gateway's OpenAPI carries the data dictionary (column comments)" "Three-letter initials" "$spec"
+  hasnt "  ...and shows the app only its own views" '"/player_profiles"' "$spec"
+  has_re "the client's reader login can't write" "read-only transaction|permission denied" \
+    "$(vm "docker exec democlient-arcade-db-1 psql -XAt -U annex_reader -d arcade -c 'CREATE TABLE arcade.annex_was_here (i int)'" 2>&1)"
+  arc_ip=$(vm "docker inspect democlient-arcade-db-1 --format '{{(index .NetworkSettings.Networks \"annex-clientlink\").IPAddress}}'")
+  expect "control: the link network reaches arcade-db" 0 "$(probe annex-clientlink arcade-db)"
+  for net in annex-edge annex-appdata annex-product; do
+    expect "network $net cannot resolve arcade-db" 2 "$(probe "$net" arcade-db)"
+    expect "network $net cannot reach arcade-db by IP" 2 "$(probe "$net" "$arc_ip")"
+  done
+  expect "annex-clientlink has exactly product-db and arcade-db" "annex-product-db-1 democlient-arcade-db-1" \
+    "$(vm "docker network inspect annex-clientlink --format '{{range .Containers}}{{.Name}} {{end}}'" | tr ' ' '\n' | grep . | sort | xargs)"
+fi
 finish

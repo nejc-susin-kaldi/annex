@@ -1,0 +1,48 @@
+# The client's own system: Goat Arcade's production database (synthetic, D77). NOT part of the Annex platform:
+# no com.kaldi.annex label, so Annex doesn't manage, back up, monitor or ship logs from it. It runs from
+# /srv/annex/democlient (scripts/democlient.sh) and its only network is annex-clientlink, shared with product-db.
+name: democlient
+
+services:
+  arcade-db:
+    image: postgres:16.15-alpine3.24
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - max_connections=20
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - effective_cache_size=128MB
+      - -c
+      - "log_line_prefix=%m [%p] %u@%d "
+    env_file: ../secrets/democlient.env
+    environment:
+      POSTGRES_DB: arcade
+      TZ: Europe/Ljubljana
+      ARCADE_ANCHOR: ${ARCADE_ANCHOR:-}
+    volumes:
+      - ../state/democlient-db:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    networks: [clientlink]
+    shm_size: 128m
+    mem_limit: 192m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # healthy only once the seed has finished (its last step grants annex_reader): a failed first start, which
+      # Postgres never retries, stays unhealthy instead of serving half a database
+      test: ["CMD-SHELL", "psql -h 127.0.0.1 -U postgres -d arcade -tAc \"SELECT has_schema_privilege('annex_reader', 'arcade', 'USAGE')\" | grep -qx t"]
+      interval: 10s
+      timeout: 3s
+      start_period: 300s
+
+networks:
+  clientlink:
+    name: annex-clientlink
+    external: true

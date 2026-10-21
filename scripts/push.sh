@@ -32,6 +32,11 @@ log "Applying gateway allowlist (db/product/api_views.sql)"
 vm "cd $DATA/platform && for f in api_views.sql gateway.sql; do
       docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' product-db psql -q -v ON_ERROR_STOP=1 -U postgres -d product -f /docker-entrypoint-initdb.d/\$f
     done"
+# the demo client's views (D77), once scripts/democlient.sh link has connected product-db to its database
+if vm "cd $DATA/platform && docker compose exec -T product-db psql -XAt -U postgres -d product -c \"SELECT 1 FROM pg_namespace WHERE nspname = 'src_arcade'\"" | grep -qx 1; then
+  log "Applying the Goat Arcade views (db/product/clientlink/api_views_arcade.sql)"
+  vm "cd $DATA/platform && docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' product-db psql -q -X -v ON_ERROR_STOP=1 -U postgres -d product -f /docker-entrypoint-initdb.d/clientlink/api_views_arcade.sql"
+fi
 
 if vm "cd $DATA/platform && docker compose ps --status running --services | grep -qx metabase"; then
   log "Configuring Metabase"

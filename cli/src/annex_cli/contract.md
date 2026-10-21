@@ -156,6 +156,10 @@ If the deploy rejects something, the error says what to change.
 | each declared secret | `secrets` |
 
 ## Gateway views (allowlist)
+Two synthetic data sets. `GET $ANNEX_GATEWAY_URL/` with your token returns an OpenAPI description of your app's views, with every column explained (Goat Arcade's views have one).
+
+**Wealth management** (the product database):
+
 | View | Columns |
 |---|---|
 | `client_summary` | client_id, client_name, segment, risk_profile, country, advisor_name, account_count, aum_eur, onboarded_on |
@@ -163,7 +167,25 @@ If the deploy rejects something, the error says what to change.
 | `monthly_positions` | month_end, client_id, client_name, account_id, symbol, instrument_name, asset_class, quantity, price, market_value_eur |
 | `advisor_book` | advisor_name, clients, aum_eur, avg_client_aum_eur |
 
-All data is synthetic. Adding a view is a reviewed change by the platform team, in `db/product/api_views.sql`.
+**Goat Arcade** (a chain of pinball and retro arcades; the client's own database, read through the gateway; the data covers the last 180 days):
+
+| View | Columns |
+|---|---|
+| `venues` | venue_code, venue_name, city, country, lat, lon, opened_on, opening_hours (JSON by weekday), machines, pinball_machines |
+| `machine_models` | model_id, title, manufacturer, manufacturer_country, release_year, era (EM, SS, DMD, LCD), era_name, machine_type (pinball, video, other), theme, designer, flippers, max_multiball, ramps, modes, toys, cabinets_on_floor |
+| `machine_floor` | machine_id, serial_no, venue_code, venue_name, city, model_id, title, manufacturer, release_year, era, machine_type, condition, price_per_play_eur, installed_on, games_7d, games_30d, last_played_at, open_ticket, out_of_order, last_service_at |
+| `leaderboard` | model_id, title, rank (1-10), handle, nickname, score, venue_code, played_at, machine_id |
+| `player_profiles` | player_id, handle, nickname, home_venue_code, member_since, rating, games_180d, venues_played, last_played_at, leaderboard_spots, best_rank |
+| `daily_plays` | day, venue_code, machine_id, title, era, machine_type, games, credits, revenue_eur, avg_duration_s, tilts, members |
+| `machine_events_daily` | day, machine_id, title, current_venue_code, event_type (tilt, slam_tilt, ball_search, coil_fault, switch_fault, jackpot, replay, match), events |
+| `service_log` | ticket_id, machine_id, serial_no, title, current_venue_code, opened_at, closed_at, status, symptom, resolution, reported_by, took_machine_off_floor, downtime_hours, technician, labour_hours, parts_cost_eur, parts |
+| `revenue_weekly` | week_start, venue_code, venue_name, city, amount_eur, coins_eur, tokens, card_plays, machines |
+| `tournaments` | tournament_id, name, venue_code, venue_name, starts_on, format, status, entry_fee_eur, max_players, entries, winner_handle, winner_nickname |
+| `tournament_standings` | tournament_id, tournament_name, starts_on, position, handle, nickname, points, games_played, best_score |
+
+Views can't be joined on the gateway: read each one and join in your code, on venue_code, machine_id, model_id or nickname. The gateway doesn't group or sum either, so the views come pre-aggregated (per day, per week); filter them (`?day=gte.2026-10-01`) rather than reading everything.
+
+All data is synthetic. Adding a view is a reviewed change by the platform team, in `db/product/api_views.sql` (wealth) or `db/product/clientlink/api_views_arcade.sql` (Goat Arcade).
 
 ## Commands
 | Command | Does |

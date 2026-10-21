@@ -83,6 +83,18 @@ virsh -c qemu:///system undefine annex --snapshots-metadata --remove-all-storage
   ```bash
   scripts/bootstrap.sh && scripts/push.sh
   ```
+- **Remove only the demo client's database** (Goat Arcade, D77), keeping the platform. The views stay in `annex_api`, but they fail until it's back. To drop them too: `DROP SCHEMA src_arcade CASCADE; DROP SERVER goat_arcade CASCADE;` in product-db, then redeploy any app that used them without those views.
+  ```bash
+  scripts/democlient.sh down
+  ```
+  ```bash
+  ssh annex 'rm -rf /srv/annex/democlient /srv/annex/state/democlient-db /srv/annex/secrets/democlient.env'
+  ```
+  The state directory belongs to the container's postgres user. If `rm` is refused for it, remove it as root from the same image:
+  ```bash
+  ssh annex 'docker run --rm --network none -v /srv/annex/state:/state --entrypoint rm postgres:16.15-alpine3.24 -rf /state/democlient-db'
+  ```
+  `wipe-vm.sh` removes all of it too.
 - **Reset only the demo content** (apps, report history), keeping the platform and passwords:
   ```bash
   scripts/reset-demo.sh

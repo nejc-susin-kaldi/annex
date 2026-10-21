@@ -15,6 +15,7 @@ lines, everything else is one `key: value` line, so a variant is a few text edit
   --env K=V          set or add an `env:` entry (SELFTEST_LOG=plain, SELFTEST_MARKER=..., SELFTEST_BAD_MIGRATION=1, ...)
   --secret NAME      declare one more secret
   --no-views         no gateway views (data.views: [])
+  --views a,b        these gateway views instead of the fixture's (e.g. the demo client's: leaderboard,machine_floor)
 """
 import argparse
 import re
@@ -74,6 +75,8 @@ def build(a: argparse.Namespace) -> None:
         y = y.replace("postgres: true", "postgres: false")
     if a.no_views:
         y = re.sub(r"^  views: \[.*?\]", "  views: []", y, flags=re.M)
+    if a.views:
+        y = re.sub(r"^  views: \[.*?\]", "  views: [" + ", ".join(v for v in a.views.split(",") if v) + "]", y, flags=re.M)
     for kv in a.env or []:
         k, _, v = kv.partition("=")
         y = set_env(y, k, v)
@@ -92,6 +95,7 @@ def main() -> None:
     b.add_argument("--broken-health", action="store_true")
     b.add_argument("--no-postgres", action="store_true")
     b.add_argument("--no-views", action="store_true")
+    b.add_argument("--views")
     b.add_argument("--env", action="append")
     b.add_argument("--secret", action="append")
     b.set_defaults(fn=build)

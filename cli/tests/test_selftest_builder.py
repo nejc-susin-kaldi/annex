@@ -18,9 +18,9 @@ from annex_cli import manifest as mf  # noqa: E402
 def build(*args: str) -> Path:
     out = Path(tempfile.mkdtemp()) / "app"
     a = selftest.argparse.Namespace(out=str(out), name="annex-selftest", owner="sam", drop=None, job_only=False, broken_health=False,
-                                    no_postgres=False, no_views=False, env=None, secret=None)
+                                    no_postgres=False, no_views=False, views=None, env=None, secret=None)
     p = selftest.argparse.ArgumentParser()
-    for flag in ("--name", "--owner", "--drop"):
+    for flag in ("--name", "--owner", "--drop", "--views"):
         p.add_argument(flag, default=getattr(a, flag[2:]))
     for flag in ("--job-only", "--broken-health", "--no-postgres", "--no-views"):
         p.add_argument(flag, action="store_true")
@@ -65,6 +65,10 @@ class Variants(unittest.TestCase):
                             "--env", "SELFTEST_GREETING=Hi", "--secret", "AUDIT_KEY", "--no-postgres", "--no-views", "--drop", "webhooks"))
         self.assertEqual((m.healthcheck, m.name, m.owner, m.postgres, m.views), ("/nope", "annex-selftest-x", "kaldi-admin", False, []))
         self.assertEqual((m.env["SELFTEST_MARKER"], m.env["SELFTEST_GREETING"], m.secrets), ("m 1", "Hi", ["AUDIT_KEY"]))
+
+    def test_views_replace_the_fixtures_views(self):
+        m = self.load(build("--views", "leaderboard,machine_floor"))
+        self.assertEqual(m.views, ["leaderboard", "machine_floor"])
 
     def test_an_existing_env_entry_is_replaced_not_duplicated(self):
         out = build("--env", "SELFTEST_MARKER=once", "--env", "SELFTEST_MARKER=twice")
