@@ -16,6 +16,8 @@ class AnnexError(Exception):
 
 
 class Remote:
+    step: str | None = None  # what a deploy or rollback is doing, for the timeout message (set by ops._Lock)
+
     def __init__(self) -> None:
         self.host = os.environ.get("ANNEX_SSH_HOST", "annex")
         self.data = os.environ.get("ANNEX_DATA_DIR", "/srv/annex")
@@ -29,11 +31,21 @@ class Remote:
             timeout: int = 900) -> subprocess.CompletedProcess:
         """Run a bash script on the VM and capture its output."""
         data = input.encode() if isinstance(input, str) else input
-        r = subprocess.run([*self.ssh, "bash -c " + shlex.quote(script)], input=data,
-                           capture_output=True, timeout=timeout)
+        try:
+            r = subprocess.run([*self.ssh, "bash -c " + shlex.quote(script)], input=data,
+                               capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise AnnexError(self.timeout_message(timeout)) from None
         if check and r.returncode != 0:
             raise AnnexError(self._msg(r))
         return r
+
+    def timeout_message(self, timeout: int) -> str:
+        step = f" at the {self.step} step" if self.step else ""
+        return (f"The VM ({self.host}) didn't answer within {timeout} s{step}: the SSH connection or the command hung. "
+                "If a deploy or rollback was running, Annex has tried to record it as failed and release its lock; "
+                "if the VM was unreachable, the lock expires after 30 minutes and the next deploy of the app takes it "
+                "over and reconciles the release it left (see annex releases <app>)")
 
     def path(self, *parts: str) -> str:
         """A path under the data directory, quoted for use in a script."""
@@ -46,10 +58,10 @@ class Remote:
         """Run a script with output going straight to the terminal (logs -f)."""
         return subprocess.run([*self.ssh, "-t", "bash -c " + shlex.quote(script)]).returncode
 
-    def vm(self, *args: str, input: str | None = None) -> dict:
+    def vm(self, *args: str, input: str | None = None, timeout: int = 900) -> dict:
         """Call vm/annex_vm.py on the VM; it always answers with one JSON object."""
         cmd = "python3 " + shlex.quote(f"{self.data}/platform/vm/annex_vm.py") + " " + " ".join(map(shlex.quote, args))
-        r = self.run(cmd, input=input, check=False)
+        r = self.run(cmd, input=input, check=False, timeout=timeout)
         try:
             res = json.loads(r.stdout.decode().strip().splitlines()[-1])
         except (IndexError, json.JSONDecodeError):
