@@ -177,6 +177,6 @@ DROP OWNED BY metabase_usage;
 DROP ROLE metabase_usage;
 SQL
 ```
-and then tell the build agent to remove the role, `APPDATA_DB_METABASE_USAGE_PASSWORD` and `usage_pw` from `annex_ops.sql`, `scripts/push.sh` and `vm/bootstrap-secrets.sh` (until then a push would create the role again).
+and then tell the build agent to remove the role, `APPDATA_DB_METABASE_USAGE_PASSWORD` and `usage_pw` from `db/appdata/bootstrap.sql`, `scripts/push.sh` and `vm/bootstrap-secrets.sh` (until then a push would create the role again).
 
 Undo: check out the commit before M2.9 and run `scripts/push.sh --extras`; `vm/metabase-setup.sh` of that commit creates the connection, cards and dashboard again (the history in the usage tables is untouched, so the charts fill in at once).

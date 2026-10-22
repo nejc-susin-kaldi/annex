@@ -1,48 +1,7 @@
--- The annex-ops service's database (apps' email/Slack grants and the send log).
--- Idempotent: scripts/push.sh applies it on every push, as postgres, with
---   psql -d postgres -f -
--- with APPDATA_DB_OPS_PASSWORD, APPDATA_DB_METABASE_USAGE_PASSWORD, APPDATA_DB_HOOKS_PASSWORD and
--- APPDATA_DB_CONSOLE_PASSWORD in psql's environment (read by \getenv below; D80: no password on a command line).
--- It lives here and not in init/, because init/ only runs on a fresh database.
--- Later milestones append their tables to this file.
-\getenv ops_pw APPDATA_DB_OPS_PASSWORD
-\getenv usage_pw APPDATA_DB_METABASE_USAGE_PASSWORD
-\getenv hooks_pw APPDATA_DB_HOOKS_PASSWORD
-\getenv console_pw APPDATA_DB_CONSOLE_PASSWORD
--- template1 is where every new database starts: nobody but superusers needs to connect to it (D80). init/ does the
--- same on a fresh database; this line covers one that already exists.
-REVOKE CONNECT ON DATABASE template1 FROM PUBLIC;
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'annex_ops') THEN CREATE ROLE annex_ops LOGIN; END IF;
-END $$;
-ALTER ROLE annex_ops WITH LOGIN PASSWORD :'ops_pw';
-SELECT 'CREATE DATABASE annex_ops OWNER annex_ops' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'annex_ops')
-\gexec
-REVOKE CONNECT ON DATABASE annex_ops FROM PUBLIC;
-GRANT CONNECT ON DATABASE annex_ops TO annex_ops;
--- Metabase's read-only usage role (M1.4; retired in M2.9: the console shows usage and nothing connects as this role any more.
--- Kept until a human has removed Metabase's "Annex usage" connection and dropped it: docs/setup.md, step 8)
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'metabase_usage') THEN CREATE ROLE metabase_usage LOGIN; END IF;
-END $$;
-ALTER ROLE metabase_usage WITH LOGIN PASSWORD :'usage_pw';
-GRANT CONNECT ON DATABASE annex_ops TO metabase_usage;
--- The webhook receiver's role (its own container, D55): it may only add events; its grants are at the end
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'annex_hooks') THEN CREATE ROLE annex_hooks LOGIN; END IF;
-END $$;
-ALTER ROLE annex_hooks WITH LOGIN PASSWORD :'hooks_pw';
-GRANT CONNECT ON DATABASE annex_ops TO annex_hooks;
-
--- The console's role (M2.4, its own container): read-only, and only what its pages show (grants at the end of this file)
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'annex_console') THEN CREATE ROLE annex_console LOGIN; END IF;
-END $$;
-ALTER ROLE annex_console WITH LOGIN PASSWORD :'console_pw';
-GRANT CONNECT ON DATABASE annex_ops TO annex_console;
-
-\c annex_ops
-SET ROLE annex_ops;
+-- 001: the annex_ops schema as it was before the hardening tables (M1.2-M2.9). Idempotent, so it applies cleanly on a
+-- database that already has everything (the live VM, which ran this file on every push before C3, D93). Applied once by
+-- vm/migrate.py, as role annex_ops, in one transaction. Roles, the database and passwords are in ../bootstrap.sql.
+-- Never edit an applied migration: a change is a new file.
 
 CREATE SCHEMA IF NOT EXISTS annex_ops;
 
@@ -155,15 +114,6 @@ LEFT JOIN r7 USING (app) LEFT JOIN rprev USING (app) LEFT JOIN r30 USING (app) L
 LEFT JOIN wk USING (app) LEFT JOIN annex_ops.app_signals g USING (app)
 WHERE s.removed_at IS NULL;
 
--- B3: the view's result, stored by the 10-minute rollup, so a page or a status call reads one row per app instead of
--- aggregating the raw requests (which D76's console does on every load). Same columns as `usage_apps`; `signal` is
--- refreshed by the rollup after the verdicts are written. The view stays for one release.
-CREATE TABLE IF NOT EXISTS annex_ops.usage_rollup_apps (
-  app text PRIMARY KEY, first_seen timestamptz NOT NULL, last_used timestamptz,
-  users_7d bigint NOT NULL, users_prev_7d bigint NOT NULL, users_30d bigint NOT NULL,
-  requests_7d int NOT NULL, errors_7d int NOT NULL, error_rate_7d numeric NOT NULL, p95_7d int,
-  week1 int, week2 int, week3 int, week4 int, signal text, refreshed_at timestamptz NOT NULL DEFAULT now());
-
 -- Metabase's usage connection: summaries and the view, and nothing else (not requests, sends, incidents or grants)
 REVOKE ALL ON ALL TABLES IN SCHEMA annex_ops FROM metabase_usage;
 GRANT USAGE ON SCHEMA annex_ops TO metabase_usage;
@@ -222,8 +172,6 @@ CREATE TABLE IF NOT EXISTS annex_ops.logs (
 CREATE UNIQUE INDEX IF NOT EXISTS logs_dedupe ON annex_ops.logs (ts, h);
 CREATE INDEX IF NOT EXISTS logs_app_ts ON annex_ops.logs (app, ts DESC);
 CREATE INDEX IF NOT EXISTS logs_app_release ON annex_ops.logs (app, release, ts DESC);
--- B3: the gateway scan and the per-container readers (a parent index: existing partitions get it now, new ones are born with it)
-CREATE INDEX IF NOT EXISTS logs_container_ts ON annex_ops.logs (container, ts DESC);
 CREATE INDEX IF NOT EXISTS logs_request ON annex_ops.logs (request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS logs_search ON annex_ops.logs USING gin ((msg || ' ' || coalesce(fields::text, '')) gin_trgm_ops);
 
@@ -291,7 +239,7 @@ REVOKE ALL ON ALL TABLES IN SCHEMA annex_ops FROM annex_console;
 GRANT USAGE ON SCHEMA annex_ops TO annex_console;
 GRANT SELECT ON annex_ops.logs, annex_ops.releases, annex_ops.error_groups, annex_ops.error_events,
   annex_ops.incidents, annex_ops.job_runs, annex_ops.requests, annex_ops.usage_daily, annex_ops.usage_weekly,
-  annex_ops.usage_apps, annex_ops.usage_rollup_apps, annex_ops.app_seen, annex_ops.app_signals TO annex_console;
+  annex_ops.usage_apps, annex_ops.app_seen, annex_ops.app_signals TO annex_console;
 GRANT SELECT (id, app, hook, received_at, status, content_type, attempts, next_attempt_at, delivered_at, last_error, replay_of)
   ON annex_ops.hook_events TO annex_console;
 
@@ -349,46 +297,3 @@ CREATE TABLE IF NOT EXISTS annex_ops.host_samples (
 );
 CREATE INDEX IF NOT EXISTS host_samples_ts ON annex_ops.host_samples (ts);
 GRANT SELECT ON annex_ops.host_samples TO annex_console;
-
--- --- B4 (D84): connections per database ------------------------------------------------------------------------
--- The console's Platform page shows how many connections each database holds against max_connections. pg_stat_database
--- is readable by every role and carries `numbackends` per database, so no pg_stat_activity (other roles' rows are hidden
--- from non-superusers), no SECURITY DEFINER and no pg_monitor grant: the view exposes counts and database names only,
--- never a query, a role or an address. A new view; nothing existing changes.
-CREATE OR REPLACE VIEW annex_ops.db_connections AS
-  SELECT datname AS database, numbackends AS connections, current_setting('max_connections')::int AS max_connections
-  FROM pg_catalog.pg_stat_database
-  WHERE datname IS NOT NULL AND datname NOT LIKE 'template%';
-GRANT SELECT ON annex_ops.db_connections TO annex_console;
-
--- --- B5 (D90): alert messages off the engine thread, and the engine's timers across a restart -------------------------
--- One row per message the alert engine owes (an incident opened, reminded or resolved). The engine thread adds it; the
--- sender thread (ops/annex_ops/sender.py) composes it once into `message` (title, body, recipients, and per delivery
--- (the email, each Slack channel) whether it went out), sends it and retries what failed: 3 attempts, then `failed`.
--- A delivered part is marked the moment it is sent, so a restart never sends it twice. Kept 30 days after it finished.
-CREATE TABLE IF NOT EXISTS annex_ops.outbox (
-  id              bigserial PRIMARY KEY,
-  created_at      timestamptz NOT NULL DEFAULT now(),
-  kind            text NOT NULL CHECK (kind IN ('open', 'remind', 'resolve')),
-  subject         text NOT NULL,                 -- app:<a> | job:<a>/<job> | platform:<service>
-  action          jsonb NOT NULL,                -- what the engine said, in wall time: signals, opened_at, duration_s
-  message         jsonb,                         -- composed by the sender at its first attempt (has addresses)
-  status          text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
-  attempts        int NOT NULL DEFAULT 0,
-  next_attempt_at timestamptz,                   -- for people: the sender keeps its own (monotonic) retry times
-  finished_at     timestamptz,
-  last_error      text
-);
-CREATE INDEX IF NOT EXISTS outbox_pending ON annex_ops.outbox (id) WHERE status = 'pending';
-CREATE INDEX IF NOT EXISTS outbox_created ON annex_ops.outbox (created_at DESC);
--- The engine's counters and timers that Docker can't give back after an ops restart: per container (`ctr:<id>`) when it
--- stopped, its last exit and its recent crashes; `host:mem_low_since`. Written when they change, in wall time; a row
--- disappears when the container is forgotten. Everything else the engine knows is rebuilt at start (D90 lists it).
-CREATE TABLE IF NOT EXISTS annex_ops.engine_state (
-  key        text PRIMARY KEY,
-  value      jsonb NOT NULL,
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
--- the console's Platform page lists the messages that weren't delivered: no `message` or `action` (addresses, log lines)
-GRANT SELECT (id, created_at, kind, subject, status, attempts, next_attempt_at, finished_at, last_error)
-  ON annex_ops.outbox TO annex_console;
