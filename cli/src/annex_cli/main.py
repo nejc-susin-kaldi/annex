@@ -41,6 +41,40 @@ def _job_line(j: dict) -> str:
             + (f" ({j['error']})" if j.get("error") else ""))
 
 
+def secret_pairs(args: list[str], from_file: str | None, stdin) -> tuple[list[str], list[str]]:
+    """(KEY=VALUE pairs, warnings) for `secret set`. A bare KEY takes its value from --from-file or stdin, so it
+    stays out of shell history and the process list; KEY=VALUE still works but warns (D85)."""
+    bare = [x for x in args if "=" not in x]
+    pairs = [x for x in args if "=" in x]
+    warnings = []
+    if pairs:
+        warnings.append(f"{', '.join(p.partition('=')[0] for p in pairs)}: the value is now in your shell history and the process "
+                        "list. Prefer `annex secret set <app> KEY` and type or pipe the value on stdin (or use --from-file PATH)")
+    if from_file and not bare:
+        raise AnnexError("--from-file needs a bare KEY to put the file's content in: annex secret set <app> KEY --from-file PATH")
+    if len(bare) > 1:
+        raise AnnexError(f"{', '.join(bare)}: only one KEY at a time can take its value from stdin or --from-file; "
+                         "run the command once per key")
+    if bare:
+        if from_file:
+            try:
+                value = Path(from_file).read_text()
+            except OSError as e:
+                raise AnnexError(f"cannot read {from_file}: {e.strerror or e}") from e
+        elif stdin.isatty():
+            import getpass
+            value = getpass.getpass(f"Value for {bare[0]} (hidden): ")
+        else:
+            value = stdin.read()
+        value = value[:-1] if value.endswith("\n") else value
+        if value == "" or "\n" in value or "\r" in value:
+            raise AnnexError(f"the value for {bare[0]} must be one non-empty line (got "
+                             f"{'nothing' if value == '' else 'several lines'}). Pipe it in, e.g. "
+                             f"`printf %s \"$VALUE\" | annex secret set <app> {bare[0]}`")
+        pairs.append(f"{bare[0]}={value}")
+    return pairs, warnings
+
+
 def _users(a: argparse.Namespace, emit) -> None:
     c = a.users_cmd
     if c == "list":
@@ -151,9 +185,11 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("job")
     s = sub.add_parser("secret", help="manage app secrets (human only)")
     ss = s.add_subparsers(dest="secret_cmd", required=True)
-    s = ss.add_parser("set", help="store KEY=VALUE secrets for an app on the VM")
+    s = ss.add_parser("set", help="store a secret for an app on the VM: KEY reads the value from stdin (or --from-file); "
+                                  "KEY=VALUE works but leaves the value in shell history")
     s.add_argument("app")
-    s.add_argument("pairs", nargs="+", metavar="KEY=VALUE")
+    s.add_argument("pairs", nargs="+", metavar="KEY", help="KEY (value on stdin) or KEY=VALUE (warns)")
+    s.add_argument("--from-file", metavar="PATH", help="read the value of a bare KEY from this file instead of stdin")
     s = sub.add_parser("remove", help="remove an app (human only)")
     s.add_argument("app")
     s.add_argument("--keep-data", action="store_true", help="keep its database, files and secrets")
@@ -365,7 +401,10 @@ def main(argv: list[str] | None = None) -> None:
             emit(res) if emit else print(f"{res['output']}--\n{a.app}/{a.job} exited {res['exit_code']} in {res['seconds']} s")
             sys.exit(0 if res["exit_code"] == 0 else 1)
         elif a.cmd == "secret":
-            res = ops.secret_set(a.app, a.pairs)
+            pairs, warnings = secret_pairs(a.pairs, a.from_file, sys.stdin)
+            for w in warnings:
+                print(f"warning: {w}", file=sys.stderr)
+            res = ops.secret_set(a.app, pairs)
             emit(res) if emit else print(f"set {', '.join(res['set'])} for {a.app}: {res['applied']}"
                                          + (f"\nwarning: {res['warning']}" if res.get("warning") else ""))
         elif a.cmd == "users":

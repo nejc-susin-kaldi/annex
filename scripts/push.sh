@@ -1,12 +1,29 @@
 #!/usr/bin/env bash
 # Render, sync the platform bundle to the VM and (re)start it with the VM's Compose.
-# Usage: scripts/push.sh [--extras]   (--extras also starts Metabase and Dozzle)
+# Usage: scripts/push.sh [--extras] [--force]
+#   --extras  also starts Metabase and Dozzle
+#   --force   push although the VM's last pushed commit is not an ancestor of this checkout
+# By default it refuses when the VM has history this checkout lacks (platform/VERSION, D85).
 source "$(dirname "$0")/lib.sh"
 
 profile=()
-[ "${1:-}" = --extras ] && profile=(--profile extras)
+force=()
+for arg in "$@"; do
+  case "$arg" in
+    --extras) profile=(--profile extras) ;;
+    --force) force=(--force) ;;
+    *) echo "usage: scripts/push.sh [--extras] [--force]" >&2; exit 2 ;;
+  esac
+done
 
 render
+# the VM's stamp first: a checkout that doesn't contain what is deployed must not overwrite it
+vm_version=$(mktemp "$ROOT/.build/vm-version.XXXXXX")
+trap 'rm -f "$vm_version"' EXIT
+vm "if [ -f $DATA/platform/VERSION ]; then cat $DATA/platform/VERSION; fi" > "$vm_version" \
+  || { echo "push: could not read $DATA/platform/VERSION on $SSH_HOST" >&2; exit 1; }
+vm_arg=$vm_version; [ -s "$vm_version" ] || vm_arg=-
+python3 "$ROOT/scripts/pushcheck.py" check "$ROOT/.build/platform/VERSION" "$vm_arg" ${force[@]+"${force[@]}"}
 log "Syncing platform to $SSH_HOST:$DATA/platform"
 rsync -rlpt --delete "$ROOT/.build/platform/" "$SSH_HOST:$DATA/platform/"
 
@@ -47,4 +64,4 @@ fi
 
 vm "docker image prune -f >/dev/null; docker builder prune -f --max-used-space 1500mb >/dev/null"
 vm "cd $DATA/platform && docker compose ps --format 'table {{.Service}}\t{{.Status}}'"
-log "Home: $(setting ANNEX_URL_HOME)"
+log "Home: $(setting_local ANNEX_URL_HOME)"

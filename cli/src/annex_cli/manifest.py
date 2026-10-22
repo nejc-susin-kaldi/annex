@@ -235,7 +235,7 @@ def load(folder: Path) -> Manifest:
     secrets = raw.get("secrets") or []
     if not isinstance(secrets, list) or not all(isinstance(s, str) and KEY_RE.match(s) for s in secrets):
         p.append("secrets: must be a list of UPPER_SNAKE_CASE names, e.g. [SMTP_PASSWORD]. "
-                 "Values are set by a human with: annex secret set <app> KEY=VALUE")
+                 "Values are set by a human with: annex secret set <app> KEY")
         secrets = []
     for s in secrets:
         if s in env:
@@ -304,7 +304,7 @@ def load(folder: Path) -> Manifest:
             p.append(f"{where}.verify: {hv!r} is not valid. Use one of: {', '.join(HOOK_VERIFY)}")
         if not isinstance(hs, str) or hs not in secrets:
             p.append(f"{where}.secret: {hs!r} must be a name listed under secrets:, e.g. secrets: [TRELLO_SECRET] "
-                     f"and secret: TRELLO_SECRET. A human sets its value with: annex secret set {name or '<app>'} KEY=VALUE")
+                     f"and secret: TRELLO_SECRET. A human sets its value with: annex secret set {name or '<app>'} KEY")
         if all(isinstance(x, str) for x in (hn, hp, hv, hs)):
             webhooks.append(Webhook(hn, hp, hv, hs))
 

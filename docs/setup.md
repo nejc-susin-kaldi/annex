@@ -2,6 +2,19 @@
 
 The build agent never runs these. Each step has its undo; `docs/teardown.md` collects them.
 
+## Prerequisites
+Nothing here is installed by Annex; check that each is present.
+
+**On the Mac:**
+- `uv` (runs the CLI, the MCP server and the unit tests) and Python 3.12 or newer (uv fetches one; the scripts also use the system `python3`, 3.9+ is enough for them).
+- `mkcert` with its root CA trusted (section 2); `scripts/bootstrap.sh` issues the wildcard certificate with it.
+- `rsync` and `ssh` (the platform bundle is synced over SSH; `ssh annex` must work without a password prompt).
+- `node` (`scripts/test-smoke.sh` runs the runtime's logging tests with it and skips them when it is missing).
+- `docker`, only for the optional context in section 1.
+
+**On the VM (`annex`):**
+- Docker with the Compose plugin, `jq` and `python3-yaml` (PyYAML, used by `vm/annex_vm.py users-*`). Installing packages is a system change: if one is missing, ask Nejc.
+
 ## 1. Docker context `annex-vm` (optional)
 Lets you run `docker --context annex-vm ps` from the Mac. The annex scripts and CLI don't need it: they use `ssh annex` (see decision D1).
 ```bash
@@ -87,7 +100,7 @@ Both are user-scoped, so Claude Code can use Annex from any folder, including an
 
 **MCP server** (stdio, runs from this repo through uv):
 ```bash
-claude mcp add --scope user annex -- uv run --quiet --project /Users/nejcsusin/git/annex/mcp annex-mcp
+claude mcp add --scope user annex -- uv run --quiet --project "$(pwd)/mcp" annex-mcp
 ```
 Check (it should say "Connected"):
 ```bash
@@ -100,7 +113,7 @@ claude mcp remove --scope user annex
 
 **Skill** (a symlink, so edits in the repo apply right away):
 ```bash
-mkdir -p ~/.claude/skills && ln -s /Users/nejcsusin/git/annex/skills/annex ~/.claude/skills/annex
+mkdir -p ~/.claude/skills && ln -s "$(pwd)/skills/annex" ~/.claude/skills/annex
 ```
 Undo:
 ```bash
