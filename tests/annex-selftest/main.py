@@ -32,7 +32,8 @@ Environment (annex.yaml `env:`, set by the variants a test builds): SELFTEST_LOG
 "logs aren't structured" warning), SELFTEST_MARKER (in /emit and the started line), SELFTEST_SECRET (the fake secret
 /emit logs), SELFTEST_BAD_MIGRATION=1 (drops the run history at start, for the rollback --with-data test),
 SELFTEST_GREETING (the page's "Hello", to tell two versions apart), SELFTEST_RECIPIENT and SELFTEST_SLACK_CHANNEL (the
-notify job).
+notify job), SELFTEST_SLOW_HEALTH=N (/healthz answers 503 for the first N seconds: a deploy that sits in its health
+gate, for the killed-deploy test).
 """
 import json
 import os
@@ -51,6 +52,7 @@ DATA = Path(os.environ.get("DATA_DIR", "/data"))
 PLAIN = os.environ.get("SELFTEST_LOG") == "plain"
 MARKER = os.environ.get("SELFTEST_MARKER", "boot-default")
 SECRET = os.environ.get("SELFTEST_SECRET", "not-a-secret-just-a-default")
+SLOW_UNTIL = time.monotonic() + float(os.environ.get("SELFTEST_SLOW_HEALTH") or 0)
 GRANTED = ["client_summary", "top_clients_by_aum"]
 UNGRANTED = "advisor_book"
 HOOK_PATHS = {"/hooks/trello", "/hooks/gh", "/hooks/plain"}
@@ -208,7 +210,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == "POST":
             return self.route_post(path)
         if path == "/healthz":
-            return self.reply(503 if (DATA / "unhealthy").exists() else 200, "ok")
+            return self.reply(503 if (DATA / "unhealthy").exists() or time.monotonic() < SLOW_UNTIL else 200, "ok")
         if path == "/annex-errors.js":
             return self.reply(200, rt.browser_errors_js(), "application/javascript")
         handler = {"/": self.handle_page, "/whoami": self.handle_whoami, "/db": self.handle_db, "/files": self.handle_files,
