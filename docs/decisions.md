@@ -590,6 +590,22 @@ It takes about 63 MB on disk and seeds in under a minute.
 
 **Alternatives.** Fixed dates, like D14: stable, but stale within weeks. Real machine titles (IPDB): ruled out, synthetic only. A Python generator writing CSV: a second toolchain on the VM, and the files would be too big to commit.
 
+## D79. App names validated at every entry point (21 Oct, hardening A1)
+**What.** `cli/src/annex_cli/ops.py` has one check, `_name(app)`: the name must fully match `NAME_RE` and not be reserved, or it raises `AnnexError` with the same fix-it text `init` gives.
+- `container()` and `project()` call it, so every command built from them is covered.
+- Every public function that takes an app (`status`, `logs`, `stored_logs`, `follow_logs`, `run_job`, `secret_set`, `remove`, `releases`, `rollback`, `hooks_replay`) calls it first, before any `Remote` call. `usage`, `errors`, `audit`, `hooks` and `sends` check it when an app is given.
+- The helpers that put a name in a command (`_record`, `_releases`, `_append_release`, `_images`, `_containers`, `_maintenance`) check it too.
+- `run_job`'s job name must match `NAME_RE`, and `secret_set`'s keys `KEY_RE`.
+- Paths under `/srv/annex` are built by the new `Remote.path(*parts)`, which `shlex.quote`s them.
+- The checks use `fullmatch`, because `$` in `NAME_RE` and `KEY_RE` also matches before a trailing newline.
+- The MCP server needed no change: `_call` turns `AnnexError` into a `ToolError`, so the agent gets the message as text.
+
+**Why.** Only `init` and the VM script validated names. `annex_status` and the other MCP tools passed the name to `bash -c` unquoted, so a prompt-injected agent could run commands on the VM with a name like `x; id`.
+
+**Alternatives.** Quoting only: fixes the shell, but leaves a bad name reaching the VM and its scripts. Validating in the MCP layer only: the CLI would stay exposed, and a new `ops` function would be unprotected. The check in `ops` covers both.
+
+**Tests.** `cli/tests/test_ops_names.py` calls each function with `x; id`, `../etc`, `Console` and a trailing newline, with every `Remote` method patched to fail the test if reached.
+
 ## D82. Gateway audit cursor, usage rollup table, logs index (21 Oct, hardening B3)
 **What.**
 - `audit.scan_gateway` keeps a cursor (`log_cursors`, key `audit:gateway`) like the other scans. It aggregates only buckets that closed since the cursor, plus one bucket before it (a late line still lands; the upsert by `ref` makes the replay harmless), and never reaches back more than the 48-hour window. The first run after the upgrade starts from the newest `gateway.reads` event already stored. Before, every 60-second pass counted two days of gateway lines.

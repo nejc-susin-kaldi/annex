@@ -35,6 +35,10 @@ class Remote:
             raise AnnexError(self._msg(r))
         return r
 
+    def path(self, *parts: str) -> str:
+        """A path under the data directory, quoted for use in a script."""
+        return shlex.quote("/".join((self.data, *parts)))
+
     def out(self, script: str, **kw) -> str:
         return self.run(script, **kw).stdout.decode(errors="replace")
 
