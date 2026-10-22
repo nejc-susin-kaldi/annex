@@ -288,6 +288,78 @@ def read_meta(stdin) -> dict:
     return meta
 
 
+# --- version coupling (D103) -------------------------------------------------------------------------------------
+def parse_version_stamp(text: str) -> dict:
+    """platform/VERSION (written by scripts/render.py): key=value lines; {} if there are none."""
+    out: dict = {}
+    for line in (text or "").splitlines():
+        k, sep, v = line.strip().partition("=")
+        if sep and k and not k.startswith("#"):
+            out[k] = v
+    return out
+
+
+def platform_versions(base: Path) -> dict:
+    """{"commit", "dirty", "contract": int|None} of the pushed platform; {} when there is no VERSION (unit tests, a
+    platform pushed before the stamp)."""
+    try:
+        stamp = parse_version_stamp((base / "platform" / "VERSION").read_text())
+    except OSError:
+        return {}
+    contract = stamp.get("contract", "")
+    return {"commit": stamp.get("commit", ""), "dirty": stamp.get("dirty") == "true",
+            "contract": int(contract) if contract.isdigit() else None}
+
+
+def _short(commit) -> str:
+    return (commit or "unknown")[:12]
+
+
+def check_versions(cli: dict | None, platform: dict) -> tuple[str | None, list[str]]:
+    """(refusal, notes): may this CLI deploy to this platform? Pure.
+
+    cli is the meta's {"commit", "dirty", "contract_version"} (None: a CLI from before version reporting), platform
+    is platform_versions(). The rule is on the contract version only: a CLI whose contract is newer than the
+    platform's is refused (it would deploy apps that follow rules the platform doesn't know yet: push the platform
+    first); an older one deploys with a note; commits only appear in the messages (two checkouts differ in commits
+    all the time). A missing number on either side checks nothing."""
+    if not isinstance(cli, dict):
+        return None, ["your CLI doesn't report its version (it predates the version check): update your checkout"]
+    mine, theirs = cli.get("contract_version"), platform.get("contract")
+    if not isinstance(mine, int) or isinstance(mine, bool) or theirs is None:
+        return None, []
+    who = (f"the CLI is at {_short(cli.get('commit'))}{' (modified)' if cli.get('dirty') else ''}, "
+           f"the platform at {_short(platform.get('commit'))}{' (modified)' if platform.get('dirty') else ''}")
+    if mine > theirs:
+        return (f"your CLI is newer than the platform (contract v{mine} > v{theirs}; {who}). Nothing was deployed. "
+                "Push the platform first: scripts/push.sh", [])
+    if mine < theirs:
+        return None, [f"your CLI is older than the platform (contract v{mine} < v{theirs}; {who}): update your checkout"]
+    return None, []
+
+
+def revalidate_source(run: Run, line: dict) -> None:
+    """The uploaded annex.yaml is validated here with the CLI's own module (the bundle's annex_manifest.py), so a
+    modified or stale CLI can't skip a rule, and it must equal the manifest the CLI sent (that one is what the release
+    line records). Same messages as the CLI gives."""
+    src = run.d / "src"
+    try:
+        m = mf.load(src)
+    except mf.ManifestError as e:
+        raise vm.Fail(f"annex.yaml in the upload is not valid on the VM ({len(e.problems)} problem(s)):\n"
+                      + "\n".join(f"  - {p}" for p in e.problems)
+                      + "\nFix annex.yaml, or run: annex contract (and update your checkout if the CLI accepted it)") from None
+    except ImportError as e:  # PyYAML missing on the VM: a platform problem, not the builder's
+        raise vm.Fail(f"the VM can't read annex.yaml ({e}): install python3-yaml on the VM") from None
+    sent = json.loads(json.dumps(line.get("manifest")))
+    mine = json.loads(json.dumps(m.to_dict()))
+    if mine != sent:
+        keys = sorted(k for k in set(mine) | set(sent or {}) if mine.get(k) != (sent or {}).get(k))
+        raise vm.Fail("the manifest in the upload doesn't match what the CLI validated "
+                      f"(differs in: {', '.join(keys)}). Nothing was built. Deploy again from an unchanged folder; "
+                      "if it keeps happening, update your checkout")
+
+
 def serve(kind: str, a, stdin=None, stdout=None, base: Path | None = None) -> int:
     """annex_vm.py deploy|rollback. Refusals before the lock (bad meta, the lock held) raise vm.Fail, which
     annex_vm prints as the one {"ok": false} line."""
@@ -879,6 +951,15 @@ def prepare_deploy(run: Run, stdin, a) -> Callable[[], dict]:
     """Before the fork: settle, number the release, receive the source. Returns the rest of the deploy."""
     line = {k: v for k, v in (run.meta.get("line") or {}).items() if k not in ("release", "image", "result", "record")}
     m = manifest_of(run, line)
+    cli = run.meta.get("cli")
+    refusal, notes = check_versions(cli, platform_versions(run.base))
+    if refusal:
+        raise vm.Fail(refusal)  # before any release line
+    if isinstance(cli, dict):  # the release line records the CLI's commit (the status and the console show it)
+        line["cli"] = {"commit": cli.get("commit") or "unknown", "dirty": bool(cli.get("dirty"))}
+    for msg in notes:
+        run.notes.append(msg)
+        run.note(msg)
     line.setdefault("deployed_at", _now())
     line.setdefault("deployed_by", run.actor)
     line.setdefault("via", run.via)
@@ -889,6 +970,8 @@ def prepare_deploy(run: Run, stdin, a) -> Callable[[], dict]:
     run.step("upload")
     run.progress("Uploading source")
     upload(run, stdin)
+    run.progress("Validating annex.yaml on the VM")
+    revalidate_source(run, line)
     return lambda: deploy_rest(run, m, live, previous)
 
 

@@ -342,3 +342,23 @@ def test_the_platform_page_lists_alert_messages_that_were_not_delivered():
     ok = pg.platform_page(ADMIN, {**p, "messages": {"waiting": 0, "failed": []}}, NOW.timestamp())
     assert "every alert message of the last 7 days was delivered" in ok and "waiting" not in ok
     assert "Alert messages" not in pg.platform_page(ADMIN, {**p, "messages": None}, NOW.timestamp())
+
+
+# --- the CLI a release was made with (V3, D103) ----------------------------------------------------------------
+def test_cli_commit_label_is_short_and_marks_a_dirty_tree():
+    assert data.cli_label({"commit": "a" * 40, "dirty": False}) == "a" * 12
+    assert data.cli_label({"commit": "a" * 40, "dirty": True}) == "a" * 12 + "+dirty"
+    assert data.cli_label(None) is None and data.cli_label({}) is None
+
+
+def test_releases_and_config_show_the_cli_commit_escaped():
+    rel = {"release": 3, "result": "live", "live": True, "deployed_at_raw": NOW, "deployed_by": "x", "via": "cli", "git": None, "note": None, "cli": "abc123def456+dirty"}
+    old = {**rel, "release": 2, "live": False, "cli": None}
+    d = detail(releases=[rel, old])
+    page = pa.releases_page(SAM, d, now=NOW)
+    assert "CLI" in page and "abc123def456+dirty" in page
+    cfg = pa.config_page(SAM, d)
+    assert "made with CLI commit" in cfg and "abc123def456+dirty" in cfg
+    assert "not recorded" in pa.config_page(SAM, detail(releases=[{**rel, "cli": None}]))
+    assert "&lt;script&gt;" in pa.config_page(SAM, detail(releases=[{**rel, "cli": "<script>"}]))
+    assert "made with CLI commit" not in pa.config_page(SAM, detail(releases=[]))

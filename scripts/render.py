@@ -178,13 +178,21 @@ def render_text(text: str, values: dict[str, str], src: Path) -> str:
     return re.sub(r"\{\{\s*([A-Z0-9_]+)\s*\}\}", sub, text)
 
 
+def contract_version() -> int:
+    """`ANNEX_CONTRACT_VERSION: n` of the contract this checkout ships (0 if the line is missing). The VM compares it
+    with the CLI's (vm/annex_deploy.py check_versions, D103)."""
+    m = re.search(r"^ANNEX_CONTRACT_VERSION:\s*(\d+)\s*$", (ROOT / "cli/src/annex_cli/contract.md").read_text(), re.M)
+    return int(m.group(1)) if m else 0
+
+
 def version_stamp(env_file: Path) -> str:
-    """The push stamp (scripts/pushcheck.py compares it with the VM's): commit, dirty flag, hash of .env."""
+    """The push stamp (scripts/pushcheck.py compares it with the VM's): commit, dirty flag, contract version, hash of .env."""
     def git(*args: str) -> str:
         r = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True)
         return r.stdout.strip() if r.returncode == 0 else ""
     dirty = "true" if git("status", "--porcelain") else "false"
     return (f"commit={git('rev-parse', 'HEAD')}\ndirty={dirty}\n"
+            f"contract={contract_version()}\n"
             f"env_sha256={hashlib.sha256(env_file.read_bytes()).hexdigest()}\n")
 
 

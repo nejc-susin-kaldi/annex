@@ -1275,7 +1275,7 @@ def prune_snapshots(app: str, keep: int) -> dict:
 # CLI calls release-record wherever it appends a line; release-backfill (push.sh) loads every file, idempotently.
 # /srv/annex/apps is read here, on the VM: it is never mounted into a container (it holds the apps' data).
 RELEASE_COLUMNS = ("app text, release int, image text, result text, deployed_at timestamptz, deployed_by text, via text, "
-                   "git jsonb, note text, rollback_of int, manifest jsonb")
+                   "git jsonb, note text, rollback_of int, manifest jsonb, cli jsonb")
 
 
 def release_row(app: str, rel: dict) -> dict | None:
@@ -1293,7 +1293,7 @@ def release_row(app: str, rel: dict) -> dict | None:
     return {"app": app, "release": rel["release"], "image": rel["image"], "result": rel["result"],
             "deployed_at": rel["deployed_at"], "deployed_by": rel.get("deployed_by"), "via": rel.get("via"),
             "git": rel.get("git"), "note": note or None, "rollback_of": rb["from"] if rb else None,
-            "manifest": rel.get("manifest") or {}}
+            "manifest": rel.get("manifest") or {}, "cli": rel.get("cli")}
 
 
 def dollar_quote(text: str) -> str:
@@ -1307,8 +1307,8 @@ def dollar_quote(text: str) -> str:
 
 def releases_sql(rows: list[dict]) -> str:
     return ("INSERT INTO annex_ops.releases (app, release, image, result, deployed_at, deployed_by, via, git, note, "
-            "rollback_of, manifest) SELECT r.app, r.release, r.image, r.result, r.deployed_at, r.deployed_by, r.via, "
-            "r.git, r.note, r.rollback_of, r.manifest FROM jsonb_to_recordset("
+            "rollback_of, manifest, cli) SELECT r.app, r.release, r.image, r.result, r.deployed_at, r.deployed_by, r.via, "
+            "r.git, r.note, r.rollback_of, r.manifest, r.cli FROM jsonb_to_recordset("
             f"{dollar_quote(json.dumps(rows))}::jsonb) AS r({RELEASE_COLUMNS}) ON CONFLICT (app, deployed_at, release) DO NOTHING;")
 
 

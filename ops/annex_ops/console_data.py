@@ -27,17 +27,24 @@ def _life_start(conn, app: str):
     return conn.execute("SELECT max(deployed_at) FROM annex_ops.releases WHERE app = %s AND release = 1", (app,)).fetchone()[0]
 
 
+def cli_label(cli) -> str | None:
+    """The CLI commit a release was made with (annex_ops.releases.cli = {commit, dirty}), short; None for older rows."""
+    if not isinstance(cli, dict) or not cli.get("commit"):
+        return None
+    return cli["commit"][:12] + ("+dirty" if cli.get("dirty") else "")
+
+
 def releases(app: str) -> list[dict]:
     """The app's releases of its latest life, newest first, the live one marked."""
     with db.connect() as conn:
         since = _life_start(conn, app)
-        rows = conn.execute("SELECT release, result, deployed_at, deployed_by, via, git, note, manifest FROM annex_ops.releases "
+        rows = conn.execute("SELECT release, result, deployed_at, deployed_by, via, git, note, manifest, cli FROM annex_ops.releases "
                             "WHERE app = %s AND (%s::timestamptz IS NULL OR deployed_at >= %s) ORDER BY deployed_at DESC, release DESC",
                             (app, since, since)).fetchall()
     live = next((r[0] for r in rows if r[1] == "live"), None)
     return [{"release": r[0], "result": r[1], "live": r[0] == live and r[1] == "live", "deployed_at": v.when(r[2]), "deployed_at_raw": r[2],
              "deployed_by": r[3], "via": r[4], "git": ((r[5] or {}).get("sha", "") + ("+dirty" if (r[5] or {}).get("dirty") else "")) or None,
-             "note": r[6], "manifest": r[7]} for r in rows]
+             "note": r[6], "manifest": r[7], "cli": cli_label(r[8])} for r in rows]
 
 
 def apps() -> list[dict]:
