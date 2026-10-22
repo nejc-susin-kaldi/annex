@@ -20,8 +20,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-import yaml
-
 from . import logcheck, logview
 from . import manifest as mf
 from .remote import REPO, AnnexError, Remote
@@ -29,7 +27,6 @@ from .remote import REPO, AnnexError, Remote
 TEMPLATES = REPO / "templates"
 RUNTIME = REPO / "runtime"  # the one source of annex_runtime.py/.js; scripts/sync-runtime.sh copies it
 CONTRACT = Path(__file__).with_name("contract.md")
-OFELIA = "annex-ofelia-1"
 OPS_CONTAINER = "annex-ops-1"
 SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", ".DS_Store", ".pytest_cache", ".mypy_cache"}
 
@@ -77,14 +74,6 @@ def app_network(app: str) -> str:
 def egress_network(app: str) -> str:
     """Only for an app that declares egress: a non-internal network with only that app on it."""
     return f"annex-egress-{_name(app)}"
-
-
-def _compose_networks(app: str, egress: bool) -> tuple[list[str], dict]:
-    """(the service's networks, the file's top-level networks): both external, created by networks-sync."""
-    nets = {"app": {"external": True, "name": app_network(app)}}
-    if egress:
-        nets["egress"] = {"external": True, "name": egress_network(app)}
-    return list(nets), nets
 
 
 # --- contract and init -----------------------------------------------------
@@ -203,39 +192,6 @@ def _tar(folder: Path) -> bytes:
     return buf.getvalue()
 
 
-def _network_args(app: str, *, web: bool, postgres: bool, views: bool, egress: bool) -> list[str]:
-    """Arguments for `annex_vm.py networks-sync`: which platform containers join the app's network."""
-    return ["networks-sync", app, *(["--web"] if web else []), *(["--postgres"] if postgres else []),
-            *(["--views"] if views else []), *(["--egress"] if egress else [])]
-
-
-def rewire_compose(doc: dict, app: str, egress: bool) -> tuple[dict, dict]:
-    """An app's compose file from before D88 (on annex-edge, and annex-appdata with Postgres) moved onto its own
-    network, for an app whose source isn't at hand (migrate_networks). Returns (new document, what the app uses:
-    the flags for networks-sync), read from the file itself: routed = web, on appdata = Postgres, a gateway URL = views."""
-    doc = json.loads(json.dumps(doc))  # a deep copy; the file is plain YAML data
-    services = doc.get("services") or {}
-    if len(services) != 1:
-        raise AnnexError(f"{app}'s compose file has {len(services)} services; an Annex app has exactly one")
-    svc = next(iter(services.values()))
-    labels = svc.get("labels") or {}
-    if not isinstance(labels, dict):  # Annex always writes a mapping; a list means someone edited the file
-        raise AnnexError(f"{app}'s compose file has its labels as a list; it wasn't written by Annex. Redeploy it from its source")
-    env = svc.get("environment") or {}
-    old = svc.get("networks") or []
-    old = list(old) if isinstance(old, (list, dict)) else []
-    old_names = {(doc.get("networks") or {}).get(k, {}).get("name", k) for k in old}
-    uses = {"web": str(labels.get("traefik.enable", "")).lower() == "true",
-            "postgres": bool(old_names & {"annex-appdata"}),
-            "views": "ANNEX_GATEWAY_URL" in (env if isinstance(env, dict) else {}),
-            "egress": egress}
-    if uses["web"]:
-        labels["traefik.docker.network"] = app_network(app)
-        svc["labels"] = labels
-    svc["networks"], doc["networks"] = _compose_networks(app, egress)
-    return doc, uses
-
-
 def _record(r: Remote, app: str) -> dict | None:
     res = r.run(f"cat {r.path('deploy', _name(app), 'deploy.json')}", check=False)
     return json.loads(res.stdout) if res.returncode == 0 else None
@@ -283,44 +239,11 @@ def _images(r: Remote, app: str) -> set[str]:
     return set(r.out(f"docker image ls --format '{{{{.Repository}}}}:{{{{.Tag}}}}' annex-app/{_name(app)}").split())
 
 
-def _provision_args(app: str, *, postgres: bool, files: bool, views: list[str], secrets: list[str],
-                    notify_email: bool = False, notify_slack: list[str] | None = None,
-                    webhooks: list[dict] | None = None, port: int | None = None) -> list[str]:
-    """Arguments for `annex_vm.py provision`. Records written before M1.2 have no notify keys, and before M1.5
-    no webhooks: no grant, no hooks file."""
-    return [app, *(["--postgres"] if postgres else []), *(["--files"] if files else []),
-            "--views", ",".join(views), "--secrets", ",".join(secrets),
-            *(["--notify-email"] if notify_email else []),
-            *(["--slack", ",".join(notify_slack)] if notify_slack else []),
-            *(["--hooks", json.dumps(webhooks), "--hook-port", str(port or 0)] if webhooks else [])]
-
-
 def _webhook_urls(r: Remote, app: str, webhooks) -> list[dict]:
     """The public URL of each declared webhook (what the provider is told), for deploy and status output."""
     base = r.settings.get("ANNEX_URL_HOOKS", "")
     return [{"name": w["name"], "verify": w["verify"], "url": f"{base}/h/{app}/{w['name']}"}
             for w in (x if isinstance(x, dict) else x.__dict__ for x in webhooks)]
-
-
-def _drain(r: Remote, app: str, progress: Progress = _quiet) -> None:
-    """Before Docker replaces or removes an app's container, have annex-ops store the lines it hasn't read yet
-    (the container's log goes with it). Never blocks the operation: annex-ops being down, slow or confused costs
-    a warning and nothing else. Lines written while the old container shuts down can still be missed."""
-    why = None
-    try:
-        res = r.run(f"timeout 10 docker exec {OPS_CONTAINER} python -m annex_ops.ctl logs-drain {container(app)} "
-                    f"--timeout 5 --json", check=False, timeout=30)
-        if res.returncode != 0:
-            why = "annex-ops didn't answer"
-        else:
-            answer = json.loads(res.stdout.decode().strip().splitlines()[-1])
-            if answer.get("timed_out") or not answer.get("stored", True):
-                why = "annex-ops was too slow or its database is down"
-    except (AnnexError, subprocess.SubprocessError, OSError, ValueError, IndexError):
-        why = "annex-ops didn't answer"
-    if why:
-        progress(f"Warning: couldn't store {container(app)}'s last log lines before replacing it ({why}); "
-                 f"the deploy carries on. Check: {r.hint('docker logs ' + OPS_CONTAINER)}")
 
 
 # Settings a test sets in the CLI's environment for one deploy; the VM honours exactly these (vm/annex_deploy.py).
@@ -646,92 +569,58 @@ def follow_logs(app: str, tail: int = 100) -> int:
 
 
 def run_job(app: str, job: str) -> dict:
+    """Run one of an app's jobs now. The VM looks the command up in the app's deploy.json (D102); this only asks."""
     _name(app)
     _job(job)
     r = Remote()
-    record = _record(r, app)
-    if not record:
-        raise AnnexError(f"No app named {app!r}. See deployed apps with: annex list")
-    jobs = {j["name"]: j for j in record.get("schedule", [])}
-    if job not in jobs:
-        raise AnnexError(f"{app} has no job {job!r}. Jobs: {', '.join(jobs) or 'none'} (schedule in annex.yaml)")
-    t0 = time.time()
-    res = r.run(f"docker exec {container(app)} {shlex.join(jobs[job]['command'])} 2>&1", check=False)
-    return {"app": app, "job": job, "exit_code": res.returncode, "seconds": round(time.time() - t0, 1),
+    res = r.run(r.vm_command("run-job", app, job), check=False)
+    trailer = None
+    for line in reversed((res.stderr or b"").decode(errors="replace").strip().splitlines()):
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and "ok" in obj:
+            trailer = obj
+            break
+    if trailer is None:
+        detail = r._msg(res)
+        if "invalid choice" in detail:
+            detail += "\nThe platform on the VM is older than this CLI: run scripts/push.sh first"
+        raise AnnexError(f"annex_vm run-job failed: {detail}")
+    if not trailer["ok"]:
+        raise AnnexError(trailer.get("error") or "unknown error")
+    return {"app": app, "job": job, "exit_code": trailer["exit_code"], "seconds": trailer["seconds"],
             "output": res.stdout.decode(errors="replace")[-8000:]}
 
 
 # --- human-only ------------------------------------------------------------
-def secret_set(app: str, pairs: list[str]) -> dict:
+def secret_set(app: str, pairs: list[str], progress: Progress = _quiet) -> dict:
+    """The value arrives on the VM's stdin, never argv. One call: the VM takes the app's lock, stores it and, when the
+    app is deployed, recreates its container (D102)."""
     _name(app)
     for p in pairs:
         k, sep, _ = p.partition("=")
         if not sep or not mf.KEY_RE.fullmatch(k):
             raise AnnexError(f"{k!r}: use KEY=VALUE with an UPPER_SNAKE_CASE key")
-    r = Remote()
-    res = r.vm("secret-set", app, "--actor", _who(), input="\n".join(pairs) + "\n")
-    record = _record(r, app)
-    if record:
-        undeclared = [k for k in res["set"] if k not in record.get("secrets", [])]
-        r.vm("provision", *_provision_args(
-            app, postgres=record["postgres"], files=record["files"], views=record["views"], secrets=record["secrets"],
-            notify_email=record.get("notify_email", False), notify_slack=record.get("notify_slack", []),
-            webhooks=record.get("webhooks", []), port=record.get("port")))
-        _drain(r, app)
-        r.run(f"cd {r.path('deploy', app)} && docker compose up -d 2>&1")
-        res["applied"] = "restarted with new values"
-        if undeclared:
-            res["warning"] = (f"{', '.join(undeclared)} not declared under secrets: in annex.yaml, "
-                              "so not injected. Add them there and deploy again")
-    else:
-        res["applied"] = "stored; injected on the next deploy"
-    return res
+    return Remote().call("secret-set", app, "--actor", _who(), "--recreate", input="\n".join(pairs) + "\n",
+                         progress=progress)
 
 
-def remove(app: str, keep_data: bool = False) -> dict:
+def remove(app: str, keep_data: bool = False, progress: Progress = _quiet) -> dict:
     _name(app)
-    r = Remote()
-    record = _record(r, app)
-    if not record and not _containers(r, app):
-        raise AnnexError(f"No app named {app!r}. See deployed apps with: annex list")
-    d = r.path("deploy", app)
-    _drain(r, app)
-    r.run(f"if [ -f {d}/compose.yaml ]; then cd {d} && docker compose down --remove-orphans 2>&1; "
-          f"else docker rm -f {container(app)} >/dev/null 2>&1 || true; fi; "
-          f"docker image ls -q annex-app/{app} | xargs -r docker rmi -f >/dev/null 2>&1 || true")
-    res = r.vm("deprovision", app, "--actor", _who(), *(["--keep-data"] if keep_data else []))
-    if record and record.get("schedule"):
-        r.run(f"docker restart {OFELIA} >/dev/null")
-    return res
+    return Remote().call("remove", app, "--actor", _who(), *(["--keep-data"] if keep_data else []), progress=progress)
 
 
 def migrate_networks(app: str, egress: bool = False, progress: Progress = _quiet) -> dict:
-    """Move an app deployed before per-app networks (D88) onto its own network without its source (human only):
-    rewrite the networks of its compose file on the VM (the old file is kept as compose.yaml.pre-d88), record egress
-    in deploy.json, connect the platform containers it uses and recreate the container. An app whose source is at hand
-    should be redeployed instead. egress=True keeps internet access (the old shared network had it)."""
+    """Move an app deployed before per-app networks (D88) onto its own network without its source (human only): the
+    VM rewrites the networks of its compose file (the old file is kept as compose.yaml.pre-d88), records egress in
+    deploy.json, connects the platform containers it uses and recreates the container, under the app's lock (D102).
+    An app whose source is at hand should be redeployed instead. egress=True keeps internet access (the old shared
+    network had it)."""
     _name(app)
-    r = Remote()
-    d = r.path("deploy", app)
-    res = r.run(f"cat {d}/compose.yaml", check=False)
-    if res.returncode != 0:
-        raise AnnexError(f"{app} has no compose file on the VM ({r.data}/deploy/{app}/compose.yaml). See: annex list")
-    doc, uses = rewire_compose(yaml.safe_load(res.stdout.decode()) or {}, app, egress)
-    record = _record(r, app)
-    progress(f"Connecting the platform to {app_network(app)}")
-    sync = r.vm(*_network_args(app, **uses))
-    if record is not None:
-        record["egress"] = ["*"] if egress else []  # "*": hosts unknown (migrated); networks-sync only asks "any?"
-        r.run(f"cat > {d}/deploy.json", input=json.dumps(record, indent=2))
-    r.run(f"[ -f {d}/compose.yaml.pre-d88 ] || cp {d}/compose.yaml {d}/compose.yaml.pre-d88")
-    r.run(f"cat > {d}/compose.yaml", input=yaml.safe_dump(doc, sort_keys=False))
-    _drain(r, app, progress)
-    progress(f"Recreating {container(app)} on its own network")
-    r.run(f"cd {d} && docker compose up -d --remove-orphans 2>&1")
-    nets = r.out(f"docker inspect -f '{{{{range $k, $v := .NetworkSettings.Networks}}}}{{{{$k}}}} {{{{end}}}}' {container(app)}",
-                 check=False).split()
-    return {"app": app, "uses": uses, "networks": sorted(nets), "platform": sync.get("platform", []),
-            "backup": f"{r.data}/deploy/{app}/compose.yaml.pre-d88"}
+    return Remote().call("migrate-networks", app, "--actor", _who(), *(["--egress"] if egress else []),
+                         progress=progress)
 
 
 def users(action: str, login: str | None = None, **opts) -> dict:

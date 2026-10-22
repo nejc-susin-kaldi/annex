@@ -537,8 +537,11 @@ OLD_CLI = ("this Annex runs deploys on the server now (D101): update your checko
            "command again with the new CLI")
 
 
+GUARD_NAME = ".lock.guard"
+
+
 def guard_path(base: Path, app: str) -> Path:
-    return base / "deploy" / app / ".lock.guard"
+    return base / "deploy" / app / GUARD_NAME
 
 
 def current_path(base: Path, app: str) -> Path:
@@ -599,8 +602,13 @@ def describe_holder(info: dict | None, now: float) -> str:
             f"pid {info.get('pid') or 'unknown'} on the VM)")
 
 
+HOLDER_DOING = {"secret-set": "having a secret set", "remove": "being removed",
+                "migrate-networks": "being moved onto its own network"}  # D102; deploys and rollbacks: the default
+
+
 def lock_refusal(app: str, info: dict | None, now: float) -> str:
-    return (f"{app} is being deployed or rolled back by {describe_holder(info, now)}. Wait for it to finish, then try "
+    doing = HOLDER_DOING.get((info or {}).get("kind"), "being deployed or rolled back")
+    return (f"{app} is {doing} by {describe_holder(info, now)}. Wait for it to finish, then try "
             "again; it runs on the VM, so it finishes even if its terminal closed")
 
 
@@ -752,9 +760,12 @@ def dead_step(rels: list[dict], *holders: dict | None) -> str | None:
     """The step a dead run reached, from the first holder record (current.json, an old lock's owner.json) whose release
     is the pending one; None (an unknown step) when none matches."""
     pending = {x.get("release") for x in rels if x.get("result") == "pending"}
-    for h in holders:
-        if h and h.get("release") is not None and h.get("release") in pending:
-            return h.get("step")
+    for top in holders:
+        # a secret set, removal or network migration (D102) that ran after the dead deploy keeps its record under
+        # "interrupted" in its own current.json
+        for h in (top, (top or {}).get("interrupted")):
+            if h and h.get("release") is not None and h.get("release") in pending:
+                return h.get("step")
     return None
 
 
@@ -888,6 +899,13 @@ def _deploy_module():
     return annex_deploy
 
 
+def _apps_module():
+    """vm/annex_apps.py (secret set, remove, migrate-networks, run; D102), imported lazily like annex_deploy."""
+    sys.modules.setdefault("annex_vm", sys.modules[__name__])
+    import annex_apps
+    return annex_apps
+
+
 def cmd_deploy(a: argparse.Namespace) -> None:
     """The whole deploy on the VM (D101): a JSON meta line then the source tar.gz on stdin; JSON lines on stdout."""
     sys.exit(_deploy_module().serve("deploy", a))
@@ -977,12 +995,10 @@ def provision(app: str, *, postgres: bool, files: bool, views: list[str], secret
     return {"env_file": str(sdir / "runtime.env"), "injected": sorted(env), "views": list(views)}
 
 
-def cmd_secret_set(a: argparse.Namespace) -> None:
-    """Read KEY=VALUE lines on stdin and merge them into the app's secrets.env."""
-    path = app_secrets_dir(a.app) / "secrets.env"
-    current = read_kv(path)
-    keys = []
-    for line in sys.stdin.read().splitlines():
+def parse_secret_lines(text: str) -> list[tuple[str, str]]:
+    """KEY=VALUE lines (a secret set's stdin) as pairs; Fail on a bad key or a value the env file can't hold."""
+    pairs = []
+    for line in text.splitlines():
         if not line:
             continue
         k, sep, v = line.partition("=")
@@ -990,19 +1006,51 @@ def cmd_secret_set(a: argparse.Namespace) -> None:
             raise Fail(f"bad secret line for key {k!r}: use KEY=VALUE with KEY in A-Z, 0-9, _")
         if "'" in v or "\n" in v:
             raise Fail(f"{k}: values can't contain single quotes or newlines in v0")
+        pairs.append((k, v))
+    return pairs
+
+
+def store_secrets(app: str, pairs: list[tuple[str, str]], actor: str | None) -> tuple[list[str], list[str]]:
+    """Merge pairs into the app's secrets.env and audit it (names only, never values). Returns (set, all keys)."""
+    path = app_secrets_dir(app) / "secrets.env"
+    current = read_kv(path)
+    for k, v in pairs:
         current[k] = v
-        keys.append(k)
+    keys = [k for k, _ in pairs]
     write_kv(path, current)
-    audit("secret.set", a.actor, a.app, {"names": keys})  # names only, never values
-    out({"ok": True, "set": keys, "all_keys": sorted(current)})
+    audit("secret.set", actor, app, {"names": keys})
+    return keys, sorted(current)
+
+
+def cmd_secret_set(a: argparse.Namespace) -> None:
+    """Read KEY=VALUE lines on stdin and merge them into the app's secrets.env. With --recreate (D102) the app's lock
+    is taken first and, when the app is deployed, its container is recreated with the new values: JSON lines."""
+    pairs = parse_secret_lines(sys.stdin.read())  # before the lock: a bad line changes nothing
+    if getattr(a, "recreate", False):
+        sys.exit(_apps_module().serve("secret-set", a, pairs=pairs))
+    keys, all_keys = store_secrets(a.app, pairs, a.actor)
+    out({"ok": True, "set": keys, "all_keys": all_keys})
 
 
 def cmd_secret_keys(a: argparse.Namespace) -> None:
     out({"keys": sorted(read_kv(SECRETS / "apps" / a.app / "secrets.env"))})
 
 
-def cmd_deprovision(a: argparse.Namespace) -> None:
-    app = a.app
+def clear_deploy_dir(base: Path, app: str) -> None:
+    """Delete deploy/<app>/ except `.lock.guard` (D102). The guard is the file runs flock on; unlinking it would let
+    a deploy that already opened it and a run that creates a new one both think they hold the lock. It stays, empty:
+    the app is gone, its lock file is not worth a race."""
+    d = base / "deploy" / app
+    for p in d.iterdir() if d.is_dir() else ():
+        if p.name == GUARD_NAME:
+            continue
+        if p.is_dir() and not p.is_symlink():
+            shutil.rmtree(p, ignore_errors=True)
+        else:
+            p.unlink(missing_ok=True)
+
+
+def deprovision(app: str, actor: str | None, keep_data: bool = False) -> dict:
     drop_product_role(app)
     removed = ["gateway role"]
     if (SECRETS / "hooks" / f"{app}.json").exists():
@@ -1011,7 +1059,7 @@ def cmd_deprovision(a: argparse.Namespace) -> None:
     if ops_db_exists():
         psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.app_grants WHERE app = {qlit(app)};")
         removed.append("email/Slack grant")
-    if not a.keep_data:
+    if not keep_data:
         if ops_db_exists():  # a redeployed name starts at r1 again: its old error groups would be wrong
             psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.error_events WHERE app = {qlit(app)}; "
                                      f"DELETE FROM annex_ops.error_groups WHERE app = {qlit(app)}; "
@@ -1024,12 +1072,33 @@ def cmd_deprovision(a: argparse.Namespace) -> None:
         shutil.rmtree(SECRETS / "apps" / app, ignore_errors=True)
         shutil.rmtree(SNAPSHOTS / app, ignore_errors=True)
         removed += ["database", "files", "release history", "snapshots", "secrets"]
-    shutil.rmtree(DATA / "deploy" / app, ignore_errors=True)
+    clear_deploy_dir(DATA, app)
     removed.append("deploy files")
     if remove_app_networks(app):  # the container is gone already (compose down): only platform containers are left on them
         removed.append("networks")
-    audit("app.removed", a.actor, app, {"kept_data": a.keep_data})
-    out({"ok": True, "removed": removed, "kept_data": a.keep_data})
+    audit("app.removed", actor, app, {"kept_data": keep_data})
+    return {"ok": True, "removed": removed, "kept_data": keep_data}
+
+
+def cmd_deprovision(a: argparse.Namespace) -> None:
+    out(deprovision(a.app, a.actor, a.keep_data))
+
+
+def cmd_remove(a: argparse.Namespace) -> None:
+    """Remove an app (D102): the app's lock, then drain, compose down, deprovision; JSON lines on stdout."""
+    sys.exit(_apps_module().serve("remove", a))
+
+
+def cmd_migrate_networks(a: argparse.Namespace) -> None:
+    """Move an app deployed before per-app networks (D88) onto its own network, without its source (D102)."""
+    sys.exit(_apps_module().serve("migrate-networks", a))
+
+
+def cmd_run_job(a: argparse.Namespace) -> None:
+    """Run one of the app's scheduled jobs now (D102) with the command deploy.json holds: the job's output
+    (stdout and stderr together) goes to stdout as it comes; the last line of stderr is {"ok": true, "exit_code",
+    "seconds"} or {"ok": false, "error"}; the exit code is the job's."""
+    sys.exit(_apps_module().run_job(a))
 
 
 def cmd_backup_now(_: argparse.Namespace) -> None:
@@ -1600,6 +1669,8 @@ def main() -> None:
     s = sub.add_parser("secret-set")
     s.add_argument("app")
     s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
+    s.add_argument("--recreate", action="store_true",
+                   help="D102: under the app's lock, also recreate its container with the new values (JSON lines)")
     s.set_defaults(fn=cmd_secret_set)
     s = sub.add_parser("secret-keys")
     s.add_argument("app")
@@ -1609,6 +1680,21 @@ def main() -> None:
     s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
     s.add_argument("--keep-data", action="store_true")
     s.set_defaults(fn=cmd_deprovision)
+    s = sub.add_parser("remove", help="remove an app (D102): drain, compose down, deprovision; JSON lines")
+    s.add_argument("app")
+    s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
+    s.add_argument("--keep-data", action="store_true")
+    s.set_defaults(fn=cmd_remove)
+    s = sub.add_parser("migrate-networks", help="move an app deployed before per-app networks (D88) onto its own "
+                                                "network without its source (D102); JSON lines")
+    s.add_argument("app")
+    s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
+    s.add_argument("--egress", action="store_true", help="keep internet access (the old shared network had it)")
+    s.set_defaults(fn=cmd_migrate_networks)
+    s = sub.add_parser("run-job", help="run one of the app's jobs now, with the command deploy.json holds (D102)")
+    s.add_argument("app")
+    s.add_argument("job")
+    s.set_defaults(fn=cmd_run_job)
     s = sub.add_parser("networks-sync", help="an app's own network(s) and the platform containers on them (D88); "
                                              "no app: every deployed app, from its deploy.json")
     s.add_argument("app", nargs="?")

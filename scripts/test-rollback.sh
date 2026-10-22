@@ -5,6 +5,7 @@
 #   3. `annex rollback --with-data` undoes a destructive migration (the run history in Postgres and the files in /data);
 #   4. two concurrent deploys: one wins, the other names the lock holder (D92, D101);
 #   5. Ctrl-C on a deploy in its health gate detaches: the deploy process on the VM finishes it (live, no reconcile);
+#      (a secret set and a removal meanwhile are refused by the same lock, D102);
 #   6. the deploy process killed (SIGKILL on the VM) in the gate of a broken version: the release is pending, the lock
 #      free, and `annex rollback --to <live>` reconciles it (failed) and puts the live release back.
 # Variants are builds of the fixture (scripts/selftest.py). Removes the app at the end.
@@ -117,6 +118,11 @@ kill -INT -- -"$p" 2>/dev/null || kill -INT "$p" 2>/dev/null || true
 wait "$p" 2>/dev/null || true
 has "the CLI says the deploy continues on the VM" "continues on the VM" "$(cat "$WORK/slow.out")"
 has "and names the step" "dropped at the gate step" "$(cat "$WORK/slow.out")"
+# the deploy is still in its gate (45 s), on the VM: a secret set and a removal take the same lock (D102) and are refused
+out=$(printf %s not-a-real-value | "$ANNEX" secret set $APP LOCKED_OUT 2>&1) && bad "a secret set during a deploy is refused" "it succeeded" \
+  || has "a secret set during a deploy is refused, naming the holder" "is being deployed or rolled back by" "$out"
+out=$("$ANNEX" remove $APP --yes 2>&1) && bad "a removal during a deploy is refused" "it succeeded" \
+  || has "a removal during a deploy is refused, naming the holder" "is being deployed or rolled back by" "$out"
 slow=$(last_release $APP 'r["release"]')
 wait_free && ok "the deploy process on the VM finished on its own" || bad "the VM finished the deploy" "$(deploy_state)"
 expect "r$slow is live (the VM finished it)" live "$(rel_result "$slow")"
