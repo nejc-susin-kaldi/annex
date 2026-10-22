@@ -285,11 +285,21 @@ def refresh_signals() -> None:
 
 
 def usage_rows() -> list[dict]:
-    """One row per app, as of the last rollup (at most `rollup_s` old; an app seen for the first time appears at the next one)."""
+    """One row per app, as of the last rollup (at most `rollup_s` old). An app removed since is left out; an app first seen
+    since is read live from the view, for that app only, until the next rollup stores it."""
+    cols = ROLLUP_COLUMNS.replace("app, ", "r.app, ", 1)
     with db.connect() as conn:
-        cur = conn.execute(f"SELECT {ROLLUP_COLUMNS} FROM annex_ops.usage_rollup_apps ORDER BY app")
-        cols = [d.name for d in cur.description]
-        return [dict(zip(cols, r)) for r in cur.fetchall()]
+        cur = conn.execute(f"SELECT {cols} FROM annex_ops.usage_rollup_apps r JOIN annex_ops.app_seen s USING (app) "
+                           "WHERE s.removed_at IS NULL")
+        names = [d.name for d in cur.description]
+        rows = [dict(zip(names, r)) for r in cur.fetchall()]
+        missing = [a for (a,) in conn.execute("SELECT app FROM annex_ops.app_seen WHERE removed_at IS NULL AND app NOT IN "
+                                              "(SELECT app FROM annex_ops.usage_rollup_apps)").fetchall()]
+        if missing:
+            cur = conn.execute(f"SELECT {ROLLUP_COLUMNS} FROM annex_ops.usage_apps WHERE app = ANY(%s)", (missing,))
+            names = [d.name for d in cur.description]
+            rows += [dict(zip(names, r)) for r in cur.fetchall()]
+    return sorted(rows, key=lambda r: r["app"])
 
 
 def write_signals(now: datetime, s: UsageSettings) -> dict:
