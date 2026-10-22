@@ -60,9 +60,25 @@ def app_secrets_dir(app: str) -> Path:
     return d
 
 
+# The one way this module starts a process. Tests replace it with a fake that records the command (C6, D96).
+run = subprocess.run
+
+
+def qlit(text: str) -> str:
+    """A SQL string literal, whatever the text contains (dollar quotes; see dollar_quote)."""
+    return dollar_quote(str(text))
+
+
+def qident(name: str) -> str:
+    """A SQL identifier, double-quoted with embedded quotes doubled. Names are validated before they get here; the
+    quoting doesn't rely on that."""
+    return '"' + str(name).replace('"', '""') + '"'
+
+
 def psql(container: str, db: str, sql: str) -> str:
-    """Run SQL as postgres inside a database container (local socket, trust auth)."""
-    r = subprocess.run(
+    """Run SQL as postgres inside a database container (local socket, trust auth). The SQL, passwords included, goes
+    on stdin: never on a command line."""
+    r = run(
         ["docker", "exec", "-i", container, "psql", "-v", "ON_ERROR_STOP=1", "-qAt", "-U", "postgres", "-d", db],
         input=sql, capture_output=True, text=True,
     )
@@ -127,20 +143,20 @@ def maintenance(app: str, minutes: int | None) -> None:
     """Hold annex-ops's alerts for the app while its container is stopped on purpose (None: release them).
     Best effort: a failure here must never block a restore."""
     args = ["--minutes", str(minutes)] if minutes else ["--end"]
-    subprocess.run(["docker", "exec", "annex-ops-1", "python", "-m", "annex_ops.ctl", "maintenance", f"app:{app}", *args, "--json"],
+    run(["docker", "exec", "annex-ops-1", "python", "-m", "annex_ops.ctl", "maintenance", f"app:{app}", *args, "--json"],
                    capture_output=True)
 
 
 def helper_image() -> str:
     """An image that is always present (the platform's Postgres) for chown/rm as root."""
-    r = subprocess.run(["docker", "inspect", "-f", "{{.Config.Image}}", APPDATA_DB], capture_output=True, text=True)
+    r = run(["docker", "inspect", "-f", "{{.Config.Image}}", APPDATA_DB], capture_output=True, text=True)
     if r.returncode != 0:
         raise Fail("appdata-db is not running; start the platform with scripts/push.sh")
     return r.stdout.strip()
 
 
 def as_root(cmd: list[str], mount: Path) -> None:
-    subprocess.run(["docker", "run", "--rm", "--network", "none", "--entrypoint", cmd[0],
+    run(["docker", "run", "--rm", "--network", "none", "--entrypoint", cmd[0],
                     "-v", f"{mount}:{mount}", helper_image(), *cmd[1:]], check=True, capture_output=True)
 
 
@@ -154,15 +170,14 @@ def grant_views(app: str, views: list[str]) -> str | None:
     unknown = [v for v in views if v not in known]
     if unknown:
         raise Fail(f"views not in the gateway allowlist: {', '.join(unknown)}; available: {', '.join(sorted(known))}")
-    grants = "\n".join(f"GRANT SELECT ON annex_api.{v} TO {role};" for v in views)
+    grants = "\n".join(f"GRANT SELECT ON annex_api.{qident(v)} TO {qident(role)};" for v in views)
     psql(PRODUCT_DB, "product", f"""
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN CREATE ROLE {role} NOLOGIN; END IF;
-END $$;
-REVOKE ALL ON ALL TABLES IN SCHEMA annex_api FROM {role};
-GRANT USAGE ON SCHEMA annex_api TO {role};
+SELECT format('CREATE ROLE %I NOLOGIN', {qlit(role)}) WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {qlit(role)})
+\\gexec
+REVOKE ALL ON ALL TABLES IN SCHEMA annex_api FROM {qident(role)};
+GRANT USAGE ON SCHEMA annex_api TO {qident(role)};
 {grants}
-GRANT {role} TO authenticator;
+GRANT {qident(role)} TO authenticator;
 """)
     # a new token on every provision (D80); written beside the old one and renamed, so a reader never sees half a file
     token_path = app_secrets_dir(app) / "gateway_token"
@@ -179,12 +194,10 @@ GRANT {role} TO authenticator;
 def drop_product_role(app: str) -> None:
     role = role_name(app)
     psql(PRODUCT_DB, "product", f"""
-DO $$ BEGIN
-  IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN
-    EXECUTE 'DROP OWNED BY {role}';
-    EXECUTE 'DROP ROLE {role}';
-  END IF;
-END $$;
+SELECT format('DROP OWNED BY %I', rolname) FROM pg_roles WHERE rolname = {qlit(role)}
+\\gexec
+SELECT format('DROP ROLE %I', rolname) FROM pg_roles WHERE rolname = {qlit(role)}
+\\gexec
 """)
     (SECRETS / "apps" / app / "gateway_token").unlink(missing_ok=True)
 
@@ -194,30 +207,29 @@ def ensure_database(app: str) -> str:
     role = role_name(app)
     pw = secret_file(app_secrets_dir(app) / "db_password")
     psql(APPDATA_DB, "postgres", f"""
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN CREATE ROLE {role} LOGIN; END IF;
-END $$;
-ALTER ROLE {role} WITH LOGIN PASSWORD '{pw}';
-SELECT 'CREATE DATABASE {role} OWNER {role}' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{role}')
+SELECT format('CREATE ROLE %I LOGIN', {qlit(role)}) WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {qlit(role)})
 \\gexec
-REVOKE CONNECT ON DATABASE {role} FROM PUBLIC;
-GRANT CONNECT ON DATABASE {role} TO {role};
+ALTER ROLE {qident(role)} WITH LOGIN PASSWORD {qlit(pw)};
+SELECT format('CREATE DATABASE %I OWNER %I', {qlit(role)}, {qlit(role)}) WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = {qlit(role)})
+\\gexec
+REVOKE CONNECT ON DATABASE {qident(role)} FROM PUBLIC;
+GRANT CONNECT ON DATABASE {qident(role)} TO {qident(role)};
 """)
     return f"postgres://{role}:{pw}@appdata-db:5432/{role}"
 
 
 def drop_database(app: str) -> None:
     role = role_name(app)
-    psql(APPDATA_DB, "postgres", f"DROP DATABASE IF EXISTS {role} WITH (FORCE);\nDROP ROLE IF EXISTS {role};")
+    psql(APPDATA_DB, "postgres", f"DROP DATABASE IF EXISTS {qident(role)} WITH (FORCE);\nDROP ROLE IF EXISTS {qident(role)};")
 
 
 def database_exists(app: str) -> bool:
-    return psql(APPDATA_DB, "postgres", f"SELECT 1 FROM pg_database WHERE datname = '{role_name(app)}';") == "1"
+    return psql(APPDATA_DB, "postgres", f"SELECT 1 FROM pg_database WHERE datname = {qlit(role_name(app))};") == "1"
 
 
 # --- annex-ops: what an app's token may do (email, Slack channels) ----------
 def ops_db_exists() -> bool:
-    return psql(APPDATA_DB, "postgres", f"SELECT 1 FROM pg_database WHERE datname = '{OPS_DB}';") == "1"
+    return psql(APPDATA_DB, "postgres", f"SELECT 1 FROM pg_database WHERE datname = {qlit(OPS_DB)};") == "1"
 
 
 def grant_notify(app: str, email: bool, channels: list[str]) -> str | None:
@@ -233,10 +245,10 @@ def grant_notify(app: str, email: bool, channels: list[str]) -> str | None:
         raise Fail("annex-ops isn't set up on this server: run scripts/bootstrap.sh and scripts/push.sh")
     token = secret_file(app_secrets_dir(app) / "ops_token", 32)
     digest = hashlib.sha256(token.encode()).hexdigest()
-    chans = "ARRAY[" + ",".join(f"'{c}'" for c in channels) + "]::text[]"
+    chans = "ARRAY[" + ",".join(qlit(c) for c in channels) + "]::text[]"
     psql(APPDATA_DB, OPS_DB, f"""
 INSERT INTO annex_ops.app_grants (app, token_sha256, email, slack_channels, updated_at)
-VALUES ('{app}', '{digest}', {'true' if email else 'false'}, {chans}, now())
+VALUES ({qlit(app)}, {qlit(digest)}, {'true' if email else 'false'}, {chans}, now())
 ON CONFLICT (app) DO UPDATE SET token_sha256 = EXCLUDED.token_sha256, email = EXCLUDED.email,
   slack_channels = EXCLUDED.slack_channels, updated_at = now();
 """)
@@ -245,7 +257,7 @@ ON CONFLICT (app) DO UPDATE SET token_sha256 = EXCLUDED.token_sha256, email = EX
 
 def drop_notify(app: str) -> None:
     if ops_db_exists():
-        psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.app_grants WHERE app = '{app}';")
+        psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.app_grants WHERE app = {qlit(app)};")
     (SECRETS / "apps" / app / "ops_token").unlink(missing_ok=True)
 
 
@@ -290,10 +302,10 @@ def write_hooks(app: str, hooks: list[dict], port: int, user_secrets: dict[str, 
 def restore_database(app: str, dump: Path) -> None:
     """Replace the app's database with a pg_dump -Fc file."""
     role = role_name(app)
-    psql(APPDATA_DB, "postgres", f"DROP DATABASE IF EXISTS {role} WITH (FORCE);")
+    psql(APPDATA_DB, "postgres", f"DROP DATABASE IF EXISTS {qident(role)} WITH (FORCE);")
     ensure_database(app)
     with open(dump, "rb") as f:
-        r = subprocess.run(["docker", "exec", "-i", APPDATA_DB, "pg_restore", "-U", "postgres", "-d", role,
+        r = run(["docker", "exec", "-i", APPDATA_DB, "pg_restore", "-U", "postgres", "-d", role,
                             "--exit-on-error"], stdin=f, capture_output=True, text=True)
     if r.returncode != 0:
         raise Fail(f"pg_restore failed: {r.stderr.strip()[-800:]}")
@@ -367,7 +379,7 @@ def pick_subnet(pool: str, used: list[str], prefix: int = 24) -> str:
 
 
 def docker(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    r = subprocess.run(["docker", *args], capture_output=True, text=True)
+    r = run(["docker", *args], capture_output=True, text=True)
     if check and r.returncode != 0:
         raise Fail(f"docker {' '.join(args[:3])} failed: {(r.stderr or r.stdout).strip()[-300:]}")
     return r
@@ -651,7 +663,7 @@ def container_state(app: str, manifest: dict | None = None) -> dict | None:
     """The app container's image, status and health (None if there's no container). For a web app, health is what the
     deploy's gate asks (GET <healthcheck> from Traefik returns 200), not Docker's own healthcheck, which may probe
     another path: "healthy", "unhealthy", or "starting" while Docker's check hasn't passed yet."""
-    r = subprocess.run(["docker", "inspect", "-f", "{{.Config.Image}}|{{.State.Status}}|"
+    r = run(["docker", "inspect", "-f", "{{.Config.Image}}|{{.State.Status}}|"
                         "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}", f"annex-app-{app}"],
                        capture_output=True, text=True)
     if r.returncode != 0:
@@ -659,7 +671,7 @@ def container_state(app: str, manifest: dict | None = None) -> dict | None:
     image, status, health = (r.stdout.strip().split("|") + ["", "", ""])[:3]
     m = manifest or {}
     if status == "running" and m.get("type") in ("web", "web+job") and m.get("port") and m.get("healthcheck"):
-        probe = subprocess.run(["docker", "exec", platform_container("traefik"), "wget", "-q", "-O", "/dev/null", "-T",
+        probe = run(["docker", "exec", platform_container("traefik"), "wget", "-q", "-O", "/dev/null", "-T",
                                 "3", f"http://annex-app-{app}:{m['port']}{m['healthcheck']}"], capture_output=True)
         health = "healthy" if probe.returncode == 0 else "starting" if health == "starting" else "unhealthy"
     return {"image": image, "status": status, "health": health}
@@ -793,7 +805,7 @@ def after_reconcile(app: str, done: list[dict]) -> list[str]:
     release that turned out live had a schedule or replaced one (Ofelia reads job labels only at startup, D18)."""
     warnings = [w for w in (record_release_db(app, x["line"]) for x in done) if w]
     if any(x["schedule_changed"] for x in done):
-        subprocess.run(["docker", "restart", OFELIA], capture_output=True)
+        run(["docker", "restart", OFELIA], capture_output=True)
     return warnings
 
 
@@ -947,13 +959,13 @@ def cmd_deprovision(a: argparse.Namespace) -> None:
         write_hooks(app, [], 0, {})
         removed.append("webhook file")
     if ops_db_exists():
-        psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.app_grants WHERE app = '{app}';")
+        psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.app_grants WHERE app = {qlit(app)};")
         removed.append("email/Slack grant")
     if not a.keep_data:
         if ops_db_exists():  # a redeployed name starts at r1 again: its old error groups would be wrong
-            psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.error_events WHERE app = '{app}'; "
-                                     f"DELETE FROM annex_ops.error_groups WHERE app = '{app}'; "
-                                     f"DELETE FROM annex_ops.error_alerts WHERE app = '{app}';")
+            psql(APPDATA_DB, OPS_DB, f"DELETE FROM annex_ops.error_events WHERE app = {qlit(app)}; "
+                                     f"DELETE FROM annex_ops.error_groups WHERE app = {qlit(app)}; "
+                                     f"DELETE FROM annex_ops.error_alerts WHERE app = {qlit(app)};")
             removed.append("error groups")
         drop_database(app)
         appdir = DATA / "apps" / app
@@ -973,7 +985,7 @@ def cmd_deprovision(a: argparse.Namespace) -> None:
 def cmd_backup_now(_: argparse.Namespace) -> None:
     """Run the nightly backup now (dump hook + archive + retention)."""
     before = set(BACKUPS.glob("annex-*.tar.gz"))
-    r = subprocess.run(["docker", "exec", BACKUP, "backup"], capture_output=True, text=True)
+    r = run(["docker", "exec", BACKUP, "backup"], capture_output=True, text=True)
     new = sorted(set(BACKUPS.glob("annex-*.tar.gz")) - before)
     if r.returncode != 0 or not new:
         raise Fail(f"backup failed: {(r.stderr or r.stdout).strip()[-800:]}")
@@ -1018,19 +1030,19 @@ def cmd_restore(a: argparse.Namespace) -> None:
         raise Fail(f"{archive.name} has no database dump for {app}")
 
     maintenance(app, 15)
-    subprocess.run(["docker", "stop", f"annex-app-{app}"], capture_output=True)
+    run(["docker", "stop", f"annex-app-{app}"], capture_output=True)
     try:
         if have_dump:
             restore_database(app, staging / dump_name)
         if (staging / files_prefix).exists():
             appdir = DATA / "apps" / app
             appdir.mkdir(parents=True, exist_ok=True)
-            subprocess.run(["docker", "run", "--rm", "--network", "none", "--entrypoint", "sh",
+            run(["docker", "run", "--rm", "--network", "none", "--entrypoint", "sh",
                             "-v", f"{appdir}:/app", "-v", f"{staging}:/staging:ro", helper_image(), "-c",
                             f"rm -rf /app/data && cp -a /staging/{files_prefix} /app/data && "
                             f"chown -R {APP_UID}:{APP_UID} /app/data"], check=True, capture_output=True)
     finally:
-        subprocess.run(["docker", "start", f"annex-app-{app}"], capture_output=True)
+        run(["docker", "start", f"annex-app-{app}"], capture_output=True)
         shutil.rmtree(staging, ignore_errors=True)
         maintenance(app, None)
     audit("data.restored", a.actor, app, {"archive": archive.name, "database": have_dump, "files": n_files})
@@ -1041,7 +1053,7 @@ def cmd_restore(a: argparse.Namespace) -> None:
 def in_helper(args: list[str], mounts: list[str], stdout=None) -> subprocess.CompletedProcess:
     """Run a command as root in the helper image, with no network."""
     vols = [x for m in mounts for x in ("-v", m)]
-    return subprocess.run(["docker", "run", "--rm", "--network", "none", *vols, "--entrypoint", args[0],
+    return run(["docker", "run", "--rm", "--network", "none", *vols, "--entrypoint", args[0],
                            helper_image(), *args[1:]], stdout=stdout or subprocess.PIPE, stderr=subprocess.PIPE)
 
 
@@ -1062,7 +1074,7 @@ def cmd_snapshot(a: argparse.Namespace) -> None:
     try:
         if database_exists(app):
             with open(target / "db.dump", "wb") as f:
-                r = subprocess.run(["docker", "exec", APPDATA_DB, "pg_dump", "-U", "postgres", "-Fc", role_name(app)],
+                r = run(["docker", "exec", APPDATA_DB, "pg_dump", "-U", "postgres", "-Fc", role_name(app)],
                                    stdout=f, stderr=subprocess.PIPE)
             if r.returncode != 0:
                 raise Fail(f"pg_dump failed: {r.stderr.decode(errors='replace').strip()[-400:]}")
@@ -1107,7 +1119,7 @@ def cmd_restore_snapshot(a: argparse.Namespace) -> None:
     snap = snaps[-1]
     meta = json.loads((snap / "meta.json").read_text())
     maintenance(app, 15)  # the CLI ends it once the release it rolls back to is running
-    subprocess.run(["docker", "stop", f"annex-app-{app}"], capture_output=True)
+    run(["docker", "stop", f"annex-app-{app}"], capture_output=True)
     if (snap / "db.dump").exists():
         restore_database(app, snap / "db.dump")
     if (snap / "data.tar.gz").exists():
@@ -1158,7 +1170,7 @@ def release_row(app: str, rel: dict) -> dict | None:
 def dollar_quote(text: str) -> str:
     """A SQL string literal that needs no escaping: dollar quotes with a tag the text doesn't contain."""
     tag, i = "annexjson", 0
-    while f"${tag}$" in text:
+    while (text + f"${tag}$").find(f"${tag}$") != len(text):  # not in the text, and not completed by the text's tail
         i += 1
         tag = f"annexjson{i}"
     return f"${tag}${text}${tag}$"
@@ -1348,10 +1360,10 @@ class users_lock:
 
 def random_password() -> tuple[str, str]:
     """(password, argon2id digest) from Authelia's own tool, so the hash matches its settings."""
-    image = subprocess.run(["docker", "inspect", "-f", "{{.Config.Image}}", AUTHELIA], capture_output=True, text=True)
+    image = run(["docker", "inspect", "-f", "{{.Config.Image}}", AUTHELIA], capture_output=True, text=True)
     if image.returncode != 0:
         raise Fail("Authelia isn't running; start the platform with scripts/push.sh")
-    r = subprocess.run(["docker", "run", "--rm", "--network", "none", image.stdout.strip(), "authelia", "crypto",
+    r = run(["docker", "run", "--rm", "--network", "none", image.stdout.strip(), "authelia", "crypto",
                         "hash", "generate", "argon2", "--random", "--random.length", "24"], capture_output=True, text=True)
     pw = re.search(r"^Random Password: (\S+)$", r.stdout, re.M)
     digest = re.search(r"^Digest: (\S+)$", r.stdout, re.M)
@@ -1373,7 +1385,7 @@ def send_reset_email(login: str) -> None:
         raise Fail(f"ANNEX_URL_AUTH is {auth!r}; run scripts/push.sh")
     scheme, host, port = m.group(1), m.group(2), m.group(3) or ("443" if m.group(1) == "https" else "80")
     target = "127.0.0.1:443" if platform_setting("ANNEX_TLS_MODE") == "local" else "127.0.0.1:80"
-    r = subprocess.run(["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "20",
+    r = run(["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "20",
                         "--connect-to", f"{host}:{port}:{target}", "-H", "Content-Type: application/json",
                         "-d", json.dumps({"username": login}), f"{auth}/api/reset-password/identity/start"],
                        capture_output=True, text=True)

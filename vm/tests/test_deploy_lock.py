@@ -242,7 +242,7 @@ class ContainerState(unittest.TestCase):
             if cmd[:2] == ["docker", "inspect"]:
                 return vm.subprocess.CompletedProcess(cmd, 0 if inspect_out else 1, inspect_out, "")
             return vm.subprocess.CompletedProcess(cmd, probe_rc, b"", b"")
-        with unittest.mock.patch.object(vm.subprocess, "run", side_effect=run):
+        with unittest.mock.patch.object(vm, "run", side_effect=run):
             return vm.container_state("x", manifest), calls
 
     def test_a_web_app_is_judged_by_the_gates_probe_not_dockers_healthcheck(self):
