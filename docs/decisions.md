@@ -666,3 +666,27 @@ It takes about 63 MB on disk and seeds in under a minute.
 **Tests.** `ops/tests/test_threads.py` (verdict, registry, `/healthz` 503, `fetch`), a follower surviving an unexpected store error and an unexpected loop error (`test_follow_exact.py`), `Shipper.revive` (`test_logship.py`), the `platform:ops` target (`test_health.py`) and the console's table (`test_console_view.py`). `test-logs.sh` checks that `/healthz` lists the followers and the sink's counters after ops restarts. Not run here (VM): `test-smoke.sh`, `test-logs.sh`.
 
 **Prod:** metrics (Prometheus or CloudWatch) replace the thread table; `/healthz` stays.
+
+
+## D84. A connection pool in ops, appdata-db sized to its connections (22 Oct, hardening B4)
+**What.**
+- `ops/annex_ops/db.py` keeps one `psycopg_pool.ConnectionPool` per process (min 1, max `OPS_DB_POOL_MAX`: ops 4, the console and the webhook receiver 2, set in `compose.yaml`; they are separate containers running the same package). `db.connect()` keeps its signature: it is now a context manager, and all 86 call sites already were `with db.connect() as conn:`, none keeps a connection past its block and none nests two (checked by reading every caller). Connections are `autocommit=True` as before; on return the pool rolls back anything left open and discards a broken connection, and `check_connection` replaces one the database restarted under. No caller sets session state (`SET`, `row_factory`), so there is nothing to reset. The pool opens on first use, so imports and unit tests touch no network.
+- **No hang.** A caller waits at most 10 s for a free connection, then gets `OpsError 503` ("annex-ops is busy: all of its N database connections have been in use for 10 s"). A database that is down (`PoolClosed`, `psycopg.Error` while acquiring) is the old "can't reach its database" 503. Errors raised inside the caller's block pass through unchanged: only acquiring is mapped.
+- **`psycopg-pool==3.3.3`** pinned in `ops/requirements.txt` (the version the resolver picks next to `psycopg==3.3.6`; Nejc approved the dependency).
+- **appdata-db keeps `max_connections=60` and gets `mem_limit: 640m`** (was 384m): 128 MB shared buffers + 60 backends at up to about 6 MB + headroom. Budget at the limit: ops 4, receiver 2, console 2, 3 reserved for superusers, leaving about 49 for apps, i.e. 10 apps at the contract's 5. Memory on the VM was about 2.4 GiB used of 3.9 GiB; the extra 256 MB is a limit, not a use (idle backends are 2-5 MB), so real growth is a fraction of it.
+- **Contract (`storage`):** "Use at most 5 database connections: a pool of 2-5 is right." The templates have no database code (`python-job` only lists `psycopg`); the demo app and the selftest open one short-lived connection per call, which is bounded by their concurrency.
+- **Console, Platform page:** "Database connections": per database, with the total against `max_connections` (amber at 70 %, red at 90 %). Data: a new view `annex_ops.db_connections` over `pg_stat_database.numbackends`, granted to `annex_console`.
+
+**Why.** Every call opened and closed a Postgres connection (a TCP and auth handshake and a backend fork each time; about 13 background threads and the web threadpool). Memory was sized for 384m under `max_connections=60`, which a burst of 60 backends would exceed, and the OOM killer takes the database for every app, while a refused connection hurts one app. Nothing told an app builder how many connections to use or told an admin how many were in use.
+
+**Alternatives.**
+- `max_connections=40` at 384m: keeps memory, but leaves about 29 connections for apps (5 or 6 at the contract's 5) and caps growth at the next few apps; refusing connections is the failure we would meet first.
+- `pg_stat_activity` for the counts: other roles' rows are hidden from non-superusers, so it needs `pg_read_all_stats` or `pg_monitor` for the view's owner, or a `SECURITY DEFINER` function, all of which expose or can reach query text. `pg_stat_database.numbackends` is readable by every role, gives exactly the per-database count, and exposes no query, role or address: the minimum.
+- A pool per module, or one connection per thread: more connections for no gain; one shared pool keeps ops at 4 in total.
+- PgBouncer: a new component; not needed at this scale.
+
+**Not done.** The pool's own numbers (`get_stats`: waiting, usage) are not on `/healthz` or the console; `db.stats()` exists for that. An app that ignores the contract is only visible as a high count on the Platform page, not stopped (a per-role `CONNECTION LIMIT` would, but it is a change to `annex_vm.py` provisioning and existing roles).
+
+**Tests.** `ops/tests/test_db.py` (signature, return on error, size, 503 mapping for timeout, closed pool and no database), the console section (`test_console_view.py`). Not run here (VM): `test-smoke.sh`, `test-notify.sh`; to check there: `annex_ops.db_connections` exists and the console role can read it, appdata-db is at 640m, and the Platform page lists the databases.
+
+**Prod:** RDS with its own `max_connections` and RDS Proxy or PgBouncer in front; per-role connection limits set at provisioning.

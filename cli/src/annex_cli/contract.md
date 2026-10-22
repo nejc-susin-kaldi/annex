@@ -126,6 +126,7 @@ The templates are the fast path, not a requirement. Any language or framework wo
 - **Gateway token stays on the server:** call the gateway from your server. Never send `ANNEX_GATEWAY_TOKEN` to the browser. The token changes on every deploy and expires after a year, so read it from the environment at startup; never store it in a file, the database or the code.
 - **Storage:**
   - Postgres (`DATABASE_URL`) and files under `/data` are the only storage. A SQLite file is fine if it lives in `/data`.
+  - Use at most 5 database connections: a pool of 2–5 is right. The shared Postgres has a fixed number of connections, and an app that opens one per request can starve the others.
   - There's no MySQL, MongoDB or Redis, and no second container.
   - If the tool needs those, it's a candidate to move to a Kaldi project.
 - **Upload size:** the app folder is uploaded and built on the server (x86_64). Keep it under 50 MB compressed: add `node_modules`, `.venv`, `.next`, `dist` and data files to `.dockerignore`. Pin the base image version.
