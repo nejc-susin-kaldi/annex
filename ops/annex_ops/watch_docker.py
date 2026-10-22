@@ -67,6 +67,10 @@ def log(msg: str) -> None:
     print(f"watch_docker: {msg}", file=sys.stderr, flush=True)
 
 
+class ReconcileIncomplete(Exception):
+    """Some container couldn't be inspected: the pass is repeated, without telling the engine it was complete."""
+
+
 class Watcher(threading.Thread):
     def __init__(self, submit, reconcile_extra=None):
         super().__init__(daemon=True, name="watch-docker")
@@ -74,18 +78,31 @@ class Watcher(threading.Thread):
         self.reconcile_extra = reconcile_extra  # called after the reconcile pass (starts the health checker)
 
     def reconcile(self) -> None:
-        cids = set()
+        """Report every container as Seen, then ReconcileDone with their ids: the engine forgets (and quietly closes the
+        incidents of) every container it knows that isn't in that set. So ReconcileDone is sent only when every inspect
+        answered: a container that vanished in between (404) is really gone, but one whose inspect failed (the proxy
+        busy, a timeout) is still there, and must not look destroyed (D90). An incomplete pass raises, and run() tries
+        the whole pass again in 5 s."""
+        cids, failed = set(), []
         for c in docker_api.containers():
             try:
                 seen = inspect_to_seen(docker_api.inspect(c["Id"]))
-            except docker_api.DockerError:
+            except docker_api.DockerError as e:
+                if e.status == 404:
+                    continue  # destroyed since the list: its destroy event follows
+                failed.append(f"{c['Id'][:12]}: {e}")
+                continue
+            except OSError as e:
+                failed.append(f"{c['Id'][:12]}: {type(e).__name__}: {e}")
                 continue
             if seen:
                 cids.add(seen.cid)
                 self.submit(seen)
-        self.submit(engine.ReconcileDone(cids))
         if self.reconcile_extra:
-            self.reconcile_extra()
+            self.reconcile_extra()  # the checker starts anyway: a verdict for a container not yet seen is ignored
+        if failed:
+            raise ReconcileIncomplete(f"{len(failed)} container(s) couldn't be inspected ({'; '.join(failed[:3])})")
+        self.submit(engine.ReconcileDone(cids))
 
     def run(self) -> None:
         last_nano = 0

@@ -209,6 +209,21 @@ def db_connections() -> list[dict] | None:
     return [{"database": r[0], "connections": r[1], "max": r[2]} for r in rows]
 
 
+def alert_messages(days: int = 7) -> dict | None:
+    """The alert messages that weren't delivered in the last `days` (annex_ops.outbox, D90), newest first, and how many
+    are still waiting for a retry; None when the table isn't there yet or the database doesn't answer."""
+    try:
+        with db.connect() as conn:
+            failed = conn.execute("SELECT created_at, kind, subject, attempts, last_error FROM annex_ops.outbox "
+                                  "WHERE status = 'failed' AND created_at > now() - make_interval(days => %s) "
+                                  "ORDER BY created_at DESC LIMIT 20", (days,)).fetchall()
+            waiting = conn.execute("SELECT count(*) FROM annex_ops.outbox WHERE status = 'pending'").fetchone()[0]
+    except (OpsError, psycopg.Error):
+        return None
+    return {"waiting": waiting, "failed": [{"ts": r[0], "kind": r[1], "subject": r[2], "attempts": r[3], "error": r[4]}
+                                           for r in failed]}
+
+
 def host_series(days: int = 7) -> dict[str, list[float]]:
     """Hourly averages of disk used and memory available over the last `days` days, oldest first."""
     try:
@@ -468,7 +483,7 @@ def platform_view() -> dict:
     return {"front_door": "unknown" if fd is None else "up" if fd["up"] else "down",
             "incidents": [{"subject": i["subject"], "opened_at": i["opened_at"], "what": ", ".join(i["signals"])} for i in open_all
                           if i["subject"] != "platform:front-door"],
-            "host": host_latest(), "series": host_series(), "connections": db_connections(),
+            "host": host_latest(), "series": host_series(), "connections": db_connections(), "messages": alert_messages(),
             "ops": threads.fetch(config.OPS_URL),  # annex-ops's own /healthz: threads and queues (D81); the console can't see inside ops
             "tuning": {k: getattr(t, k) for k in ("disk_alert_pct", "disk_clear_pct", "mem_alert_mb", "mem_clear_mb", "backup_max_age_s")},
             "links": [(name, url, what) for name, what in PLATFORM_TOOLS if (url := v.host_url(name))]}

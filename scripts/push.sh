@@ -39,7 +39,7 @@ rsync -rlpt --delete "$ROOT/.build/platform/" "$SSH_HOST:$DATA/platform/"
 
 # annex-ops's database goes in before the full start: its healthcheck needs the database, so
 # `up --wait` would time out on the first push. The password stays on the VM.
-log "Applying annex-ops database (db/appdata/annex_ops.sql)"
+log "Applying annex-ops database: roles (db/appdata/bootstrap.sql), then pending migrations (db/appdata/migrations, D93)"
 vm "cd $DATA/platform && docker compose up -d --wait appdata-db >/dev/null"
 networks_sync  # a recreated appdata-db is back on the networks of the apps with Postgres before the long start below
 vm "cd $DATA/platform && . $DATA/secrets/master.env 2>/dev/null && [ -n \"\${APPDATA_DB_OPS_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_METABASE_USAGE_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_HOOKS_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_CONSOLE_PASSWORD:-}\" ]" \
@@ -47,7 +47,9 @@ vm "cd $DATA/platform && . $DATA/secrets/master.env 2>/dev/null && [ -n \"\${APP
 # the passwords reach psql through its environment (`-e NAME` copies it from this shell), never through an argument list (D80)
 vm "cd $DATA/platform && set -a && . $DATA/secrets/master.env && set +a && docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' \
       -e APPDATA_DB_OPS_PASSWORD -e APPDATA_DB_METABASE_USAGE_PASSWORD -e APPDATA_DB_HOOKS_PASSWORD -e APPDATA_DB_CONSOLE_PASSWORD appdata-db \
-      psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f - < db/appdata/annex_ops.sql"
+      psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f - < db/appdata/bootstrap.sql"
+# numbered schema files, each in one transaction, recorded in annex_ops.schema_version; stops at the first failure and names it (D93)
+vm "cd $DATA/platform && python3 vm/migrate.py"
 
 log "Starting platform ${profile[*]:-(core)}"
 vm "cd $DATA/platform && docker compose ${profile[*]:-} up -d --build --wait --wait-timeout 420 --remove-orphans"
