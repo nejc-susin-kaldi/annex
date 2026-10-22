@@ -3,7 +3,7 @@ from contextlib import contextmanager
 
 import psycopg
 import pytest
-from psycopg_pool import PoolClosed, PoolTimeout
+from annex_ops.db import PoolClosed, PoolTimeout
 
 from annex_ops import config, db
 from annex_ops.errors import OpsError
@@ -88,7 +88,106 @@ def test_no_database_url_is_a_503_before_any_pool_exists(monkeypatch):
     assert e.value.status == 503 and "no database configured" in e.value.message and db._pool is None
 
 
-def test_the_real_pool_is_built_closed_with_the_wanted_settings():
-    pool = db.ConnectionPool("postgres://u:p@127.0.0.1:1/x", min_size=1, max_size=2, open=False, timeout=db.POOL_WAIT_S)
-    assert pool.max_size == 2 and pool.closed and pool.timeout == db.POOL_WAIT_S  # constructing touches no network
+def test_building_the_pool_touches_no_network():
+    pool = db.Pool("postgres://u:p@127.0.0.1:1/x", 2)
+    assert pool.max_size == 2 and pool.idle == [] and not pool.closed
     assert db.pool_size() >= 1
+
+
+# --- the pool itself (no database: psycopg.connect is faked) ------------------------------------------------------
+class FakeConn:
+    def __init__(self, n):
+        self.n, self.closed, self.broken, self.queries = n, False, False, []
+        self.info = type("Info", (), {"transaction_status": db.pq.TransactionStatus.IDLE})()
+
+    def execute(self, q):
+        self.queries.append(q)
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.fixture
+def opened(monkeypatch):
+    made = []
+
+    def connect(url, **kw):
+        made.append(FakeConn(len(made)))
+        return made[-1]
+    monkeypatch.setattr(db.psycopg, "connect", connect)
+    return made
+
+
+def test_an_idle_connection_is_reused(opened):
+    p = db.Pool("postgres://x", 2)
+    with p.connection() as a:
+        pass
+    with p.connection() as b:
+        assert b is a
+    assert len(opened) == 1
+
+
+def test_a_broken_connection_or_one_left_in_a_transaction_is_closed_not_reused(opened):
+    p = db.Pool("postgres://x", 2)
+    with p.connection() as a:
+        a.broken = True
+    with p.connection() as b:
+        b.info.transaction_status = db.pq.TransactionStatus.INTRANS
+    with p.connection() as c:
+        pass
+    assert a.closed and b.closed and c is not a and c is not b and len(opened) == 3
+
+
+def test_the_size_is_a_cap_and_a_full_pool_times_out(opened, monkeypatch):
+    monkeypatch.setattr(db, "POOL_WAIT_S", 0.05)
+    p = db.Pool("postgres://x", 1)
+    with p.connection():
+        with pytest.raises(db.PoolTimeout):
+            with p.connection():
+                pass
+    with p.connection():  # the slot came back
+        pass
+
+
+def test_a_failed_open_gives_the_slot_back(monkeypatch):
+    monkeypatch.setattr(db, "POOL_WAIT_S", 0.05)
+
+    def refuse(url, **kw):
+        raise psycopg.OperationalError("refused")
+    monkeypatch.setattr(db.psycopg, "connect", refuse)
+    p = db.Pool("postgres://x", 1)
+    for _ in range(3):
+        with pytest.raises(psycopg.OperationalError):
+            with p.connection():
+                pass
+
+
+def test_an_old_idle_connection_is_checked_and_a_dead_one_replaced(opened, monkeypatch):
+    p = db.Pool("postgres://x", 1)
+    with p.connection() as a:
+        pass
+    p.idle[0] = (a, p.idle[0][1] - db.CHECK_AFTER_S - 1)
+
+    def dead(q):
+        raise psycopg.OperationalError("server closed the connection")
+    a.execute = dead
+    with p.connection() as b:
+        assert b is not a and a.closed
+
+
+def test_connect_maps_a_real_pool_timeout_and_returns_the_connection(opened, monkeypatch):
+    monkeypatch.setattr(config, "DATABASE_URL", "postgres://x")
+    monkeypatch.setattr(config, "DB_POOL_MAX", 1)
+    monkeypatch.setattr(db, "_pool", None)
+    monkeypatch.setattr(db, "POOL_WAIT_S", 0.05)
+    with db.connect():
+        with pytest.raises(OpsError) as e:
+            with db.connect():
+                pass
+        assert e.value.status == 503
+    with pytest.raises(ValueError):
+        with db.connect():
+            raise ValueError("the caller's")
+    with db.connect() as conn:  # nothing leaked
+        assert conn is opened[0]
+    monkeypatch.setattr(db, "_pool", None)
