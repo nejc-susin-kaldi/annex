@@ -4,6 +4,7 @@ The decisions are pure functions (`partition_days`, `expired_days`, `trim_plan`,
 unit test each; the rest is plumbing. A partition is made for the day of a line before the line is inserted, and
 ahead of time by the keeper (logship.Keeper), so a line can never fail for want of a partition.
 """
+import json
 import re
 import sys
 import threading
@@ -20,7 +21,9 @@ from .errors import OpsError
 
 FLUSH_S = 1.0          # buffered lines are inserted at least this often ...
 BATCH = 500            # ... or as soon as this many are waiting
-MAX_BUFFER = 20000     # the database is down: keep this many lines in memory, then drop the oldest
+MAX_BUFFER = 20000     # the database is down: keep this many lines in memory, then drop the oldest ...
+MAX_BUFFER_BYTES = 20 * 2**20  # ... or this many bytes (row_bytes), whichever comes first (D86; LogSettings sets both)
+ROW_OVERHEAD = 600     # what a Row costs in Python beyond its text: the object, its dict, the datetime, five strings
 PARTITIONS_AHEAD = 2   # the keeper makes today's partition and this many days more
 LEVEL_RANK = {"debug": 0, "info": 1, "warn": 2, "error": 3}
 PARTITION = re.compile(r"^logs_(\d{4})(\d\d)(\d\d)$")
@@ -39,6 +42,18 @@ class Row:
     msg: str
     fields: dict | None
     h: str                     # md5 hex of container, stream, nanosecond timestamp and the raw line
+
+
+def row_bytes(r: Row) -> int:
+    """About what a buffered row costs in memory: its text, its serialised fields and a fixed overhead for the
+    objects around them. An estimate to bound the buffer by, not an exact figure."""
+    n = ROW_OVERHEAD + len(r.msg) + len(r.container) + len(r.app or "") + len(r.request_id or "")
+    if r.fields:
+        try:
+            n += len(json.dumps(r.fields, default=str, separators=(",", ":")))
+        except (TypeError, ValueError):
+            n += 1024
+    return n
 
 
 def log(msg: str) -> None:
@@ -148,23 +163,46 @@ def insert_rows(rows: list[Row], known: set[date]) -> int:
 
 class Sink:
     """Buffers rows and inserts them in batches. Thread-safe. `flush()` returns True once everything added so far
-    is in the database: followers call it before they save a cursor, so a cursor never gets ahead of the rows."""
+    is in the database: followers call it before they save a cursor, so a cursor never gets ahead of the rows.
+    While the database is down the buffer is bounded by rows and by bytes (D86): the oldest rows go first and are
+    counted in `lost`."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_rows: int | None = None, max_bytes: int | None = None) -> None:
+        if max_rows is None or max_bytes is None:
+            from . import config
+            s = config.log_settings()
+            max_rows = s.log_buffer_rows if max_rows is None else max_rows
+            max_bytes = int(s.log_buffer_mb * 2**20) if max_bytes is None else max_bytes
+        self.max_rows, self.max_bytes = max_rows, max_bytes
         self.buf: list[Row] = []
+        self.sizes: list[int] = []  # row_bytes of each row in buf
+        self.bytes = 0
         self.lock = threading.Lock()
         self.flush_lock = threading.Lock()
         self.known: set[date] = set()
         self.lost = 0
         self.last_error = 0.0
 
+    def _trim(self) -> None:
+        """Drop the oldest rows until the buffer fits both limits, and count them. Call with the lock held."""
+        over = max(0, len(self.buf) - self.max_rows)
+        total = sum(self.sizes[over:])
+        while over < len(self.buf) and total > self.max_bytes:
+            total -= self.sizes[over]
+            over += 1
+        if over:
+            del self.buf[:over], self.sizes[:over]
+            self.lost += over
+            self.bytes = total
+
     def add(self, row: Row) -> None:
+        size = row_bytes(row)
         with self.lock:
             self.buf.append(row)
-            if len(self.buf) > MAX_BUFFER:
-                over = len(self.buf) - MAX_BUFFER
-                del self.buf[:over]
-                self.lost += over
+            self.sizes.append(size)
+            self.bytes += size
+            if len(self.buf) > self.max_rows or self.bytes > self.max_bytes:
+                self._trim()
             full = len(self.buf) >= BATCH
         if full:
             self.flush()
@@ -172,7 +210,8 @@ class Sink:
     def flush(self) -> bool:
         with self.flush_lock:
             with self.lock:
-                rows, self.buf = self.buf, []
+                rows, sizes = self.buf, self.sizes
+                self.buf, self.sizes, self.bytes = [], [], 0
             if not rows:
                 return True
             try:
@@ -180,18 +219,20 @@ class Sink:
                 return True
             except Exception as e:  # noqa: BLE001: keep the rows for the next try
                 with self.lock:
-                    merged = rows + self.buf
-                    self.lost += max(0, len(merged) - MAX_BUFFER)  # the oldest are dropped; count them like add() does
-                    self.buf = merged[-MAX_BUFFER:]
+                    self.buf = rows + self.buf  # the oldest are dropped and counted, as add() does
+                    self.sizes = sizes + self.sizes
+                    self.bytes = sum(self.sizes)
+                    self._trim()
                 if time.monotonic() - self.last_error > 60:  # the shipper's own errors must not flood the log it ships
                     self.last_error = time.monotonic()
                     log(f"insert failed ({type(e).__name__}); {len(rows)} line(s) wait for the next try\n" + traceback.format_exc(limit=2))
                 return False
 
     def status(self) -> dict:
-        """Rows waiting for the database and rows dropped since ops started because the buffer was full (/healthz)."""
+        """Rows and bytes waiting for the database, their limits, and rows dropped since ops started because the buffer was full (/healthz)."""
         with self.lock:
-            return {"buffered": len(self.buf), "max": MAX_BUFFER, "lost": self.lost}
+            return {"buffered": len(self.buf), "max": self.max_rows, "bytes": self.bytes, "max_bytes": self.max_bytes,
+                    "lost": self.lost}
 
     def run(self) -> None:
         threads.register("log-sink", 30)

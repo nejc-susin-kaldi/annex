@@ -15,6 +15,8 @@ mkdir -p "$S/authelia" "$S/apps" "$S/hooks" "$D/state/authelia" "$D/state/produc
 # incoming webhooks (M1.5): one JSON file per app with its signing secrets, written by annex_vm.py provision and
 # owned by uid 10001 (the ops container). The directory is the mount: replacing files in it never goes stale (D7).
 chmod 755 "$S/hooks"
+# the backup archives now hold secrets/ (D87): only the annex user (and root, which writes them) may enter
+chmod 700 "$D/backups"
 
 rand() { openssl rand -hex "${1:-24}"; }
 

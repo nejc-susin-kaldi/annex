@@ -11,8 +11,8 @@ vm "mkdir -p $DATA/platform/vm"
 scp -q "$ROOT/vm/bootstrap-secrets.sh" "$SSH_HOST:$DATA/platform/vm/bootstrap-secrets.sh"
 vm "ANNEX_DATA_DIR=$DATA bash $DATA/platform/vm/bootstrap-secrets.sh $(compose_image authelia/authelia)"
 
-if [ "$(setting ANNEX_TLS_MODE)" = local ]; then
-  names=$(setting ANNEX_CERT_NAMES)
+if [ "$(setting_local ANNEX_TLS_MODE)" = local ]; then   # before the first push the VM has no .env: the local render
+  names=$(setting_local ANNEX_CERT_NAMES)
   if vm "test -s $DATA/certs/wildcard.pem && test -s $DATA/certs/names && [ \"\$(cat $DATA/certs/names)\" = '$names' ]"; then
     log "Certificate for $names already on the VM"
   else

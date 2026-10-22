@@ -688,3 +688,93 @@ It takes about 63 MB on disk and seeds in under a minute.
 **Tests.** `cli/tests/test_image_labels.py` (the verdict), `test_selftest_builder.py` (the `--evil-label` variant). `scripts/test-platform.sh` deploys the `--evil-label` variant, expects the refusal naming `traefik.http.routers.evil.rule` and no image left, then deploys the clean fixture. Not run here (VM): `test-platform.sh`, `test-smoke.sh`.
 
 **Prod:** an image scanner and a registry policy (only signed images, labels checked at admission) in place of the check in `_build`.
+
+## D84. A connection pool in ops, appdata-db sized to its connections (22 Oct, hardening B4)
+**What.**
+- `ops/annex_ops/db.py` keeps one `psycopg_pool.ConnectionPool` per process (min 1, max `OPS_DB_POOL_MAX`: ops 4, the console and the webhook receiver 2, set in `compose.yaml`; they are separate containers running the same package). `db.connect()` keeps its signature: it is now a context manager, and all 86 call sites already were `with db.connect() as conn:`, none keeps a connection past its block and none nests two (checked by reading every caller). Connections are `autocommit=True` as before; on return the pool rolls back anything left open and discards a broken connection, and `check_connection` replaces one the database restarted under. No caller sets session state (`SET`, `row_factory`), so there is nothing to reset. The pool opens on first use, so imports and unit tests touch no network.
+- **No hang.** A caller waits at most 10 s for a free connection, then gets `OpsError 503` ("annex-ops is busy: all of its N database connections have been in use for 10 s"). A database that is down (`PoolClosed`, `psycopg.Error` while acquiring) is the old "can't reach its database" 503. Errors raised inside the caller's block pass through unchanged: only acquiring is mapped.
+- **`psycopg-pool==3.3.3`** pinned in `ops/requirements.txt` (the version the resolver picks next to `psycopg==3.3.6`; Nejc approved the dependency).
+- **appdata-db keeps `max_connections=60` and gets `mem_limit: 640m`** (was 384m): 128 MB shared buffers + 60 backends at up to about 6 MB + headroom. Budget at the limit: ops 4, receiver 2, console 2, 3 reserved for superusers, leaving about 49 for apps, i.e. 10 apps at the contract's 5. Memory on the VM was about 2.4 GiB used of 3.9 GiB; the extra 256 MB is a limit, not a use (idle backends are 2-5 MB), so real growth is a fraction of it.
+- **Contract (`storage`):** "Use at most 5 database connections: a pool of 2-5 is right." The templates have no database code (`python-job` only lists `psycopg`); the demo app and the selftest open one short-lived connection per call, which is bounded by their concurrency.
+- **Console, Platform page:** "Database connections": per database, with the total against `max_connections` (amber at 70 %, red at 90 %). Data: a new view `annex_ops.db_connections` over `pg_stat_database.numbackends`, granted to `annex_console`.
+
+**Why.** Every call opened and closed a Postgres connection (a TCP and auth handshake and a backend fork each time; about 13 background threads and the web threadpool). Memory was sized for 384m under `max_connections=60`, which a burst of 60 backends would exceed, and the OOM killer takes the database for every app, while a refused connection hurts one app. Nothing told an app builder how many connections to use or told an admin how many were in use.
+
+**Alternatives.**
+- `max_connections=40` at 384m: keeps memory, but leaves about 29 connections for apps (5 or 6 at the contract's 5) and caps growth at the next few apps; refusing connections is the failure we would meet first.
+- `pg_stat_activity` for the counts: other roles' rows are hidden from non-superusers, so it needs `pg_read_all_stats` or `pg_monitor` for the view's owner, or a `SECURITY DEFINER` function, all of which expose or can reach query text. `pg_stat_database.numbackends` is readable by every role, gives exactly the per-database count, and exposes no query, role or address: the minimum.
+- A pool per module, or one connection per thread: more connections for no gain; one shared pool keeps ops at 4 in total.
+- PgBouncer: a new component; not needed at this scale.
+
+**Not done.** The pool's own numbers (`get_stats`: waiting, usage) are not on `/healthz` or the console; `db.stats()` exists for that. An app that ignores the contract is only visible as a high count on the Platform page, not stopped (a per-role `CONNECTION LIMIT` would, but it is a change to `annex_vm.py` provisioning and existing roles).
+
+**Tests.** `ops/tests/test_db.py` (signature, return on error, size, 503 mapping for timeout, closed pool and no database), the console section (`test_console_view.py`). Not run here (VM): `test-smoke.sh`, `test-notify.sh`; to check there: `annex_ops.db_connections` exists and the console role can read it, appdata-db is at 640m, and the Platform page lists the databases.
+
+**Prod:** RDS with its own `max_connections` and RDS Proxy or PgBouncer in front; per-role connection limits set at provisioning.
+
+## D85. Push stamp, one settings source, secrets from stdin, prerequisites (22 Oct, hardening C2)
+**What.**
+- **Push stamp.** `render.py` writes `.build/platform/VERSION` (`commit=`, `dirty=`, `env_sha256=`); it goes to the VM with the bundle. `push.sh` reads the VM's `platform/VERSION` first and calls `scripts/pushcheck.py check`, which prints both commits and refuses when the VM's commit is not an ancestor of the local HEAD (the same commit passes), or is not in this checkout at all (message: `git fetch`, or `--force`). A VM with no VERSION file (the first push) proceeds. `--force` skips the check and `--extras` still works; flags combine. The decision is a pure function (`pushcheck.decide`), tested in `cli/tests/test_pushcheck.py` (the repo's script tests live in `cli/tests`, like `test_selftest_builder.py`).
+- **One settings source.** `setting` in `scripts/lib.sh` reads `platform/.env` on the VM, the file the CLI's `Remote.settings` reads, with one `ssh cat` per run cached in `.build/settings.<pid>` (the pid of the main shell, so `$(setting X)` subshells share it; the file is deleted at start and old ones are swept). Where the VM has no `.env` yet it falls back to the local render and says so on stderr. `setting_local` is the old behaviour (the local render) and `bootstrap.sh` and the last line of `push.sh` use it: bootstrap runs before any `.env` is on the VM and needs the local `ANNEX_CERT_NAMES`, and after the sync both are equal. `render` still writes the local copy for the rsync.
+- **`annex secret set <app> KEY`** reads the value from stdin (hidden prompt on a terminal) or `--from-file PATH`; one bare key per call and one line, so a pasted multi-line value is refused instead of split. `KEY=VALUE` still works and warns on stderr that the value is in shell history and the process list. `ops.secret_set` is unchanged (it keeps `_name` and `KEY_RE.fullmatch`) and so is the MCP server. The fix-it messages (manifest, `annex_vm.py`), the contract, the skill and the templates now show the bare-key form. The suites keep `KEY=VALUE` with several keys in one call (random test values, output discarded).
+- **`docs/setup.md`**: a Prerequisites section, and the two hard-coded paths became `$(pwd)` (run from the repo root).
+
+**Why.** A checkout that was behind (or on another branch) could silently roll the platform back, and nothing recorded what was deployed (review finding, hardening plan "What was found"). Scripts read a local render that could differ from what the CLI saw on the VM. A secret on the command line ends up in shell history.
+
+**Alternatives.**
+- Stamp compare by `.env` hash too: the hash is stored and shown in the file, but a changed `.env` is a normal reason to push, so it doesn't refuse.
+- A lock on the VM (one pusher at a time): more mechanism, and the stamp already catches the stale-checkout case it was meant for.
+- Caching settings in a variable: lost in `$(...)` subshells, which is how every script calls `setting`.
+- `secret set KEY` taking several keys from stdin as `KEY=VALUE` lines: that is the form that leaves the history problem to the caller's pipe; one key per call is simpler to explain.
+
+**Known limits.** The stamp is written by the rsync, before the start, so a push that fails halfway leaves the new commit on the VM; pushing again is a no-op check. A dirty tree is only labelled `(dirty)`: its commit is the one the changes sit on.
+
+**Tests.** `cli/tests/test_pushcheck.py` and `cli/tests/test_secret_input.py`. Not run here (VM): `test-smoke.sh`, a `push.sh` twice in a row, `push.sh` from a checkout that lacks the VM's commit.
+
+**Prod:** the stamp becomes the deployed image tag and release record; secrets come from the client's secret manager.
+
+## D86. Byte budgets and bounded queues in annex-ops (22 Oct, hardening B2)
+**What.** Every buffer in annex-ops that grows while something downstream is slow or down now has a limit in bytes as well as rows, and drops the oldest first, counting what it dropped.
+- **Log sink** (`logstore.Sink`): `log_buffer_rows` 20,000 and `log_buffer_mb` **20**. A row's size is `row_bytes`: its text, its serialised `fields` and 600 bytes for the objects around them (an estimate to bound by, not a measurement). Over either limit, `add` and the put-back after a failed insert drop the oldest rows and add them to `lost` (already in `/healthz`, which now also shows `bytes` and `max_bytes`). One row bigger than the whole budget is dropped too.
+- **Usage buffer** (`usage.Ingest`): `usage_buffer_rows` 50,000 and `usage_buffer_mb` **8** (300 bytes per row plus its strings). It used to grow without bound in `handle` as well as in `flush`'s retry, so both are capped now. Dropped rows are counted in `dropped`, which B1's gauge already read, and it also shows `bytes` and `max_bytes`.
+- **Engine queue** (`incidents.Manager`): `queue_max` 10,000 (the queue's `maxsize`) and `queue_soft` 5,000. The queue carries Docker events (die, start, stop, destroy, OOM, health, seen), the health checker's verdicts, host and log samples, webhook and job results, maintenance, **and `Request`, one per Traefik line** (the 5xx rate). Only `Request` is a log-derived signal that is safe to lose: past `queue_soft` waiting inputs it is dropped and counted (`engine.dropped` in `/healthz`, logged once a minute), without blocking the Traefik follower. Everything else waits for room with a plain `put`; the soft limit keeps half the queue free for it, so a flood of requests can never take the place of a container's death. A job result is a log-derived signal too, but one per job run, so it is kept like the rest.
+- **Shipper queue** (`logship.Shipper.q`): not bounded. It only carries Docker events (a container seen, started or destroyed), nothing may be dropped there, and it holds at most a few entries per container. Log lines never use it. A comment says why.
+- All five numbers are settings (`_settings`: `OPS_LOG_BUFFER_MB` and the others in the environment, or in `tuning.json`), read when ops starts. The engine's two are in `Tuning`, the others in `LogSettings` and `UsageSettings`.
+
+**The arithmetic.** ops has 128 MiB (`compose.yaml`) and measured **85 MiB at its highest** (D73 after the alert suite, D74 over a quiet day) with these buffers nearly empty. Worst case is a database outage, where the sink and the usage buffer fill together: 20 + 8 MiB, plus the engine queue (10,000 inputs of about 250 bytes, 2.5 MiB if it ever filled) is **30.5 MiB**. 85 + 30.5 = 115.5 MiB, **12.5 MiB of headroom**. The plan's first numbers (32 and 16 MiB) would have reached 135 MiB, over the limit, so they were lowered; they are settings, so a bigger container limit and bigger buffers go together. At normal volume (a few lines per second) neither buffer comes near its limit: 20,000 rows is hours of the whole platform's logs.
+
+**Why.** A database outage left the sink's 20,000-row cap as the only limit, but rows are not the same size (a line is capped at a few KB, `fields` nest), and the usage buffer and the engine queue had no limit at all: ops would have grown until the kernel killed it, taking the alert engine with it, at the moment alerts matter most (review finding, hardening plan "What was found").
+
+**Alternatives.**
+- A byte limit measured with `sys.getsizeof` per row: slow on every line and still blind to shared strings; a fixed overhead plus the text is close enough and cheap.
+- Dropping Docker events when the engine queue is full: no; a missed `die` is a missed alert. Blocking the watcher is the lesser harm (the engine thread is also watched, B1).
+- Two queues for the engine (one for requests): needs the engine loop to read two queues in order; the soft limit does the same with one.
+- Spilling to disk instead of dropping: a disk buffer to manage (and `/srv/annex` is the only place ops may write); the lines are in Docker's own log until a follower reads them, and a restart replays from the saved cursor, so a dropped sink row is only lost if the container's log rotated too.
+
+**Not done.** B6 (a cap before parsing, sink inserts off the follower thread) is a separate step. Rows dropped from the sink are not recovered from Docker's log after the outage; the follower has already moved its cursor.
+
+**Tests.** `ops/tests/test_budgets.py` (14): row and byte limits and the count for the sink, a failed insert put back over both limits, one huge row, the usage buffer by rows and by bytes, `handle` over its limit, and the engine queue (requests dropped past the soft limit, Docker events kept after the requests filled their share, a full queue never blocking a request). Not run here (VM): `scripts/test-logs.sh` (its restart check reads the sink's counters from `/healthz`).
+
+**Prod:** a log pipeline with its own disk buffer (Vector or Fluent Bit) instead of in-process buffers.
+
+## D87. Backups that restore a VM (22 Oct, hardening B7)
+**What.**
+- The backup container also mounts `secrets/` and `state/directory/` read-only (`/backup/secrets`, `/backup/state/directory`), so a nightly archive holds what a new VM needs besides the databases and `/data`. Nejc approved that the archives now contain secrets.
+- `dump-all.sh` writes `dumps/current/MARKER` (UTC time, one line) into the new dump folder before it replaces `current/`, so the marker always belongs to the dumps next to it. A failed dump leaves the old `current/` and the old marker.
+- `host.py` reads the marker with one small request (`docker_api.path_read`: `GET /containers/annex-backup-1/archive?path=/backup/dumps/current/MARKER` on the read-only proxy, which already allows the HEAD form; it refuses anything over 4 KB). `HostSample` gets `dump_at`. The engine raises `backup-stale` on `platform:backup` when the archive's time is more than `backup_stale_s` (a day) newer than the marker, and clears it when not. It is a second signal on the existing subject, so one incident, one e-mail; an unreadable or missing marker (the first night after the upgrade, a proxy error) gives no verdict and leaves an open signal alone. `ctl host` shows `dump_age_h`.
+- `vm/bootstrap-secrets.sh` makes `backups/` mode 700.
+- `docs/operations.md`: "Restore a whole VM", and the scratch-directory check.
+
+**Why.** Archives held app data and database dumps but not the secrets, so a lost VM meant a new `master.env`, new tokens and all accounts gone. And a failing dump hook (set -eu) left the archive step succeeding with the previous dump: the archive-age alert stayed green over data that was days old.
+
+**Alternatives.**
+- Read the marker out of the newest archive: a gzip tar has no index, so reading one member decompresses everything before it (every app's `/data`), every minute. The dumps folder is replaced as a whole and archived at the same moment, so the live marker is the same file the newest archive holds. The cost: if someone runs `dump-all.sh` by hand between archive and check, the marker is newer than the archive's copy; the check only lets a newer marker pass, so that is harmless.
+- Mount `dumps/` into ops: a bigger mount than one file read, and ops would see every database dump.
+- Archive permissions: offen v2.49.1 runs as root in the container and I found no setting for the file mode that I could verify offline. The protection is the directory: `backups/` is 700, owned by annex, so other local users can't enter it whatever the file mode. Per-file 600 (and an offen `BACKUP_FILE_PERMISSIONS`-style setting, or GPG) is left to the orchestrator's check on the VM; see the hand-back.
+- Backing up Postgres data directories: no, dumps are the format that restores across minor versions.
+
+**Not done.** The secrets sit unencrypted in the archive (offen's `GPG_PASSPHRASE` would encrypt, but then the key must live outside the VM: prod). `deploy/` (app sources) isn't archived: redeploy from the app's own folder.
+
+**Tests.** `ops/tests/test_host.py`: the engine rule (open, exact-day boundary, no repeat, clear, joining the overdue incident, unreadable marker), marker parsing, `path_read` on a fake tar. Not run here (VM): a backup, the archive's contents and mode, the scratch restore.
+
+**Prod:** archives to S3 with offen's GPG encryption and a key outside the VM; secrets in a secrets manager make this moot for most of `secrets/`.

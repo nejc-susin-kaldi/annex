@@ -197,6 +197,18 @@ def host_latest(now: float | None = None) -> dict | None:
             "backup_at": float(r[4]) if r[4] is not None else None, "stale": now - float(r[0]) > 3 * host.STORE_EVERY_S}
 
 
+def db_connections() -> list[dict] | None:
+    """Connections held per database on appdata-db (the view annex_ops.db_connections, D84), busiest first; None when
+    the view isn't there yet or the database doesn't answer."""
+    try:
+        with db.connect() as conn:
+            rows = conn.execute("SELECT database, connections, max_connections FROM annex_ops.db_connections "
+                                "ORDER BY connections DESC, database").fetchall()
+    except (OpsError, psycopg.Error):
+        return None
+    return [{"database": r[0], "connections": r[1], "max": r[2]} for r in rows]
+
+
 def host_series(days: int = 7) -> dict[str, list[float]]:
     """Hourly averages of disk used and memory available over the last `days` days, oldest first."""
     try:
@@ -456,7 +468,7 @@ def platform_view() -> dict:
     return {"front_door": "unknown" if fd is None else "up" if fd["up"] else "down",
             "incidents": [{"subject": i["subject"], "opened_at": i["opened_at"], "what": ", ".join(i["signals"])} for i in open_all
                           if i["subject"] != "platform:front-door"],
-            "host": host_latest(), "series": host_series(),
+            "host": host_latest(), "series": host_series(), "connections": db_connections(),
             "ops": threads.fetch(config.OPS_URL),  # annex-ops's own /healthz: threads and queues (D81); the console can't see inside ops
             "tuning": {k: getattr(t, k) for k in ("disk_alert_pct", "disk_clear_pct", "mem_alert_mb", "mem_clear_mb", "backup_max_age_s")},
             "links": [(name, url, what) for name, what in PLATFORM_TOOLS if (url := v.host_url(name))]}

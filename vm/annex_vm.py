@@ -273,7 +273,7 @@ def write_hooks(app: str, hooks: list[dict], port: int, user_secrets: dict[str, 
             raise Fail(f"webhook {h['name']}: path {h.get('path')!r} must start with '/'")
         if h.get("secret") not in user_secrets:
             raise Fail(f"webhook {h['name']}: its secret {h.get('secret')} is not set. A human sets it with: "
-                       f"annex secret set {app} {h.get('secret')}=<value>")
+                       f"annex secret set {app} {h.get('secret')}  (it asks for the value; or --from-file PATH)")
     token = secret_file(app_secrets_dir(app) / "hook_token", 32)
     data = {"token": token, "port": port,
             "hooks": {h["name"]: {"verify": h["verify"], "secret": user_secrets[h["secret"]], "path": h["path"]} for h in hooks}}
@@ -539,7 +539,7 @@ def cmd_provision(a: argparse.Namespace) -> None:
     missing = [s for s in declared if s not in user_secrets]
     if missing:
         raise Fail("secrets declared in annex.yaml but not set: " + ", ".join(missing)
-                   + f". A human sets them with: annex secret set {app} {missing[0]}=<value>")
+                   + f". A human sets them with: annex secret set {app} {missing[0]}  (it asks for the value; or --from-file PATH)")
 
     env: dict[str, str] = {}
     if a.postgres:

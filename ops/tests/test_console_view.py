@@ -316,3 +316,16 @@ def test_the_platform_page_lists_ops_threads_worst_first_and_what_was_lost():
     down = pg.platform_page(ADMIN, {**p, "ops": {"unreachable": "timed out"}}, NOW.timestamp())
     assert "annex-ops did not answer" in down and "timed out" in down
     assert "Expected every" not in pg.platform_page(ADMIN, {k: x for k, x in p.items() if k != "ops"}, NOW.timestamp())
+
+
+def test_the_platform_page_shows_connections_per_database_and_turns_red_near_the_limit():
+    t = {"disk_alert_pct": 85, "disk_clear_pct": 80, "mem_alert_mb": 256, "mem_clear_mb": 400, "backup_max_age_s": 93600}
+    p = {"front_door": "up", "incidents": [], "host": None, "series": {"disk": [], "mem": []}, "tuning": t, "links": []}
+    rows = [{"database": "app_big", "connections": 5, "max": 60}, {"database": "annex_ops", "connections": 4, "max": 60}]
+    page = pg.platform_page(ADMIN, {**p, "connections": rows}, NOW.timestamp())
+    assert "9 of 60 connections in use" in page and page.index("app_big") < page.index("annex_ops")
+    assert "55 of 60" in pg.platform_page(ADMIN, {**p, "connections": [{"database": "app_x", "connections": 55, "max": 60}]}, NOW.timestamp())
+    assert 'st bad' in str(pg.db_connections([{"database": "a", "connections": 55, "max": 60}]))
+    assert 'st warn' in str(pg.db_connections([{"database": "a", "connections": 45, "max": 60}]))
+    assert "Database connections" not in pg.platform_page(ADMIN, {**p, "connections": None}, NOW.timestamp())
+    assert "No connection counts yet" in pg.platform_page(ADMIN, {**p, "connections": []}, NOW.timestamp())

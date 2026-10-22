@@ -10,3 +10,4 @@ __pycache__/
 # never commit keys or certificates
 *.pem
 *.key
+.claude/worktrees/

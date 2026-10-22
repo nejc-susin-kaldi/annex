@@ -11,7 +11,7 @@ This folder is an **Annex app**: a small internal tool that runs behind the clie
 - **No web server.** This is `type: job`. If you need a page too, use `type: web+job` with the python-web template's server, and add `port` and `healthcheck`.
 - **No database credentials and no direct product database access.** Product data comes only from `gateway("<view>", **filters)`, for views listed under `data.views`. Your own data goes in Postgres via `DATABASE_URL` (set `storage.postgres: true`), or in files under `/data` (set `storage.files: true`).
 - **No Docker labels, ports or compose files.** Annex generates them.
-- **No secrets in code, files or the image.** Declare the name under `secrets:` and ask a human to run `annex secret set <app> KEY=VALUE`.
+- **No secrets in code, files or the image.** Declare the name under `secrets:` and ask a human to run `annex secret set <app> KEY`.
 - **Don't change the Dockerfile's base image or `USER 10001`.** The image needs `sleep` (the base image has it), because the container idles between runs. The filesystem is read-only; write only to `/tmp` and `/data`.
 
 ## Logging

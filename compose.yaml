@@ -213,7 +213,7 @@ services:
     # appdata: apps with Postgres, ops and the receiver; console: the console's read-only role (D69), nobody else
     networks: [appdata, console]
     shm_size: 128m
-    mem_limit: 384m
+    mem_limit: 640m  # max_connections=60 (D84): 128 MB shared buffers + 60 backends at up to ~6 MB + headroom
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -294,6 +294,7 @@ services:
     environment:
       <<: *tz
       OPS_WATCHERS: "0"
+      OPS_DB_POOL_MAX: "2"  # D84: this container holds at most 2 database connections (ops: 4)
       ANNEX_HOST_HOOKS: ${ANNEX_HOST_HOOKS}
       ANNEX_URL_HOOKS: ${ANNEX_URL_HOOKS}
     volumes:
@@ -341,6 +342,7 @@ services:
     environment:
       <<: *tz
       OPS_WATCHERS: "0"
+      OPS_DB_POOL_MAX: "2"  # D84
       ANNEX_HOST_PATTERN: ${ANNEX_HOST_PATTERN}
       ANNEX_PORT_SUFFIX: ${ANNEX_PORT_SUFFIX}
       ANNEX_URL_HOME: ${ANNEX_URL_HOME}
@@ -428,6 +430,9 @@ services:
     volumes:
       - ${ANNEX_DATA_DIR}/apps:/backup/apps:ro
       - ${ANNEX_DATA_DIR}/dumps:/backup/dumps:ro
+      # what a new VM needs besides the data: the secrets and the user directory (D87)
+      - ${ANNEX_DATA_DIR}/secrets:/backup/secrets:ro
+      - ${ANNEX_DATA_DIR}/state/directory:/backup/state/directory:ro
       - ${ANNEX_DATA_DIR}/backups:/archive
     networks: [socket-exec]
     depends_on:
