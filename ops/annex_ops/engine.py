@@ -40,6 +40,7 @@ class Tuning:
     mem_alert_s: float = 300           # ... for this long ...
     mem_clear_mb: float = 400          # ... and clear once this much is available again
     backup_max_age_s: float = 93600    # the newest backup may be 26 h old (nightly at 02:00, plus slack)
+    backup_stale_s: float = 86400      # the dumps inside it may be a day older than the archive (D87)
     # health checks (M2.6): every web app's health URL and the front door, each check_interval_s
     check_interval_s: float = 60
     check_timeout_s: float = 5
@@ -163,6 +164,7 @@ class HostSample:  # the VM itself, every host_sample_s (host.py); None = couldn
     disk_free_gb: float | None
     mem_available_mb: float | None
     backup_at: float | None  # when the newest backup was written (the archive folder's mtime)
+    dump_at: float | None = None  # when dump-all.sh last finished (dumps/current/MARKER); None = unreadable or not written yet
 
 
 @dataclass
@@ -411,6 +413,14 @@ class Engine:
                             f"(expected nightly at 02:00)", out)
             else:
                 self._clear(now, "platform:backup", "backup", out)
+        if h.backup_at is not None and h.dump_at is not None:
+            # a fresh archive that carries an old database dump: the dump hook is failing and the archive looks fine (D87)
+            gap = h.backup_at - h.dump_at
+            if gap > t.backup_stale_s:
+                self._raise(now, "platform:backup", "backup-stale", f"the newest backup was written {_mins(now - h.backup_at)} ago "
+                            f"but its database dumps are {gap / 3600:.0f} h older than the archive", out)
+            else:
+                self._clear(now, "platform:backup", "backup-stale", out)
 
     def _logs(self, now: float, s: LogSample, out: list[Action]) -> None:
         """The size guard dropped the oldest day(s) early: admins hear once. It clears when the table is well under

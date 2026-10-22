@@ -203,8 +203,9 @@ def main(argv: list[str] | None = None) -> int:
                           "disk_free_gb": h.disk_free_gb and round(h.disk_free_gb, 1),
                           "mem_available_mb": h.mem_available_mb and round(h.mem_available_mb),
                           "backup_age_h": h.backup_at and round((time.time() - h.backup_at) / 3600, 1),
+                          "dump_age_h": h.dump_at and round((time.time() - h.dump_at) / 3600, 1),
                           "alert_at": f"disk >= {t.disk_alert_pct:g} %, memory < {t.mem_alert_mb:g} MB for "
-                                      f"{t.mem_alert_s:g} s, backup older than {t.backup_max_age_s / 3600:g} h"}, []
+                                      f"{t.mem_alert_s:g} s, backup older than {t.backup_max_age_s / 3600:g} h, dumps more than {t.backup_stale_s / 3600:g} h older than the archive"}, []
         elif a.cmd == "digest":
             now = datetime.now(ZoneInfo(config.USAGE_TZ))
             fn = digest.send if a.send else digest.plan

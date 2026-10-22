@@ -430,6 +430,9 @@ services:
     volumes:
       - ${ANNEX_DATA_DIR}/apps:/backup/apps:ro
       - ${ANNEX_DATA_DIR}/dumps:/backup/dumps:ro
+      # what a new VM needs besides the data: the secrets and the user directory (D87)
+      - ${ANNEX_DATA_DIR}/secrets:/backup/secrets:ro
+      - ${ANNEX_DATA_DIR}/state/directory:/backup/state/directory:ro
       - ${ANNEX_DATA_DIR}/backups:/archive
     networks: [socket-exec]
     depends_on:

@@ -14,6 +14,9 @@ for db in $(psql -U postgres -Atc "SELECT datname FROM pg_database WHERE NOT dat
   pg_dump -U postgres -Fc $skip -f "/dumps/new/$db.dump" "$db"
 done
 pg_dumpall -U postgres --globals-only > /dumps/new/globals.sql
+# the marker is written last, inside the folder that replaces current/, so it always belongs to these dumps; ops
+# compares it with the archive's date (backup-stale, D87)
+date -u +%Y-%m-%dT%H:%M:%SZ > /dumps/new/MARKER
 rm -rf /dumps/current
 mv /dumps/new /dumps/current
-echo "dump-all: $(ls /dumps/current | wc -l) files"
+echo "dump-all: $(ls /dumps/current | wc -l) files (with MARKER)"

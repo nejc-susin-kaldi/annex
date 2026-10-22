@@ -1,4 +1,4 @@
-"""The VM itself: disk, memory and the age of the newest backup, sampled for the alert engine (D56).
+"""The VM itself: disk, memory and the age of the newest backup and of its dumps, sampled for the alert engine (D56).
 
 ops sees the host's own numbers without extra privileges: `/proc/meminfo` in a container is the host's, and
 statvfs on a bind-mounted folder reports the host filesystem it lives on. The backup's age is the mtime of the
@@ -7,6 +7,7 @@ archives, which hold every app's data).
 """
 import os
 import sys
+import tarfile
 import threading
 import time
 
@@ -15,6 +16,7 @@ from .errors import OpsError
 
 BACKUP_CONTAINER = "annex-backup-1"
 BACKUP_FOLDER = "/archive"
+DUMP_MARKER = "/backup/dumps/current/MARKER"   # written by db/appdata/hooks/dump-all.sh (D87)
 STORE_EVERY_S = 300        # one stored sample per 5 minutes (about 8,600 rows in 30 days) for the console's trends
 KEEP_DAYS = 30
 STATVFS_PATH = os.environ.get("OPS_HOST_PATH", "/annex/state")  # any bind mount from the host's root filesystem
@@ -34,9 +36,14 @@ def disk_usage(st) -> tuple[float, float]:
     return (100.0 * used / (used + avail) if used + avail else 0.0), avail / 2**30
 
 
+def parse_marker(text: str) -> float | None:
+    """dump-all.sh's marker (`2026-10-22T02:00:07Z`, one line) -> epoch seconds; None when it isn't one."""
+    return docker_api.parse_ts(text.strip().split("\n")[0]) if text.strip() else None
+
+
 def sample() -> engine.HostSample:
     """One measurement; a part that can't be measured is None (and the engine leaves its signal alone)."""
-    pct = free = mem = backup_at = None
+    pct = free = mem = backup_at = dump_at = None
     try:
         pct, free = disk_usage(os.statvfs(STATVFS_PATH))
     except OSError:
@@ -50,7 +57,14 @@ def sample() -> engine.HostSample:
         backup_at = docker_api.parse_ts(docker_api.path_stat(BACKUP_CONTAINER, BACKUP_FOLDER).get("mtime", ""))
     except (docker_api.DockerError, OSError, ValueError):
         pass
-    return engine.HostSample(pct, free, mem, backup_at)
+    try:
+        # The dumps folder is part of every archive, and the hook replaces it as a whole, so its marker is the
+        # one inside the newest archive. Reading the live file costs one small request; scanning the archive
+        # (a gzip tar of every app's /data) would mean decompressing it all every minute.
+        dump_at = parse_marker(docker_api.path_read(BACKUP_CONTAINER, DUMP_MARKER))
+    except (docker_api.DockerError, OSError, ValueError, tarfile.TarError):
+        pass
+    return engine.HostSample(pct, free, mem, backup_at, dump_at)
 
 
 def store(s: engine.HostSample) -> None:
