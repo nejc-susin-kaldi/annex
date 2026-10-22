@@ -1097,3 +1097,40 @@ It takes about 63 MB on disk and seeds in under a minute.
 **Resources, 22 Oct after the run.** VM: 2.3 GiB used of 3.9 GiB, 1.6 GiB available; disk 9.2 of 29 GB (33%). Platform containers about 1.4 GiB in all (within the brief's 2.5 GiB): Metabase 766 MiB, Authelia 160, Homepage 122, appdata-db 99 (limit now 640m, D84), ops 73 (of 128), console 49, hooks 43, product-db 30, Traefik 29, Mailpit 19, Dozzle 18, gateway 14, backup 7, Ofelia and the socket proxies under 3 each. Apps: 21–44 MiB each; arcade-db 60 MiB. appdata-db had 15 client connections (of 60).
 
 **Notes.** Backends of recreated ops containers had stayed connected for hours; appdata-db now uses TCP keepalives (D84). vibe-leads is still on the shared networks by Nejc's choice, until the Goat Arcade demo removes it (D88).
+
+## D98. The platform on Docker Desktop: spike results (22 Oct, control-plane L1)
+**What.** A spike, partly run. The Docker Desktop daemon was down for the whole session (polled about 10 minutes on `desktop-linux`), so only the items that need no daemon were run. The daemon items are recorded as **not run: daemon down** and must be done at the start of L2 (they are cheap: about ten minutes). No pins and no code changed.
+
+**Image verdicts** (`docker manifest inspect`, 22 Oct; the Mac is arm64, 16 GiB, 12 cores):
+
+| Image | linux/arm64 | Verdict |
+|---|---|---|
+| `traefik:v3.7.14` | yes | works |
+| `authelia/authelia:4.39.28` | yes | works |
+| `gethomepage/homepage:v2.5.0` | yes | works |
+| `postgres:16.15-alpine3.24` (appdata-db, product-db, democlient) | yes | works |
+| `postgrest/postgrest:v16.4` | yes | works |
+| `metabase/metabase:v0.64.2.2` | yes | works |
+| `axllent/mailpit:v1.31.6` | yes | works |
+| `amir20/dozzle:v11.3.2` | yes | works |
+| `offen/docker-volume-backup:v2.49.1` | yes | works |
+| `mcuadros/ofelia:0.3.22` | yes | works (the plan expected a gap; there is none) |
+| `tecnativa/docker-socket-proxy:v0.5.0` | yes | works (the plan expected a gap; there is none) |
+| build bases `python:3.13.16-slim-trixie`, `node:24.21.0-alpine3.24` | yes | works (ops, selftest and templates build natively) |
+
+No image is missing arm64, so **no `platform: linux/amd64` emulation and no `compose.local.yaml` image override is needed**. Every image is also published for amd64, so the brief's rule still holds for the VM.
+
+**Other items.**
+- `python3 -m unittest discover -s vm/tests` on the Mac (Python 3.13.6, macOS): 103 tests, all pass. No platform-specific failure from `flock`, `tarfile` filter, `os.open` modes or `stat` assumptions. Works.
+- Ports 9443 and 9080 on 127.0.0.1: nothing listening (`lsof`). Free. Works.
+- File-sharing backend: not recorded. `settings-store.json` has no key for it (no `useVirtualizationFrameworkVirtioFS`) and no memory key, so Docker Desktop runs on its defaults (VirtioFS on current versions for Apple silicon; memory set by the app, not overridden). Confirm with `docker info` once the daemon is up.
+- Memory: Docker Desktop's allocation not read (`docker info` needs the daemon). The host has 16 GiB, so the app's default is likely to be well above the core platform (~1.4 GiB, D97) plus two apps; verify `docker info --format '{{.MemTotal}}'` is at least 4 GiB.
+- Bind-mount ownership for uid 10001 (create/read as 10001, `chown` from a root container, `stat` on the Mac, would the `/data` check in `annex_vm.py` re-chown or fail): **not run: daemon down**.
+- `/var/run/docker.sock:ro` into the socket proxy and `_ping`: **not run: daemon down**.
+
+**Why.** Nejc wants the platform runnable on the Mac (control-plane plan) so the deploy rewrite can be developed against a stack that is quick to rebuild. This spike removes the biggest feared gap, emulated images.
+
+**Workarounds L2 must apply.**
+- None for images (no emulation).
+- Ports: Nejc chose 9443/9080 on 127.0.0.1 (free); the plan text's 8443/8080 is superseded, since the VM tunnel uses 8443.
+- First thing in L2: run the not-run items (ownership under the active file-sharing backend, socket proxy `_ping`, memory). If ownership cannot be read or `chown` fails on the bind mount, the `/data` check in `annex_vm.py` must treat it as "chown each time" (plan L2).
