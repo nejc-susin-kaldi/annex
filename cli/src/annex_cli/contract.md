@@ -123,7 +123,7 @@ The templates are the fast path, not a requirement. Any language or framework wo
 - **Build in the image:** do everything at image build time: install dependencies, compile, bundle, collect static files. Nothing may be installed or built at startup.
 - **Memory:** the default limit is 256 MB. Raise it with `resources.memory` (max `512m`) only if the app needs more. Size runtime heaps to fit, e.g. a JVM with `-Xmx` at about 70 % of the limit, or Node with `--max-old-space-size`.
 - **Identity on the server:** read `Remote-*` headers in your server code. A browser-only app can't see request headers, so serve a small endpoint such as `/api/me` that returns them.
-- **Gateway token stays on the server:** call the gateway from your server. Never send `ANNEX_GATEWAY_TOKEN` to the browser.
+- **Gateway token stays on the server:** call the gateway from your server. Never send `ANNEX_GATEWAY_TOKEN` to the browser. The token changes on every deploy and expires after a year, so read it from the environment at startup; never store it in a file, the database or the code.
 - **Storage:**
   - Postgres (`DATABASE_URL`) and files under `/data` are the only storage. A SQLite file is fine if it lives in `/data`.
   - There's no MySQL, MongoDB or Redis, and no second container.

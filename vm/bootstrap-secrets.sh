@@ -17,7 +17,6 @@ mkdir -p "$S/authelia" "$S/apps" "$S/hooks" "$D/state/authelia" "$D/state/produc
 chmod 755 "$S/hooks"
 
 rand() { openssl rand -hex "${1:-24}"; }
-password() { openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 20; }
 
 # master.env is never rewritten, so a key added in a later milestone is appended only if it's missing
 touch "$S/master.env"
@@ -78,28 +77,30 @@ USERS=(
   "kaldi-admin|Kaldi Admin|admin@annex.example|admins,builders"
 )
 wrote_users=
-if [ ! -s "$S/users.txt" ]; then
-  : > "$S/users.txt"
-  for u in "${USERS[@]}"; do echo "${u%%|*} $(password)" >> "$S/users.txt"; done
-  rm -f "$S/authelia/users.yml"
-  echo "bootstrap: generated demo user passwords"
-fi
-if [ ! -s "$S/authelia/users.yml" ]; then
+# Authelia generates each password itself (--random, as annex_vm.py does), so no password appears on a command
+# line (D80). users.txt and users.yml are written together; if either is missing, both are made again.
+if [ ! -s "$S/users.txt" ] || [ ! -s "$S/authelia/users.yml" ]; then
   docker pull -q "$AUTHELIA_IMAGE" >/dev/null
-  {
-    echo "users:"
-    for u in "${USERS[@]}"; do
-      IFS='|' read -r login name email groups <<<"$u"
-      pw=$(awk -v u="$login" '$1 == u {print $2}' "$S/users.txt")
-      hash=$(docker run --rm "$AUTHELIA_IMAGE" authelia crypto hash generate argon2 --password "$pw" | sed -n 's/^Digest: //p')
+  : > "$S/users.txt.tmp"
+  echo "users:" > "$S/authelia/users.yml.tmp"
+  for u in "${USERS[@]}"; do
+    IFS='|' read -r login name email groups <<<"$u"
+    out=$(docker run --rm --network none "$AUTHELIA_IMAGE" authelia crypto hash generate argon2 --random --random.length 20)
+    pw=$(sed -n 's/^Random Password: //p' <<<"$out")
+    hash=$(sed -n 's/^Digest: //p' <<<"$out")
+    [ -n "$pw" ] && [ -n "$hash" ] || { echo "bootstrap: Authelia's hash tool gave no password for $login" >&2; exit 1; }
+    echo "$login $pw" >> "$S/users.txt.tmp"
+    {
       echo "  $login:"
       echo "    displayname: \"$name\""
       echo "    email: $email"
       echo "    password: \"$hash\""
       echo "    groups: [${groups//,/, }]"
-    done
-  } > "$S/authelia/users.yml.tmp"
+    } >> "$S/authelia/users.yml.tmp"
+  done
+  mv "$S/users.txt.tmp" "$S/users.txt"
   mv "$S/authelia/users.yml.tmp" "$S/authelia/users.yml"
+  echo "bootstrap: generated demo user passwords"
   wrote_users=1
   echo "bootstrap: wrote authelia/users.yml"
 fi

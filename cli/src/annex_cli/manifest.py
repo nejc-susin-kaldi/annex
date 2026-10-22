@@ -31,6 +31,7 @@ KNOWN_KEYS = {"name", "owner", "description", "type", "port", "healthcheck", "ac
 MEMORY_DEFAULT_MB = 256
 MEMORY_MIN_MB, MEMORY_MAX_MB = 128, 512
 MEMORY_RE = re.compile(r"^(\d+)\s*[mM]$")
+DESCRIPTION_MAX = 200
 LOGIN_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
 SLACK_CHANNEL_RE = re.compile(r"^#[a-z0-9][a-z0-9_-]{0,79}$")  # same rule in vm/annex_vm.py and annex-ops
 
@@ -131,10 +132,17 @@ def load(folder: Path) -> Manifest:
     owner = raw.get("owner")
     if not isinstance(owner, str) or not owner.strip():
         p.append("owner: required. Set it to the builder's login, e.g. owner: sam")
+    elif not LOGIN_RE.match(owner.strip()):
+        p.append(f"owner: {owner.strip()!r} is not a login. The owner decides who sees this app in the console, so it must be "
+                 "the builder's login: lowercase letters, digits, '.', '_' or '-', starting with a letter (max 32), e.g. owner: sam")
     description = raw.get("description", "")
     if not isinstance(description, str):
         p.append("description: must be a short text")
         description = ""
+    elif len(description) > DESCRIPTION_MAX:
+        p.append(f"description: {len(description)} characters is too long. Keep it to {DESCRIPTION_MAX} or fewer: one line saying what the app is for")
+    elif any(ord(c) < 32 or ord(c) == 127 for c in description):
+        p.append("description: must not contain control characters or line breaks. Write one plain line")
 
     typ = raw.get("type")
     if typ not in TYPES:
