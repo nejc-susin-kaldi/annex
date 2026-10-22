@@ -105,9 +105,11 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D94 | Contract and runtime versions; generated summaries in the agent-facing copies | active |
 | D95 | Build limits: free disk, image size, pids_limit, cleanup warnings | active |
 | D96 | annex_vm.py test seam and quoted SQL | active |
-| D101 | The deploy runs as one process on the VM | active |
-| D102 | Secret set, remove, migrate-networks and run on the VM | active |
-
+| D97 | Hardening: final run and resource record | active (the ops pool size it set is D84's second revision) |
+| D98 | The platform on Docker Desktop: spike results | active (the image verdicts; L2 built on them, D99) |
+| D99 | A local stack on Docker Desktop (`ANNEX_ENV=local`) | active; revises D1 for the local case |
+| D101 | The deploy runs as one process on the VM | active; revises D17, D30, D64 and D92 (D100 was not used) |
+| D102 | Secret set, remove, migrate-networks and run on the VM | active; extends D101 and D64 to those commands |
 | D103 | Version coupling and one manifest module | active |
 
 ## D1. Apps run through `ssh annex` and the VM's Compose (14 Oct)

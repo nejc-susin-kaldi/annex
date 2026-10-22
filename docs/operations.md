@@ -36,6 +36,13 @@
 
 `./annex` runs the CLI from the repo through uv. To put `annex` on your PATH, see `docs/setup.md` §6.
 
+## Two lanes: the VM and the local stack (D99)
+The platform runs in two places from the same files: the **VM** (the default, everything above) and a **local stack** on the Mac's Docker Desktop. Put `ANNEX_ENV=local` in front of any script or `./annex` command to use the local one: `ANNEX_ENV=local scripts/push.sh`, `ANNEX_ENV=local ./annex deploy examples/client-lookup`, `ANNEX_ENV=local scripts/test-smoke.sh`.
+- **Per command, never a default.** Don't export it in a profile or a long-lived shell: a forgotten export would send `annex deploy` and `annex remove` to the wrong stack. Without it, nothing changes: `.env`, `ssh annex`, `/srv/annex`.
+- **What it is for.** Developing and proving a change quickly: wipe and rebuild in minutes, no shared environment to wait for, no effect on the VM. Settings in `.env.local` (else `.env.local.example`), data in `~/.annex/local`, Traefik on `127.0.0.1:9443`/`:9080`, its own hostnames (`*.annex-local.home.arpa`); the renders are apart (`.build/vm/platform`, `.build/local/platform`). Setup, browser access and wiping it: `docs/setup.md` §9.
+- **What it is not.** Not a second environment: no backups worth keeping, no Slack, arm64 images where the VM has amd64 (D98). **Prove a change on the local lane first when it allows it; run the suites on the VM before a demo and after platform changes.** Nothing proven only locally counts as proven for the VM.
+- **Commands that differ.** `scripts/tunnel.sh` does nothing locally (no tunnel); `scripts/wipe-vm.sh` refuses a local target; where this page says `ssh annex <cmd>`, locally run `<cmd>` on the Mac with `DOCKER_CONTEXT=desktop-linux` (the scripts and the CLI set it for their own commands only; a context that points at the VM is refused).
+
 ## Where things live on the VM (`/srv/annex`)
 | Path | What |
 |---|---|
