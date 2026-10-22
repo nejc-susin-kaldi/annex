@@ -13,6 +13,7 @@ import base64
 import fcntl
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -298,7 +299,232 @@ def restore_database(app: str, dump: Path) -> None:
         raise Fail(f"pg_restore failed: {r.stderr.strip()[-800:]}")
 
 
+# --- per-app networks (D88) ------------------------------------------------
+# Every app has its own internal network, annex-app-<app>, holding the app's container and exactly the platform
+# containers it needs, which join at runtime with `docker network connect` (never in compose.yaml): Traefik for a web
+# app (routes, the deploy's health gate), ops always (health checks, webhook delivery, email and Slack), the gateway
+# if the app reads views, appdata-db if it has Postgres. Apps share no network, so they can't reach each other. An
+# app that declares `egress:` also gets annex-egress-<app>, a non-internal network with only that app on it.
+# A runtime connection survives a container restart and a Docker restart, but not a recreate (`docker compose up`
+# that replaces a platform container): push.sh runs networks-sync after every start; by hand, run it after a recreate.
+# Compose compares only the networks a service declares, so these extra connections don't make it recreate anything.
+DEFAULT_APP_SUBNETS = "10.213.0.0/16"
+SHARED_NETWORKS = ("annex-edge", "annex-appdata")  # where apps were before D88; no app belongs there any more
+PLATFORM_ALIASES = {"traefik": None, "ops": "ops", "gateway": "gateway", "appdata-db": "appdata-db"}  # service -> DNS alias apps use
+
+
+def app_network(app: str) -> str:
+    return f"annex-app-{app}"
+
+
+def egress_network(app: str) -> str:
+    return f"annex-egress-{app}"
+
+
+def platform_container(service: str) -> str:
+    return f"annex-{service}-1"
+
+
+def network_needs(web: bool, postgres: bool, views: bool) -> list[str]:
+    """The platform services that must be on an app's network (pure)."""
+    return [s for s, on in (("traefik", web), ("ops", True), ("gateway", views), ("appdata-db", postgres)) if on]
+
+
+def record_needs(rec: dict) -> dict:
+    """networks-sync's flags from a deploy.json record (pure). Records from before D88 have no `egress`: none."""
+    typ = rec.get("type")
+    web = typ in ("web", "web+job") if typ else bool(rec.get("url"))
+    return {"web": web, "postgres": bool(rec.get("postgres")), "views": bool(rec.get("views")),
+            "egress": bool(rec.get("egress"))}
+
+
+def sync_plan(needed: list[str], connected: set[str]) -> tuple[list[str], list[str]]:
+    """(platform services to connect, platform services to disconnect) for one app network (pure)."""
+    return [s for s in needed if s not in connected], sorted(s for s in connected if s not in needed)
+
+
+def pick_subnet(pool: str, used: list[str], prefix: int = 24) -> str:
+    """The lowest /24 in `pool` (ANNEX_APP_SUBNETS) that overlaps none of `used` (pure). IPv6 entries are ignored."""
+    try:
+        net = ipaddress.ip_network(pool, strict=True)
+    except ValueError:
+        raise Fail(f"ANNEX_APP_SUBNETS={pool!r} is not a network like 10.213.0.0/16: fix it in .env and run scripts/push.sh") from None
+    if net.version != 4 or net.prefixlen > prefix:
+        raise Fail(f"ANNEX_APP_SUBNETS={pool} must be an IPv4 network of /{prefix} or larger, e.g. 10.213.0.0/16")
+    taken = []
+    for u in used:
+        try:
+            n = ipaddress.ip_network(u, strict=False)
+        except ValueError:
+            continue
+        if n.version == 4:
+            taken.append(n)
+    for cand in net.subnets(new_prefix=prefix):
+        if not any(cand.overlaps(t) for t in taken):
+            return str(cand)
+    raise Fail(f"no free /{prefix} left in ANNEX_APP_SUBNETS={pool} (one per app network and egress network): "
+               "remove apps that aren't used, or set a larger range in .env and run scripts/push.sh")
+
+
+def docker(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+    r = subprocess.run(["docker", *args], capture_output=True, text=True)
+    if check and r.returncode != 0:
+        raise Fail(f"docker {' '.join(args[:3])} failed: {(r.stderr or r.stdout).strip()[-300:]}")
+    return r
+
+
+def network_info(name: str) -> dict | None:
+    r = docker("network", "inspect", name, check=False)
+    return json.loads(r.stdout)[0] if r.returncode == 0 and r.stdout.strip().startswith("[") else None
+
+
+def used_subnets() -> list[str]:
+    ids = docker("network", "ls", "-q").stdout.split()
+    if not ids:
+        return []
+    r = docker("network", "inspect", *ids, check=False)  # a network removed meanwhile is just missing from the answer
+    try:
+        nets = json.loads(r.stdout or "[]")
+    except ValueError:
+        nets = []
+    return [c["Subnet"] for n in nets for c in ((n.get("IPAM") or {}).get("Config") or []) if c.get("Subnet")]
+
+
+def ensure_network(name: str, app: str, internal: bool) -> dict:
+    """The network, created with the lowest free /24 of ANNEX_APP_SUBNETS if it doesn't exist. On an overlap (another
+    network took the subnet meanwhile, or the daemon knows one we didn't list) the next /24 is tried."""
+    info = network_info(name)
+    if info:
+        if bool(info.get("Internal")) != internal:
+            raise Fail(f"network {name} exists but is {'not ' if internal else ''}internal; remove it "
+                       f"(docker network rm {name}) and run networks-sync again")
+        return info
+    pool = platform_setting("ANNEX_APP_SUBNETS") or DEFAULT_APP_SUBNETS
+    used = used_subnets()
+    for _ in range(16):
+        subnet = pick_subnet(pool, used)
+        r = docker("network", "create", "--driver", "bridge", *(["--internal"] if internal else []), "--subnet", subnet,
+                   "--label", "com.kaldi.annex=true", "--label", f"com.kaldi.annex.app={app}",
+                   "--label", f"com.kaldi.annex.network={'app' if internal else 'egress'}", name, check=False)
+        if r.returncode == 0:
+            return network_info(name) or {}
+        err = (r.stderr or r.stdout).lower()
+        if "already exists" in err and (info := network_info(name)):
+            return info  # created by a concurrent deploy
+        if "overlap" not in err:
+            raise Fail(f"couldn't create network {name}: {(r.stderr or r.stdout).strip()[-300:]}")
+        used.append(subnet)
+    raise Fail(f"couldn't create network {name}: every subnet tried overlapped another network")
+
+
+def containers_on(info: dict) -> list[dict]:
+    """[{name, service}] of the containers on a network; service is the platform service (Compose project annex) or None."""
+    ids = list((info.get("Containers") or {}).keys())
+    if not ids:
+        return []
+    r = docker("inspect", *ids, check=False)
+    try:
+        found = json.loads(r.stdout or "[]")
+    except ValueError:
+        found = []
+    out = []
+    for c in found:
+        labels = (c.get("Config") or {}).get("Labels") or {}
+        platform = labels.get("com.docker.compose.project") == "annex"
+        out.append({"name": c.get("Name", "").lstrip("/"),
+                    "service": labels.get("com.docker.compose.service") if platform else None})
+    return out
+
+
+def subnet_of(info: dict) -> str | None:
+    cfg = (info.get("IPAM") or {}).get("Config") or []
+    return cfg[0].get("Subnet") if cfg else None
+
+
+def sync_app(app: str, web: bool, postgres: bool, views: bool, egress: bool) -> dict:
+    """Make the app's network(s) hold exactly what they should (idempotent)."""
+    net = app_network(app)
+    info = ensure_network(net, app, internal=True)
+    on = containers_on(info)
+    platform_on = {c["service"]: c["name"] for c in on if c["service"]}
+    connect, disconnect = sync_plan(network_needs(web, postgres, views), set(platform_on))
+    for svc in connect:
+        alias = PLATFORM_ALIASES.get(svc)
+        docker("network", "connect", *(["--alias", alias] if alias else []), net, platform_container(svc))
+    for svc in disconnect:
+        docker("network", "disconnect", "--force", net, platform_on[svc])
+    enet, esubnet, eremoved = egress_network(app), None, False
+    if egress:
+        einfo = ensure_network(enet, app, internal=False)
+        esubnet = subnet_of(einfo)
+        for c in containers_on(einfo):  # platform containers never join a network that reaches the internet
+            if c["service"]:
+                docker("network", "disconnect", "--force", enet, c["name"])
+                disconnect.append(f"{c['service']} (egress)")
+    elif (einfo := network_info(enet)):  # egress was dropped: cut it now; the container is about to be replaced anyway
+        for c in containers_on(einfo):
+            docker("network", "disconnect", "--force", enet, c["name"])
+        docker("network", "rm", enet)
+        eremoved = True
+    return {"app": app, "network": net, "subnet": subnet_of(info), "platform": network_needs(web, postgres, views),
+            "connected": connect, "disconnected": disconnect, "egress_network": enet if egress else None,
+            "egress_subnet": esubnet, "egress_removed": eremoved,
+            "others": sorted(c["name"] for c in on if not c["service"])}
+
+
+def remove_app_networks(app: str) -> list[str]:
+    """Disconnect everything from the app's networks and remove them (app removal)."""
+    removed = []
+    for name in (app_network(app), egress_network(app)):
+        info = network_info(name)
+        if not info:
+            continue
+        for c in containers_on(info):
+            docker("network", "disconnect", "--force", name, c["name"], check=False)
+        if docker("network", "rm", name, check=False).returncode == 0:
+            removed.append(name)
+    return removed
+
+
+def apps_on_shared_networks() -> dict[str, list[str]]:
+    """{app: [annex-edge, annex-appdata]} for every app container still on a network apps used to share."""
+    ids = docker("ps", "-aq", "--filter", "label=com.kaldi.annex.app").stdout.split()
+    if not ids:
+        return {}
+    found = json.loads(docker("inspect", *ids).stdout or "[]")
+    out = {}
+    for c in found:
+        nets = sorted(n for n in ((c.get("NetworkSettings") or {}).get("Networks") or {}) if n in SHARED_NETWORKS)
+        if nets:
+            out[((c.get("Config") or {}).get("Labels") or {}).get("com.kaldi.annex.app") or c.get("Name", "").lstrip("/")] = nets
+    return out
+
+
 # --- commands --------------------------------------------------------------
+def cmd_networks_sync(a: argparse.Namespace) -> None:
+    """One app (flags say what it uses), or every deployed app from its deploy.json. Prints what changed."""
+    if a.app:
+        out({"ok": True, **sync_app(a.app, a.web, a.postgres, a.views, a.egress)})
+        return
+    results, errors, known = [], [], set()
+    for path in sorted((DATA / "deploy").glob("*/deploy.json")):
+        app = path.parent.name
+        if not NAME_RE.match(app):
+            continue
+        known.add(app)
+        try:
+            results.append(sync_app(app, **record_needs(json.loads(path.read_text()))))
+        except (Fail, ValueError) as e:
+            errors.append({"app": app, "error": str(e)})
+    nets = docker("network", "ls", "--filter", "label=com.kaldi.annex.app",
+                  "--format", '{{.Name}} {{.Label "com.kaldi.annex.app"}}').stdout.splitlines()
+    orphans = sorted(n.split()[0] for n in nets if n.split() and (len(n.split()) < 2 or n.split()[1] not in known))
+    out({"ok": not errors, "apps": results, "errors": errors, "still_shared": apps_on_shared_networks(),
+         "orphan_networks": orphans})
+    if errors:
+        sys.exit(1)
+
+
 def cmd_views(_: argparse.Namespace) -> None:
     out({"views": api_views()})
 
@@ -393,6 +619,8 @@ def cmd_deprovision(a: argparse.Namespace) -> None:
         removed += ["database", "files", "release history", "snapshots", "secrets"]
     shutil.rmtree(DATA / "deploy" / app, ignore_errors=True)
     removed.append("deploy files")
+    if remove_app_networks(app):  # the container is gone already (compose down): only platform containers are left on them
+        removed.append("networks")
     audit("app.removed", a.actor, app, {"kept_data": a.keep_data})
     out({"ok": True, "removed": removed, "kept_data": a.keep_data})
 
@@ -958,6 +1186,14 @@ def main() -> None:
     s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
     s.add_argument("--keep-data", action="store_true")
     s.set_defaults(fn=cmd_deprovision)
+    s = sub.add_parser("networks-sync", help="an app's own network(s) and the platform containers on them (D88); "
+                                             "no app: every deployed app, from its deploy.json")
+    s.add_argument("app", nargs="?")
+    s.add_argument("--web", action="store_true", help="Traefik joins (routes, health gate)")
+    s.add_argument("--postgres", action="store_true", help="appdata-db joins")
+    s.add_argument("--views", action="store_true", help="the gateway joins")
+    s.add_argument("--egress", action="store_true", help="the app also gets annex-egress-<app> (internet access)")
+    s.set_defaults(fn=cmd_networks_sync)
     sub.add_parser("backup-now").set_defaults(fn=cmd_backup_now)
     s = sub.add_parser("restore")
     s.add_argument("app")
@@ -1014,7 +1250,7 @@ def main() -> None:
     s.add_argument("--print-password", action="store_true")
     s.set_defaults(fn=cmd_users_reset)
     a = p.parse_args()
-    if hasattr(a, "app") and not NAME_RE.match(a.app):
+    if getattr(a, "app", None) is not None and not NAME_RE.match(a.app):
         out({"ok": False, "error": f"invalid app name {a.app!r}"})
         sys.exit(1)
     try:
