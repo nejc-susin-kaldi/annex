@@ -92,7 +92,7 @@ All Annex networks carry `com.kaldi.annex=true` and are `internal` (no route out
 8. **Gate.** Web app: the health path returns 200 from inside the Traefik container within 60 s, then the route answers with a login redirect and Docker health settles. Job-only app: the container is running. If the gate fails, the previous release's manifest is re-provisioned (grants, secrets, networks) and switched back (`back-provision`, `back-switch`, `back-gate`), the release is recorded `failed` with `rolled_back_to`, and the deploy errors.
 9. **Cleanup and end.** Ofelia is restarted if a schedule changed, `deploy.json` is written, older images and snapshots beyond the last 3 are pruned (a failure is a warning in the result, not silence), and `deploy-end` rewrites the pending line as `live` and copies it with an audit row to `annex_ops.releases` (never a pending line), then releases the lock.
 
-`annex rollback` is the same machinery pointed at an older image and takes the same lock; `annex remove` deprovisions (drops role, database, networks) and does not take the lock. `annex migrate-networks` (human only) moves an app deployed before D88 onto its own network without its source.
+`annex rollback` is the same machinery pointed at an older image and takes the same lock; `annex secret set` (when it recreates the container), `annex remove` (drain, compose down, deprovision: role, database, networks) and `annex migrate-networks` (human only; moves an app deployed before D88 onto its own network without its source) are each one process on the VM that takes the same lock, so none of them can interleave with a deploy or with each other (D102).
 
 ## annex-ops threads
 
