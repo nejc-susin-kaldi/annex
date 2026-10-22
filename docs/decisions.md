@@ -666,3 +666,24 @@ It takes about 63 MB on disk and seeds in under a minute.
 **Tests.** `ops/tests/test_threads.py` (verdict, registry, `/healthz` 503, `fetch`), a follower surviving an unexpected store error and an unexpected loop error (`test_follow_exact.py`), `Shipper.revive` (`test_logship.py`), the `platform:ops` target (`test_health.py`) and the console's table (`test_console_view.py`). `test-logs.sh` checks that `/healthz` lists the followers and the sink's counters after ops restarts. Not run here (VM): `test-smoke.sh`, `test-logs.sh`.
 
 **Prod:** metrics (Prometheus or CloudWatch) replace the thread table; `/healthz` stays.
+
+## D85. Push stamp, one settings source, secrets from stdin, prerequisites (22 Oct, hardening C2)
+**What.**
+- **Push stamp.** `render.py` writes `.build/platform/VERSION` (`commit=`, `dirty=`, `env_sha256=`); it goes to the VM with the bundle. `push.sh` reads the VM's `platform/VERSION` first and calls `scripts/pushcheck.py check`, which prints both commits and refuses when the VM's commit is not an ancestor of the local HEAD (the same commit passes), or is not in this checkout at all (message: `git fetch`, or `--force`). A VM with no VERSION file (the first push) proceeds. `--force` skips the check and `--extras` still works; flags combine. The decision is a pure function (`pushcheck.decide`), tested in `cli/tests/test_pushcheck.py` (the repo's script tests live in `cli/tests`, like `test_selftest_builder.py`).
+- **One settings source.** `setting` in `scripts/lib.sh` reads `platform/.env` on the VM, the file the CLI's `Remote.settings` reads, with one `ssh cat` per run cached in `.build/settings.<pid>` (the pid of the main shell, so `$(setting X)` subshells share it; the file is deleted at start and old ones are swept). Where the VM has no `.env` yet it falls back to the local render and says so on stderr. `setting_local` is the old behaviour (the local render) and `bootstrap.sh` and the last line of `push.sh` use it: bootstrap runs before any `.env` is on the VM and needs the local `ANNEX_CERT_NAMES`, and after the sync both are equal. `render` still writes the local copy for the rsync.
+- **`annex secret set <app> KEY`** reads the value from stdin (hidden prompt on a terminal) or `--from-file PATH`; one bare key per call and one line, so a pasted multi-line value is refused instead of split. `KEY=VALUE` still works and warns on stderr that the value is in shell history and the process list. `ops.secret_set` is unchanged (it keeps `_name` and `KEY_RE.fullmatch`) and so is the MCP server. The fix-it messages (manifest, `annex_vm.py`), the contract, the skill and the templates now show the bare-key form. The suites keep `KEY=VALUE` with several keys in one call (random test values, output discarded).
+- **`docs/setup.md`**: a Prerequisites section, and the two hard-coded paths became `$(pwd)` (run from the repo root).
+
+**Why.** A checkout that was behind (or on another branch) could silently roll the platform back, and nothing recorded what was deployed (review finding, hardening plan "What was found"). Scripts read a local render that could differ from what the CLI saw on the VM. A secret on the command line ends up in shell history.
+
+**Alternatives.**
+- Stamp compare by `.env` hash too: the hash is stored and shown in the file, but a changed `.env` is a normal reason to push, so it doesn't refuse.
+- A lock on the VM (one pusher at a time): more mechanism, and the stamp already catches the stale-checkout case it was meant for.
+- Caching settings in a variable: lost in `$(...)` subshells, which is how every script calls `setting`.
+- `secret set KEY` taking several keys from stdin as `KEY=VALUE` lines: that is the form that leaves the history problem to the caller's pipe; one key per call is simpler to explain.
+
+**Known limits.** The stamp is written by the rsync, before the start, so a push that fails halfway leaves the new commit on the VM; pushing again is a no-op check. A dirty tree is only labelled `(dirty)`: its commit is the one the changes sit on.
+
+**Tests.** `cli/tests/test_pushcheck.py` and `cli/tests/test_secret_input.py`. Not run here (VM): `test-smoke.sh`, a `push.sh` twice in a row, `push.sh` from a checkout that lacks the VM's commit.
+
+**Prod:** the stamp becomes the deployed image tag and release record; secrets come from the client's secret manager.
