@@ -356,6 +356,14 @@ class Engine:
         elif isinstance(inp, ReconcileDone):
             for cid in [cid for cid in self.ctrs if cid not in inp.cids]:
                 self._destroy(now, Destroy(cid, self.ctrs[cid].subject), out)
+            # an app removed while ops wasn't listening (down, or unable to process events): its incidents were restored
+            # from the database but no container of it is known, so no Destroy will ever come. A complete pass is the
+            # proof it is gone: close them as that Destroy would have, quietly (D90). A redeployed app always has a
+            # container in the pass (Compose creates the new one before it removes the old, and the list includes
+            # stopped containers), so its incident stays open.
+            gone_apps = {app_of(s) for s in self.signals if s.startswith(("app:", "job:"))}
+            for app in sorted(a for a in gone_apps if a and not self._subject_has_container(f"app:{a}")):
+                self._subject_gone(now, f"app:{app}", out)
         elif isinstance(inp, HealthState):
             if inp.subject == FRONT_DOOR:
                 self._front_door(now, inp, out)
@@ -551,7 +559,11 @@ class Engine:
         self._clear_container_signals(now, ev.cid, out, quiet=not sibling)
         if sibling:
             return
-        # nothing of this subject is left (annex remove, extras off): close its incidents without a message
+        self._subject_gone(now, subject, out)
+
+    def _subject_gone(self, now: float, subject: str, out: list[Action]) -> None:
+        """Nothing of this subject is left (annex remove, extras off): close its incidents (an app's: its jobs' too)
+        without a message, and drop what was kept for it."""
         app = app_of(subject)
         gone = [s for s in list(self.signals) if s == subject or (app and subject.startswith("app:") and app_of(s) == app)]
         for s in gone:
