@@ -3,7 +3,7 @@
 ## Day to day (from the Mac, in the repo)
 | Task | Command |
 |---|---|
-| Change platform config | edit, then `scripts/push.sh` (add `--extras` to include Metabase and Dozzle) |
+| Change platform config | edit, then `scripts/push.sh` (add `--extras` to include Metabase and Dozzle; `--force` to push although the VM has a commit this checkout lacks, see "Push stamp" below) |
 | Metabase/Dozzle on or off | `scripts/extras.sh on` / `scripts/extras.sh off` |
 | Browser access | `scripts/tunnel.sh up`, then https://home.annex.home.arpa:8443 |
 | Demo passwords | `scripts/show-users.sh` (the three demo users only) |
@@ -19,9 +19,10 @@
 | Incoming webhook events of an app | `./annex hooks <app>` (metadata only); `./annex hooks show <id>` (headers and body: admins), `./annex hooks replay <app> --id N \| --failed \| --since 1h` (asks first) |
 | Who uses what | `./annex usage` (every app, last 7 days), `./annex usage <app>` (by day), `./annex usage <app> --by-user` (per person: admins only) |
 | Email and Slack sends of an app | `./annex sends <app> [-n 50]` (every attempt, rejections too; never the body) |
-| Set a secret | `./annex secret set <app> KEY=VALUE` |
+| Set a secret | `./annex secret set <app> KEY` (type the value at the hidden prompt, pipe it on stdin, or `--from-file PATH`; one key per call, one line). `KEY=VALUE` still works but leaves the value in shell history and warns |
 | Remove an app | `./annex remove <app> [--keep-data]` (its networks go too) |
 | Re-attach the platform to every app's network (after recreating traefik, ops, gateway or appdata-db by hand) | `ssh annex python3 /srv/annex/platform/vm/annex_vm.py networks-sync` (see "App networks" below) |
+| Settle a release a dead deploy left pending, or break a stale lock | `ssh annex python3 /srv/annex/platform/vm/annex_vm.py deploy-reconcile <app> [--break]` (see "Releases and rollback") |
 | Move an app deployed before D88 onto its own network | redeploy it (`./annex deploy <folder>`); without its source: `./annex migrate-networks <app> [--egress]` |
 | Back up now | `scripts/backup.sh` (nightly at 02:00 anyway; 7 days kept) |
 | Restore one app | `scripts/restore.sh <app> [archive]` (replaces its DB and `/data`) |
@@ -46,6 +47,9 @@
 | `snapshots/<app>/pre-r<N>/` | database dump and `/data` archive taken before release N went live; the last 3 are kept (not backed up) |
 | `dumps/`, `backups/` | nightly pg_dump output (with `MARKER`, the time `dump-all.sh` finished) and backup archives (7 days; they hold `secrets/` and `state/directory/` too since D87, so `backups/` is mode 700, annex only). The `annex_ops` dump leaves out the stored logs and health-check results (D74): restored, those tables come back empty |
 | `certs/` | mkcert wildcard certificate (local TLS mode) |
+
+## Push stamp (D85)
+`render.py` writes `.build/platform/VERSION` (`commit=`, `dirty=`, `env_sha256=`), which goes to `/srv/annex/platform/VERSION` with the bundle. `scripts/push.sh` first reads the VM's `VERSION` and refuses when the commit on the VM is not an ancestor of your checkout's HEAD (a stale checkout or another branch would roll the platform back); it prints both commits. Fix it with `git fetch` and a merge or rebase, or knowingly override with `scripts/push.sh --force`. A first push (no `VERSION` on the VM) proceeds, the same commit passes, and a dirty tree is only labelled `(dirty)`. `--extras` and `--force` combine. Scripts read settings from `platform/.env` on the VM (`setting`: one `ssh cat` per run), falling back to the local render before the first push.
 
 ## App networks (D88)
 - **The shape.** Every app has its own internal network, `annex-app-<app>` (labels `com.kaldi.annex=true`, `com.kaldi.annex.app=<app>`), with an explicit /24 from `ANNEX_APP_SUBNETS` (default `10.213.0.0/16`, in `.env`; the lowest free one). On it: the app's container and exactly the platform containers it uses: `annex-traefik-1` (web apps: routes, the deploy's health gate), `annex-ops-1` as `ops` (always: health checks, webhook delivery, email and Slack), `annex-gateway-1` as `gateway` (apps with views), `annex-appdata-db-1` as `appdata-db` (apps with Postgres). So apps keep the URLs they had (`http://gateway:3000`, `http://ops:8000`, `appdata-db:5432`), and no two apps share a network. An app with a non-empty `egress:` also gets `annex-egress-<app>`, not internal, with only that app on it: internet (and LAN) access to any host, not filtered per hostname. Apps are on no network in `compose.yaml` (`annex-edge`, `annex-appdata` hold platform containers only).

@@ -6,6 +6,15 @@ When the demo stage is over. Steps 1–3 come from the brief; build-specific ite
 - Push the repo to GitHub, if that hasn't happened. Nejc adds the remote; `.env` and `.build/` are gitignored and stay local.
 - Optionally copy anything you want from the VM first, e.g. `scripts/backup.sh` and then `scp annex:/srv/annex/backups/<archive> .`. Everything on the VM is synthetic.
 
+*(build)* What the hardening steps added on the VM, all under `/srv/annex` or in Docker, so `scripts/wipe-vm.sh` (or destroying the VM) removes it:
+- per-app networks and egress networks (below), with their /24s from `ANNEX_APP_SUBNETS` (nothing outside Docker);
+- `backups/` (mode 700) holds archives that contain `secrets/` and `state/directory/` (D87): delete any copy of an archive you took off the VM, and any `restore-scratch/` folder left from a restore check;
+- `deploy/<app>/.lock*` and the pending lines in `apps/<app>/releases.jsonl` (D92), and `deploy/<app>/compose.yaml.pre-d88` for an app moved with `annex migrate-networks`;
+- the `annex_ops.schema_version` table and the tables the migrations create (in the `annex_ops` database, which goes with appdata-db's data);
+- `platform/VERSION` (the push stamp, D85).
+
+On the Mac: `.build/settings.<pid>` (cached settings) goes with `.build`.
+
 *(build)* App networks (`annex-app-<app>`, `annex-egress-<app>`, D88) carry the label `com.kaldi.annex=true`, so `scripts/wipe-vm.sh` removes them with the other networks (it removes the containers first); `annex remove` removes an app's networks on its own. Nothing outside Docker was changed for them (no `daemon.json`).
 
 ## 1. Destroy the VM

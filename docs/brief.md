@@ -86,6 +86,8 @@ curl --resolve home.annex.home.arpa:8443:127.0.0.1 https://home.annex.home.arpa:
 The login flow can be proven with curl too: follow the redirect, post the credentials, reuse the cookie.
 
 ## How the pieces run
+*Historical: this is the M0 plan. Apps now run through `ssh annex` and the VM's Compose (D1), and the current system is in `docs/architecture.md`.*
+
 - **Platform:** `compose.yaml`, `config/` and `db/` are synced from the repo to `/srv/annex/platform` by `scripts/push.sh` (rsync over SSH). `docker compose` then runs there over SSH, using the VM's Compose v5.6, because bind mount paths must exist on the VM.
 - **Apps:** built and run through the `annex-vm` Docker context, using the Mac's Compose. Their persistent paths are absolute VM paths under `/srv/annex/apps/<name>`.
 - **Secrets:** generated on the VM, live only in `/srv/annex/secrets`, and never touch the Mac or the repo.
