@@ -9,6 +9,12 @@ signals are added to it silently, and it resolves once every signal has cleared.
 `handle(now, input)` takes one input and `tick(now)` evaluates the time-based rules; both return actions for
 the caller (incidents.py) to persist and send. Containers are tracked by their Docker id, so a Compose recreate
 (new container, old one destroyed a moment later) doesn't look like a crash.
+
+`now` is a monotonic clock (D90): every duration (grace periods, crash windows, reminders) is a difference of two
+`now`s, so a wall-clock step (NTP) can't freeze or fire a timer. Inputs that carry a time of their own (a Traefik
+line's timestamp, a backup's mtime, a maintenance window's end, restored incidents and saved timers) are converted to
+this clock by the caller; actions carry engine times, which the caller converts back to wall time for display and
+storage.
 """
 from __future__ import annotations
 
@@ -51,6 +57,10 @@ class Tuning:
     # can never take the place of a container's death
     queue_soft: int = 5000
     queue_max: int = 10000
+    # alert messages (D90): sent by their own thread from annex_ops.outbox; a send that fails is tried again after
+    # these steps (seconds, the last repeats) and given up after send_attempts (then shown on the console's Platform page)
+    send_backoff_s: str = "10,60"
+    send_attempts: int = 3
 
 
 # --- inputs ------------------------------------------------------------------
@@ -119,7 +129,7 @@ class Destroy:
 
 @dataclass
 class HealthState:  # the health checker's confirmed verdict (health.py: 2 failures in a row = down, 2 successes = up)
-    subject: str  # app:<name> or platform:front-door
+    subject: str  # app:<name>, platform:front-door or platform:ops
     down: bool
     detail: str = ""
 
@@ -175,8 +185,14 @@ class LogSample:  # the stored logs after the daily housekeeping (logship.Keeper
 
 
 @dataclass
-class Restore:  # open incidents loaded from the database at startup
+class Restore:  # open incidents loaded from the database at startup (times already on the engine's clock)
     incidents: list[dict]  # {subject, opened_at, last_notified_at, reminders, signals: {name: {since, detail, cid}}}
+
+
+@dataclass
+class LoadState:  # counters and timers saved before an ops restart (Engine.export_state), loaded before Restore
+    entries: dict  # key -> value, as export_state returned them
+    offset: float = 0.0  # the saved times are `engine time + offset` (the caller's wall clock): rebased on this clock
 
 
 # --- actions -----------------------------------------------------------------
@@ -203,6 +219,7 @@ class _Ctr:
     health: str | None = None
     dies: list = field(default_factory=list)  # (time, exit code) of non-zero exits
     last_die: float | None = None
+    known: bool = True  # False: loaded from the saved state and not yet reported by this process (no time rule applies)
 
 
 @dataclass
@@ -213,6 +230,10 @@ class _Open:
 
 
 CONTAINER_SIGNALS = ("stopped", "crash-loop", "oom", "unhealthy")
+FRONT_DOOR = "platform:front-door"
+# what the front door is made of, seen from inside: while one of them is in trouble, a failing front door is the same
+# outage, not a second incident (D90)
+FRONT_DOOR_PARTS = ("platform:traefik", "platform:authelia")
 STALE_HOOK_S = 60  # the delivery worker reports failing hooks every 2 s
 
 
@@ -282,7 +303,7 @@ class Engine:
         c = self.ctrs.get(ev.cid)
         if c is None:
             c = self.ctrs[ev.cid] = _Ctr(ev.cid, ev.name, ev.subject, getattr(ev, "ignore_stopped", False))
-        c.name, c.subject = ev.name, ev.subject
+        c.name, c.subject, c.known = ev.name, ev.subject, True
         return c
 
     def _app_degraded(self, app: str) -> bool:
@@ -336,9 +357,11 @@ class Engine:
             for cid in [cid for cid in self.ctrs if cid not in inp.cids]:
                 self._destroy(now, Destroy(cid, self.ctrs[cid].subject), out)
         elif isinstance(inp, HealthState):
-            if inp.subject.startswith("app:") and not self._subject_has_container(inp.subject):
+            if inp.subject == FRONT_DOOR:
+                self._front_door(now, inp, out)
+            elif inp.subject.startswith("app:") and not self._subject_has_container(inp.subject):
                 return out  # a check for an app that no longer exists
-            if inp.down:
+            elif inp.down:
                 self._raise(now, inp.subject, "down", inp.detail or "the health check is failing", out)
             else:
                 self._clear(now, inp.subject, "down", out)
@@ -377,7 +400,72 @@ class Engine:
                                                 i.get("reminders", 0))
                 if "webhook" in i["signals"] and i["subject"].startswith("app:"):
                     self.webhook_restored[i["subject"][4:]] = now
+        elif isinstance(inp, LoadState):
+            self._load(inp)
         return out
+
+    # --- what survives a restart (D90) ----------------------------------------------
+    def export_state(self, offset: float = 0.0) -> dict:
+        """The counters and timers that neither Docker nor the database can give back after an ops restart: per
+        container when it stopped, its last exit and its recent crashes; when memory went low. Times are `now + offset`
+        (the caller passes wall minus monotonic, so they mean something to the next process). Everything else is rebuilt
+        without it: running and health by the reconcile pass, open incidents from their table, failing webhooks by the
+        delivery worker's next report (2 s), the 5xx window by the Traefik follower replaying from its cursor."""
+        def wall(t):
+            return None if t is None else t + offset
+        out = {}
+        for c in self.ctrs.values():
+            if c.stopped_since is None and c.last_die is None and not c.dies:
+                continue
+            out[f"ctr:{c.cid}"] = {"name": c.name, "subject": c.subject, "ignore_stopped": c.ignore_stopped,
+                                   "stopped_since": wall(c.stopped_since), "last_die": wall(c.last_die),
+                                   "dies": [[t + offset, code] for t, code in c.dies]}
+        if self.mem_low_since is not None:
+            out["host:mem_low_since"] = {"since": self.mem_low_since + offset}
+        return out
+
+    def _load(self, inp: LoadState) -> None:
+        """Saved state back in, on this process's clock. A container comes back `known=False`: until the reconcile pass
+        reports it (Seen) no time rule fires for it, and ReconcileDone forgets it if it is gone."""
+        def back(t):
+            return None if t is None else float(t) - inp.offset
+        for key, v in inp.entries.items():
+            try:
+                if key.startswith("ctr:"):
+                    cid = key[4:]
+                    if cid in self.ctrs:
+                        continue  # already reported by this process: that is newer
+                    c = _Ctr(cid, str(v.get("name", "")), str(v["subject"]), bool(v.get("ignore_stopped")), known=False)
+                    c.stopped_since, c.last_die = back(v.get("stopped_since")), back(v.get("last_die"))
+                    c.running = c.stopped_since is None
+                    c.dies = [(float(t) - inp.offset, int(code)) for t, code in v.get("dies") or []]
+                    self.ctrs[cid] = c
+                elif key == "host:mem_low_since" and self.mem_low_since is None:
+                    self.mem_low_since = back(v["since"])
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue  # a row this version can't read: that timer starts over
+
+    def _front_door(self, now: float, inp: HealthState, out: list[Action]) -> None:
+        """The front door's verdict. Down while Traefik or Authelia is already in trouble (stopped, even within its
+        grace period, or carrying any signal): the `down` signal joins that part's incident, so a Traefik outage is one
+        incident and one alert, not two. Otherwise it opens `platform:front-door` as before. Up clears it wherever it
+        was put; a down verdict while it is already raised somewhere (a restart's seeded verdict) changes nothing."""
+        holders = (FRONT_DOOR,) + FRONT_DOOR_PARTS
+        if not inp.down:
+            for subject in holders:
+                self._clear(now, subject, "down", out)
+            return
+        if any("down" in self.signals.get(s, {}) for s in holders):
+            return
+        detail = inp.detail or "the health check is failing"
+        part = next((s for s in FRONT_DOOR_PARTS if self._in_trouble(s)), None)
+        if part is None:
+            self._raise(now, FRONT_DOOR, "down", detail, out)
+        else:
+            self._raise(now, part, "down", f"the front door isn't answering ({detail})", out)
+
+    def _in_trouble(self, subject: str) -> bool:
+        return bool(self.signals.get(subject)) or any(c.subject == subject and not c.running for c in self.ctrs.values())
 
     def _hook_ok(self, now: float, app: str, hook: str, out: list[Action]) -> None:
         hooks = self.hooks_failing.get(app, {})
@@ -485,6 +573,8 @@ class Engine:
         out: list[Action] = []
         t = self.tuning
         for c in list(self.ctrs.values()):
+            if not c.known:
+                continue  # loaded from the saved state: wait for the reconcile pass to say how it is now
             if not c.running and not c.ignore_stopped and c.stopped_since is not None \
                     and now - c.stopped_since >= t.stopped_grace_s:
                 self._raise(now, c.subject, "stopped", f"{c.name} has been stopped for {_mins(now - c.stopped_since)}",

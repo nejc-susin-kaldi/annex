@@ -1,10 +1,18 @@
-"""Incidents: the one thread that runs the alert engine, stores incidents and sends the messages.
+"""Incidents: the one thread that runs the alert engine and stores incidents; messages go through the outbox.
 
 The Docker watcher, the log followers and the health checker put inputs on a queue; this thread is the only
 consumer and the only writer, so there are no races. It also ticks the engine every `tick_s` seconds.
+
+Since hardening B5 (D90) this thread never waits on a mail server, Slack or a log tail: a message that is owed is a row
+in `annex_ops.outbox`, which the sender thread (`sender.py`) composes, sends and retries. The engine runs on the
+monotonic clock; this thread converts the wall times that come in (a Traefik line's timestamp, a backup's mtime, a
+maintenance window, restored incidents and saved timers) and the engine times that go out (an incident's opening, a
+signal's start), so a wall-clock step can't freeze or fire a timer. The engine's counters and timers that Docker can't
+give back (crashes, when a container stopped, when memory went low) are saved in `annex_ops.engine_state` whenever they
+change, in wall time, and loaded at start.
 """
+import dataclasses
 import queue
-import re
 import sys
 import threading
 import time
@@ -12,19 +20,70 @@ import traceback
 
 from psycopg.types.json import Jsonb
 
-from . import config, db, directory, docker_api, email, engine as eng, messages, slack, threads
+from . import config, db, docker_api, email, engine as eng, messages, sender, slack, threads
 from .errors import OpsError
 
 OFELIA = "annex-ofelia-1"
-ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def log(msg: str) -> None:
     print(f"incidents: {msg}", file=sys.stderr, flush=True)
 
 
+class Clock:
+    """The engine's clock and the wall clock. `now()` -> (monotonic seconds, offset), where wall = monotonic + offset."""
+
+    def now(self) -> tuple[float, float]:
+        mono = time.monotonic()
+        return mono, time.time() - mono
+
+
+def to_engine_time(inp, offset: float):
+    """An input whose times are wall clock (epoch seconds), on the engine's monotonic clock instead."""
+    def m(t):
+        return None if t is None else t - offset
+    if isinstance(inp, eng.Request):
+        return dataclasses.replace(inp, ts=inp.ts - offset)
+    if isinstance(inp, eng.HostSample):
+        return dataclasses.replace(inp, backup_at=m(inp.backup_at), dump_at=m(inp.dump_at))
+    if isinstance(inp, eng.HookFailing):
+        return dataclasses.replace(inp, since=inp.since - offset)
+    if isinstance(inp, eng.Maintenance):
+        return dataclasses.replace(inp, until=m(inp.until))
+    return inp
+
+
+def signals_shifted(signals: dict, offset: float) -> dict:
+    """A copy of a signals snapshot with every `since` moved by `offset` (engine -> wall: +offset, wall -> engine: -offset)."""
+    out = {}
+    for name, s in signals.items():
+        s = dict(s)
+        if isinstance(s.get("since"), (int, float)):
+            s["since"] = s["since"] + offset
+        out[name] = s
+    return out
+
+
+class StateStore:
+    """annex_ops.engine_state: the engine's saved counters and timers (Engine.export_state), one row per key."""
+
+    def load(self) -> dict:
+        with db.connect() as conn:
+            return {k: v for k, v in conn.execute("SELECT key, value FROM annex_ops.engine_state").fetchall()}
+
+    def save(self, changed: dict, removed: list[str]) -> None:
+        with db.connect() as conn, conn.cursor() as cur:
+            if changed:
+                cur.executemany("INSERT INTO annex_ops.engine_state (key, value, updated_at) VALUES (%s, %s, now()) "
+                                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                                [(k, Jsonb(v)) for k, v in changed.items()])
+            if removed:
+                cur.execute("DELETE FROM annex_ops.engine_state WHERE key = ANY(%s)", (removed,))
+
+
 class Manager(threading.Thread):
-    def __init__(self) -> None:
+    def __init__(self, outbox: sender.OutboxStore | None = None, state: StateStore | None = None,
+                 clock: Clock | None = None) -> None:
         super().__init__(daemon=True, name="engine")
         t = config.tuning()
         self.q: queue.Queue = queue.Queue(maxsize=t.queue_max)
@@ -32,11 +91,18 @@ class Manager(threading.Thread):
         self.dropped = 0                         # request lines dropped because the queue was past queue_soft (D86)
         self.last_drop_log = 0.0
         self.engine = eng.Engine(t)
+        self.outbox = outbox or sender.OutboxStore()
+        self.state = state or StateStore()
+        self.clock = clock or Clock()
+        self.wake_sender = lambda: None          # set by start_background: the sender looks at once
         self.ids: dict[str, int] = {}            # subject -> id of its open incident
         self.first_signal: dict[str, str] = {}   # subject -> the signal that opened it (wording of "resolved")
-        self.apps: dict[str, dict] = {}          # app -> owner, alerts-to, last seen (the container may be gone later)
-        self.last_tick = 0.0
-        self.last_housekeeping = 0.0
+        self.opened_wall: dict[str, float] = {}  # subject -> when its open incident opened, wall clock (messages)
+        self.maint_wall: dict[str, float] = {}   # subject -> the maintenance window's end as the table says (wall)
+        self.saved: dict = {}                    # what engine_state holds, on the engine's clock (to write only changes)
+        self.offset = 0.0                        # wall - monotonic, taken at the start of each pass
+        self.last_tick: float | None = None
+        self.last_housekeeping: float | None = None
 
     def submit(self, inp) -> None:
         """Queue an input for the engine. A request line (a 5xx-rate sample, log-derived) is the one input that may be
@@ -61,7 +127,7 @@ class Manager(threading.Thread):
 
     # --- thread ------------------------------------------------------------
     def run(self) -> None:
-        threads.register(self.name, 30)  # a pass can wait on an SMTP, a Slack and a log-tail call (10 s each)
+        threads.register(self.name, 30)  # a pass waits only on the database now (the pool gives up after 10 s)
         while True:
             threads.beat(self.name)
             try:
@@ -76,20 +142,35 @@ class Manager(threading.Thread):
                 inp = self.q.get(timeout=1)
             except queue.Empty:
                 inp = None
-            now = time.time()
             try:
-                self.engine.tuning = config.tuning()
-                if inp is not None:
-                    self.apply(self.engine.handle(now, inp), now)
-                if now - self.last_tick >= self.engine.tuning.tick_s:
-                    self.last_tick = now
-                    self.sync_maintenance(now)
-                    self.apply(self.engine.tick(now), now)
-                    self.housekeeping(now)
+                self.step(inp)
             except Exception:  # noqa: BLE001: the engine thread must never die
                 log("unexpected error:\n" + traceback.format_exc())
 
+    def step(self, inp) -> None:
+        """One pass: the input (if any), then the time-based rules when a tick is due, then the saved state."""
+        now, self.offset = self.clock.now()
+        self.engine.tuning = config.tuning()
+        if inp is not None:
+            self.apply(self.engine.handle(now, to_engine_time(inp, self.offset)), now)
+        if self.last_tick is None or now - self.last_tick >= self.engine.tuning.tick_s:
+            self.last_tick = now
+            self.sync_maintenance(now)
+            self.apply(self.engine.tick(now), now)
+            self.housekeeping(now)
+        if not isinstance(inp, eng.Request):  # a request line changes nothing that is saved
+            self.save_state()
+
     def restore(self) -> None:
+        now, self.offset = self.clock.now()
+        try:
+            saved = self.state.load()
+        except Exception as e:  # noqa: BLE001: no table yet (before the first push of this version): start without
+            log(f"no saved engine state ({type(e).__name__}: {e}); counters start over")
+            saved = {}
+        self.engine.handle(now, eng.LoadState(saved, self.offset))
+        # rows this version couldn't read are listed too, so the first write removes them
+        self.saved = {**{k: None for k in saved}, **self.engine.export_state()}
         with db.connect() as conn:
             rows = conn.execute("SELECT id, subject, extract(epoch FROM opened_at), extract(epoch FROM last_notified_at), "
                                 "reminders, signals, history FROM annex_ops.incidents WHERE resolved_at IS NULL").fetchall()
@@ -97,11 +178,29 @@ class Manager(threading.Thread):
         for id_, subject, opened, notified, reminders, signals, history in rows:
             self.ids[subject] = id_
             self.first_signal[subject] = (history[0]["signal"] if history else next(iter(signals), "down"))
-            incidents.append({"subject": subject, "opened_at": float(opened), "last_notified_at": float(notified or opened),
-                              "reminders": reminders, "signals": signals})
-        self.engine.handle(time.time(), eng.Restore(incidents))
+            self.opened_wall[subject] = float(opened)
+            incidents.append({"subject": subject, "opened_at": float(opened) - self.offset,
+                              "last_notified_at": float(notified or opened) - self.offset,
+                              "reminders": reminders, "signals": signals_shifted(signals, -self.offset)})
+        self.engine.handle(now, eng.Restore(incidents))
         if incidents:
             log(f"restored {len(incidents)} open incident(s)")
+        if saved:
+            log(f"restored {len(saved)} saved counter(s) and timer(s)")
+
+    def save_state(self) -> None:
+        """Write the engine's saved counters and timers that changed since the last write (compared on the engine's
+        clock, so the offset's jitter doesn't count as a change), in wall time. A failed write is tried again next pass."""
+        current = self.engine.export_state()
+        if current == self.saved:
+            return
+        changed = {k: v for k, v in self.engine.export_state(self.offset).items() if current[k] != self.saved.get(k)}
+        removed = [k for k in self.saved if k not in current]
+        try:
+            self.state.save(changed, removed)
+            self.saved = current
+        except Exception as e:  # noqa: BLE001: the database may be down; the engine carries on from memory
+            log(f"couldn't save the engine's counters ({type(e).__name__}: {e}); will retry")
 
     def sync_maintenance(self, now: float) -> None:
         """`ctl maintenance` runs in another process and writes the table: pick the changes up."""
@@ -110,25 +209,30 @@ class Manager(threading.Thread):
             rows = conn.execute("SELECT subject, extract(epoch FROM until) FROM annex_ops.maintenance").fetchall()
         wanted = {s: float(u) for s, u in rows}
         for subject, until in wanted.items():
-            if self.engine.maint.get(subject) != until:
-                self.apply(self.engine.handle(now, eng.Maintenance(subject, until)), now)
-        for subject in list(self.engine.maint):
+            if self.maint_wall.get(subject) != until:
+                self.maint_wall[subject] = until
+                self.apply(self.engine.handle(now, to_engine_time(eng.Maintenance(subject, until), self.offset)), now)
+        for subject in list(self.maint_wall):
             if subject not in wanted:
+                del self.maint_wall[subject]
                 self.apply(self.engine.handle(now, eng.Maintenance(subject, None)), now)
 
     def housekeeping(self, now: float) -> None:
-        if now - self.last_housekeeping < 86400:
+        if self.last_housekeeping is not None and now - self.last_housekeeping < 86400:
             return
         self.last_housekeeping = now
         with db.connect() as conn:
             conn.execute("DELETE FROM annex_ops.job_runs WHERE finished_at < now() - interval '90 days'")
 
     # --- applying engine actions ---------------------------------------------
+    def wall(self, t: float) -> float:
+        return t + self.offset
+
     def apply(self, actions: list[eng.Action], now: float) -> None:
         for a in actions:
             try:
                 getattr(self, "do_" + a.kind)(a, now)
-            except Exception:  # noqa: BLE001: a failed write or send must not stop the rest
+            except Exception:  # noqa: BLE001: a failed write must not stop the rest
                 log(f"{a.kind} {a.subject} failed:\n" + traceback.format_exc())
 
     def do_forget(self, a: eng.Action, now: float) -> None:
@@ -136,15 +240,18 @@ class Manager(threading.Thread):
 
     def do_open(self, a: eng.Action, now: float) -> None:
         kind, name, _ = messages.parse_subject(a.subject)
-        history = [{"ts": now, "signal": n, "event": "raised", "detail": s.get("detail")} for n, s in a.signals.items()]
+        signals = signals_shifted(a.signals, self.offset)
+        history = [{"ts": self.wall(now), "signal": n, "event": "raised", "detail": s.get("detail")} for n, s in signals.items()]
+        opened = self.wall(a.opened_at)
         with db.connect() as conn:
             self.ids[a.subject] = conn.execute(
                 "INSERT INTO annex_ops.incidents (subject, app, opened_at, signals, history, last_notified_at) "
                 "VALUES (%s, %s, to_timestamp(%s), %s, %s, now()) "
                 "ON CONFLICT (subject) WHERE resolved_at IS NULL DO UPDATE SET signals = EXCLUDED.signals "
-                "RETURNING id", (a.subject, name if kind in ("app", "job") else None, a.opened_at,
-                                 Jsonb(a.signals), Jsonb(history))).fetchone()[0]
+                "RETURNING id", (a.subject, name if kind in ("app", "job") else None, opened,
+                                 Jsonb(signals), Jsonb(history))).fetchone()[0]
         self.first_signal[a.subject] = next(iter(a.signals), "down")
+        self.opened_wall[a.subject] = opened
         self.notify("open", a)
 
     def do_add_signal(self, a: eng.Action, now: float) -> None:
@@ -157,10 +264,11 @@ class Manager(threading.Thread):
         id_ = self.ids.get(a.subject)
         if id_ is None:
             return
-        entry = Jsonb([{"ts": now, "signal": a.signal, "event": event, "detail": a.detail}])
+        entry = Jsonb([{"ts": self.wall(now), "signal": a.signal, "event": event, "detail": a.detail}])
         sig = self.engine.signals.get(a.subject, {}).get(a.signal) if signals_update else None
         with db.connect() as conn:
             if signals_update and sig is not None:
+                sig = signals_shifted({a.signal: sig}, self.offset)[a.signal]
                 conn.execute("UPDATE annex_ops.incidents SET signals = signals || jsonb_build_object(%s::text, %s::jsonb), "
                              "history = history || %s WHERE id = %s", (a.signal, Jsonb(sig), entry, id_))
             else:
@@ -177,6 +285,7 @@ class Manager(threading.Thread):
         if not a.quiet:
             a.signals = {first: {}}
             self.notify("resolve", a)
+        self.opened_wall.pop(a.subject, None)
 
     def do_remind(self, a: eng.Action, now: float) -> None:
         id_ = self.ids.get(a.subject)
@@ -187,52 +296,19 @@ class Manager(threading.Thread):
         self.notify("remind", a)
 
     # --- messages --------------------------------------------------------------
-    def app_info(self, app: str) -> dict:
-        try:
-            labels = docker_api.inspect(f"annex-app-{app}").get("Config", {}).get("Labels") or {}
-            self.apps[app] = {"owner": labels.get("com.kaldi.annex.owner"),
-                              "alerts_to": labels.get("com.kaldi.annex.alerts-to")}
-        except (docker_api.DockerError, OSError):
-            pass  # the container is gone or the proxy is down: use what we last knew
-        return self.apps.get(app, {})
-
-    def log_lines(self, subject: str) -> list[str]:
-        kind, name, job = messages.parse_subject(subject)
-        if kind == "app":
-            return docker_api.tail_logs(f"annex-app-{name}", 20)
-        if kind == "job":
-            key = f"{name}-{job}"
-            return [ANSI.sub("", ln) for ln in docker_api.tail_logs(OFELIA, 400) if f'"{key}"' in ln][-20:]
-        if name in ("disk", "memory", "logs", "front-door"):  # no container of their own
-            return []
-        return docker_api.tail_logs(f"annex-{name}-1", 20)
-
     def notify(self, kind: str, a: eng.Action) -> None:
-        k, name, _ = messages.parse_subject(a.subject)
-        info = self.app_info(name) if k in ("app", "job") else {}
-        try:
-            users = directory.users()
-        except OpsError:
-            users = {}
-        emails, channels, notes = messages.recipients(k, info.get("owner"), info.get("alerts_to"), users,
-                                                      config.slack_connected(), config.ALERT_SLACK_CHANNEL)
-        subject = messages.subject_line(kind, a.subject, a.signals, a.duration_s)
-        app_url = config.app_url(name) if k in ("app", "job") else ""
-        text = messages.body("resolve" if kind == "resolve" else kind, a.subject, a.signals, a.opened_at, a.duration_s,
-                             notes, config.STATUS_URL, app_url)
-        data = {"title": subject.removeprefix("[Annex] "), "body": text,
-                "link": app_url or config.STATUS_URL or None, "link_text": "Open the app" if app_url else "Open the status page"}
-        if kind != "resolve":
-            lines = self.log_lines(a.subject)
-            if lines:
-                data["details"] = "Last log lines:\n" + "\n".join(lines)
-        data = {k2: v for k2, v in data.items() if v}
-        send_alert(emails, subject, data, channels, f"{subject}" + (f" {config.STATUS_URL}" if config.STATUS_URL else ""))
+        """A message is owed: one outbox row with what the engine said, in wall time. The sender thread does the rest
+        (recipients, log lines, the sends and their retries), so this thread never waits on SMTP, Slack or Docker."""
+        action = {"signals": signals_shifted(a.signals, self.offset), "duration_s": a.duration_s,
+                  "opened_at": self.opened_wall.get(a.subject, self.wall(a.opened_at))}
+        self.outbox.add(kind, a.subject, action)
+        self.wake_sender()
 
 
 def send_alert(emails: list[str], subject: str, data: dict, channels: list[str], slack_text: str) -> None:
     """One email to everyone; if that is refused (say, one address outside the allowed domains), one each, so the
-    others still hear. Failures are already in the send log and never stop the engine."""
+    others still hear. Failures are already in the send log and never stop the caller. The error scanner's emails
+    (errors_run) use this, in their own thread; the alert engine's messages go through the outbox (sender.py)."""
     if emails:
         try:
             email.send_email("_platform", emails, subject, template="notice", data=data)
@@ -347,6 +423,10 @@ def start_background() -> Manager:
     from . import audit, digest, errors_run, follow_logs, health, hooks_delivery, host, logship, logstore, usage, watch_docker
 
     mgr = _manager = Manager()
+    out = sender.Sender(mgr.outbox)  # the alert messages, off the engine thread (D90)
+    mgr.wake_sender = out.wake
+    out.start()
+    threads.gauge("alert-sender", out.status)
     mgr.start()
     threads.gauge("engine", lambda: {"waiting": mgr.q.qsize(), "max": mgr.q.maxsize, "dropped": mgr.dropped})
     ingest = _ingest = usage.Ingest()

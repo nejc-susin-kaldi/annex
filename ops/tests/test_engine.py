@@ -382,3 +382,262 @@ def test_removing_the_app_closes_a_webhook_incident_quietly():
     run(e, [(0, Start(**C)), (1, HookFailing("probe", "trello", 0))])
     out = run(e, [(5, Destroy("c1", APP))])
     assert out[-1].kind == "resolve" and out[-1].quiet and e.hooks_failing == {}
+
+
+# --- one incident per front-door outage (D90) ---------------------------------------------------------------
+from annex_ops.engine import FRONT_DOOR, HostSample, LoadState  # noqa: E402
+
+TR = dict(cid="t1", name="annex-traefik-1", subject="platform:traefik")
+AU = dict(cid="a1", name="annex-authelia-1", subject="platform:authelia")
+
+
+def test_a_traefik_outage_is_one_incident_even_when_the_front_door_is_noticed_first():
+    e = engine()
+    # docker stop annex-traefik-1: the checker confirms the front door down before Traefik's grace period is over
+    out = run(e, [(0, Start(**TR)), (1, Stop(**TR)), (30, HealthState(FRONT_DOOR, True, "connection refused")), (61, "tick")])
+    assert kinds(out) == ["open", ("add_signal", "stopped")]
+    assert out[0].subject == "platform:traefik" and "front door" in out[0].signals["down"]["detail"]
+    assert FRONT_DOOR not in e.open
+    out = run(e, [(100, Start(**TR)), (160, HealthState(FRONT_DOOR, False))])
+    assert kinds(out) == [("clear_signal", "stopped"), ("clear_signal", "down"), "resolve"]
+    assert {a.subject for a in out} == {"platform:traefik"}
+
+
+def test_the_front_door_joins_an_open_traefik_incident():
+    e = engine()
+    out = run(e, [(0, Start(**TR)), (1, Stop(**TR)), (61, "tick"), (90, HealthState(FRONT_DOOR, True))])
+    assert kinds(out) == ["open", ("add_signal", "down")] and {a.subject for a in out} == {"platform:traefik"}
+
+
+def test_an_authelia_outage_takes_the_front_door_too():
+    e = engine()
+    out = run(e, [(0, Start(**AU)), (1, Health(healthy=False, **AU)), (60, HealthState(FRONT_DOOR, True))])
+    assert kinds(out) == ["open", ("add_signal", "down")] and {a.subject for a in out} == {"platform:authelia"}
+
+
+def test_a_front_door_failure_with_traefik_fine_is_its_own_incident():
+    e = engine()
+    out = run(e, [(0, Start(**TR)), (0, Start(**AU)), (60, HealthState(FRONT_DOOR, True, "got HTTP 404"))])
+    assert kinds(out) == ["open"] and out[0].subject == FRONT_DOOR
+    # Traefik going down afterwards is a second problem: the front door's signal stays where it was raised
+    out = run(e, [(70, Stop(**TR)), (131, "tick"), (140, HealthState(FRONT_DOOR, True))])
+    assert kinds(out) == ["open"] and out[0].subject == "platform:traefik"
+    out = run(e, [(150, Start(**TR)), (160, HealthState(FRONT_DOOR, False))])
+    assert {a.subject for a in out if a.kind == "resolve"} == {"platform:traefik", FRONT_DOOR}
+
+
+def test_a_restored_front_door_signal_on_traefik_clears_when_the_front_door_is_up():
+    e = engine()
+    run(e, [(0, Restore([{"subject": "platform:traefik", "opened_at": 0, "last_notified_at": 0, "reminders": 0,
+                          "signals": {"down": {"since": 0, "detail": "the front door isn't answering", "cid": None}}}])),
+            (5, Seen(running=True, **TR))])
+    # the checker's seeded verdict after a restart: still down changes nothing, up resolves it
+    assert run(e, [(6, HealthState(FRONT_DOOR, True))]) == []
+    assert kinds(run(e, [(70, HealthState(FRONT_DOOR, False))])) == [("clear_signal", "down"), "resolve"]
+
+
+# --- counters and timers across an ops restart (D90) ---------------------------------------------------------
+def restart(e, offset_before, offset_after):
+    """A new engine loaded from e's saved state: the times were saved as wall (engine time + offset_before) and the new
+    process's monotonic clock has a different origin (offset_after)."""
+    saved = e.export_state(offset_before)
+    e2 = Engine(e.tuning)
+    e2.handle(0, LoadState(saved, offset_after))
+    return e2, saved
+
+
+def test_a_crash_loop_is_counted_across_an_ops_restart():
+    e = engine()
+    run(e, crash_events([1000, 1100]))
+    # ops restarts: wall time 1000 was engine time 1000 before (offset 0) and is engine time 0 after (offset 1000)
+    e2, saved = restart(e, 0, 1000)
+    assert saved["ctr:c1"]["dies"] == [[1000, 1], [1100, 1]]
+    out = run(e2, [(150, Seen(running=False, **C)), (151, ReconcileDone({"c1"})), (200, Die(exit_code=1, **C))])
+    assert kinds(out) == ["open"] and "3 crashes" in out[0].signals["crash-loop"]["detail"]
+
+
+def test_the_stopped_grace_period_continues_across_an_ops_restart():
+    e = engine()
+    run(e, [(0, Start(**C)), (10, Stop(**C))])
+    e2, _ = restart(e, 5000, 4900)  # stopped at wall 5010 = new engine time 110
+    run(e2, [(130, Seen(running=False, **C)), (131, ReconcileDone({"c1"}))])
+    assert run(e2, [(169, "tick")]) == []
+    assert kinds(run(e2, [(170, "tick")])) == ["open"]
+
+
+def test_a_saved_container_waits_for_the_reconcile_pass():
+    e = engine()
+    run(e, [(0, Stop(**C))])
+    e2, _ = restart(e, 0, 0)
+    assert e2.ctrs["c1"].known is False
+    assert run(e2, [(500, "tick")]) == []  # stopped "for 500 s" by the saved state, but nobody has looked yet
+    assert run(e2, [(501, Seen(running=True, **C)), (502, ReconcileDone({"c1"})), (600, "tick")]) == []
+
+
+def test_a_saved_container_that_is_gone_is_forgotten():
+    e = engine()
+    run(e, [(0, Stop(**C))])
+    e2, _ = restart(e, 0, 0)
+    out = run(e2, [(10, ReconcileDone(set()))])
+    assert any(a.kind == "forget" for a in out) and e2.ctrs == {} and e2.export_state() == {}
+
+
+def test_a_crash_loops_quiet_period_continues_from_the_saved_last_exit():
+    e = engine(crash_stable_s=600)
+    run(e, crash_events([0, 10, 20]))
+    e2, _ = restart(e, 0, 0)
+    run(e2, [(25, Restore([{"subject": APP, "opened_at": 20, "last_notified_at": 20, "reminders": 0,
+                            "signals": {"crash-loop": {"since": 20, "detail": "x", "cid": "c1"}}}])),
+             (30, Seen(running=True, **C))])
+    assert run(e2, [(619, "tick")]) == []
+    assert kinds(run(e2, [(620, "tick")])) == [("clear_signal", "crash-loop"), "resolve"]
+
+
+def test_low_memory_time_survives_an_ops_restart():
+    e = engine(mem_alert_mb=256, mem_alert_s=300)
+    run(e, [(0, HostSample(50, 10, 100, None))])
+    e2, saved = restart(e, 0, 0)
+    assert saved["host:mem_low_since"] == {"since": 0}
+    assert run(e2, [(200, HostSample(50, 10, 100, None))]) == []
+    assert kinds(run(e2, [(300, HostSample(50, 10, 100, None))])) == ["open"]
+    run(e2, [(400, HostSample(50, 10, 900, None))])
+    assert "host:mem_low_since" not in e2.export_state()
+
+
+def test_only_containers_with_a_timer_are_saved_and_unreadable_rows_are_skipped():
+    e = engine()
+    run(e, [(0, Start(**C)), (1, Start(**TR))])
+    assert e.export_state() == {}
+    e2 = engine()
+    e2.handle(0, LoadState({"ctr:x": {"name": "n"}, "ctr:y": "junk", "host:mem_low_since": {}, "other": 1,
+                            "ctr:c1": {"name": "annex-app-probe", "subject": APP, "stopped_since": 5, "dies": [[4, 1]]}}))
+    assert list(e2.ctrs) == ["c1"] and e2.ctrs["c1"].dies == [(4.0, 1)] and e2.mem_low_since is None
+
+
+# --- the engine's clock is monotonic; the manager converts wall times at the edges (D90) ----------------------
+import annex_ops.incidents as inc  # noqa: E402
+
+
+class FakeClock:
+    def __init__(self, mono, offset):
+        self.mono, self.offset = mono, offset
+
+    def now(self):
+        return self.mono, self.offset
+
+
+class FakeConn:
+    def __init__(self, log):
+        self.log = log
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, args=()):
+        self.log.append((sql, args))
+        return self
+
+    def fetchone(self):
+        return (len(self.log),)
+
+    def fetchall(self):
+        return []
+
+    def cursor(self):
+        return self
+
+
+class FakeOutbox:
+    def __init__(self):
+        self.rows = []
+
+    def add(self, kind, subject, action):
+        self.rows.append((kind, subject, action))
+        return len(self.rows)
+
+
+class FakeState:
+    def __init__(self, saved=None):
+        self.saved, self.writes = saved or {}, []
+
+    def load(self):
+        return self.saved
+
+    def save(self, changed, removed):
+        self.writes.append((changed, removed))
+
+
+def manager(monkeypatch, clock, state=None):
+    sql = []
+    monkeypatch.setattr(inc.db, "connect", lambda: FakeConn(sql))
+    monkeypatch.setattr(inc.config, "tuning", lambda: Tuning())
+    return inc.Manager(outbox=FakeOutbox(), state=state or FakeState(), clock=clock), sql
+
+
+def test_a_wall_clock_step_backwards_doesnt_freeze_reminders(monkeypatch):
+    wall0 = 1_700_000_000.0
+    clock = FakeClock(100.0, wall0 - 100)
+    m, sql = manager(monkeypatch, clock)
+    m.step(HealthState(FRONT_DOOR, True, "no answer"))
+    assert [r[0] for r in m.outbox.rows] == ["open"] and m.outbox.rows[0][2]["opened_at"] == wall0
+    assert any("to_timestamp" in s and wall0 in a for s, a in sql)  # stored in wall time
+    # an hour passes, and NTP steps the wall clock back by an hour: by wall time one second went by
+    clock.mono, clock.offset = 100.0 + 3601, wall0 - 100 - 3600
+    m.step(None)
+    assert [r[0] for r in m.outbox.rows] == ["open", "remind"]
+    assert m.outbox.rows[1][2]["opened_at"] == wall0 and m.outbox.rows[1][2]["duration_s"] == 3601
+
+
+def test_wall_times_in_inputs_are_put_on_the_engines_clock():
+    off = 1_000_000.0
+    assert inc.to_engine_time(Request("x", off + 5, 500), off).ts == 5
+    h = inc.to_engine_time(HostSample(1, 2, 3, off + 10, None), off)
+    assert (h.backup_at, h.dump_at) == (10, None)
+    assert inc.to_engine_time(HookFailing("a", "h", off + 7), off).since == 7
+    assert inc.to_engine_time(Maintenance(APP, off + 900), off).until == 900
+    assert inc.to_engine_time(Maintenance(APP, None), off).until is None
+    s = Stop(**C)
+    assert inc.to_engine_time(s, off) is s
+
+
+def test_a_backup_age_is_measured_in_wall_time_whatever_the_engines_clock(monkeypatch):
+    wall = 1_700_000_000.0
+    m, _ = manager(monkeypatch, FakeClock(50.0, wall - 50))
+    m.step(HostSample(10, 20, 2000, wall - 30 * 3600, None))  # 30 h old: overdue
+    assert [(r[0], r[1]) for r in m.outbox.rows] == [("open", "platform:backup")]
+    assert m.outbox.rows[0][2]["signals"]["backup"]["since"] == wall  # signals go out in wall time
+
+
+def test_engine_state_is_saved_on_change_only_in_wall_time(monkeypatch):
+    state = FakeState()
+    clock = FakeClock(10.0, 1000.0)
+    m, _ = manager(monkeypatch, clock, state)
+    m.step(Die(exit_code=1, **C))
+    assert len(state.writes) == 1
+    changed, removed = state.writes[0]
+    assert changed["ctr:c1"]["last_die"] == 1010.0 and changed["ctr:c1"]["dies"] == [[1010.0, 1]] and removed == []
+    clock.offset += 1e-6  # the offset jitters between passes: not a change
+    m.step(None)
+    m.step(Request("probe", 1011.0, 200))
+    assert len(state.writes) == 1
+    m.step(Destroy("c1", APP))
+    assert state.writes[-1] == ({}, ["ctr:c1"])
+
+
+def test_restore_loads_saved_timers_on_the_new_clock_and_drops_unreadable_rows(monkeypatch):
+    # saved by the last process in wall time: Traefik stopped at wall 1_000_000; this process's clock reads 5 at wall 1_000_050
+    state = FakeState({"ctr:t1": {"name": "annex-traefik-1", "subject": "platform:traefik", "stopped_since": 1_000_000.0,
+                                  "last_die": 1_000_000.0, "dies": []}, "ctr:junk": 7})
+    clock = FakeClock(5.0, 1_000_045.0)
+    m, _ = manager(monkeypatch, clock, state)
+    m.restore()
+    assert m.engine.ctrs["t1"].stopped_since == -45.0 and not m.engine.ctrs["t1"].known
+    m.step(Seen(running=False, **TR))
+    assert m.outbox.rows == []  # stopped 50 s ago by the wall clock; the grace period is 60
+    assert state.writes and state.writes[0][1] == ["ctr:junk"]
+    clock.mono = 25.0
+    m.step(None)
+    assert [(r[0], r[1]) for r in m.outbox.rows] == [("open", "platform:traefik")]
