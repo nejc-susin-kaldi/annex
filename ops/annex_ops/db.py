@@ -5,6 +5,7 @@ back to the pool, which rolls back anything left open and drops a connection tha
 so importing this module (and the unit tests) never touches the network. Background threads and the web threadpool share it;
 when all connections are busy for `POOL_WAIT_S` the caller gets an OpsError 503, never a hang. Size: `OPS_DB_POOL_MAX`
 (ops 4; the console and webhook receiver, separate containers running this same package, 2: compose sets it)."""
+import atexit
 import threading
 from contextlib import ExitStack, contextmanager
 from typing import Iterator
@@ -41,7 +42,15 @@ def _get_pool() -> ConnectionPool:
         with _lock:
             if _pool is None:
                 _pool = _make_pool(config.DATABASE_URL, pool_size())
+                atexit.register(_close)
     return _pool
+
+
+def _close() -> None:
+    """At exit: close quickly. The default waits up to 5 s for the pool's workers, which made a one-shot `ctl` command
+    (a deploy's log drain runs under a 10 s timeout) outlive its caller."""
+    if _pool is not None:
+        _pool.close(timeout=0.5)
 
 
 def stats() -> dict:
