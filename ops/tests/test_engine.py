@@ -168,6 +168,16 @@ def test_job_failure_resolves_on_the_next_good_run_of_the_same_job_only():
     assert kinds(run(e, [(60, JobResult("probe", "check", True))])) == [("clear_signal", "job-failed"), "resolve"]
 
 
+def test_a_job_run_after_the_app_was_removed_opens_nothing():
+    # annex remove: compose down, then the scheduler restarts; a tick in between fails with "No such container" (D100)
+    e = engine()
+    run(e, [(0, Start(**C)), (1, Destroy("c1", APP))])
+    assert run(e, [(2, JobResult("probe", "tick", False, "error creating exec: No such container"))]) == []
+    # deployed again: its jobs count again
+    run(e, [(10, Start(cid="c2", name="annex-app-probe", subject=APP))])
+    assert kinds(run(e, [(20, JobResult("probe", "tick", False, "exit 1"))])) == ["open"]
+
+
 def test_job_incident_is_separate_from_the_app_incident():
     e = engine()
     run(e, [(0, JobResult("probe", "check", False))])

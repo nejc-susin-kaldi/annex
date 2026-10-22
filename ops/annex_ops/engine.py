@@ -258,6 +258,7 @@ class Engine:
         self.hooks_failing: dict[str, dict[str, float]] = {}  # app -> hook -> when it was last reported failing
         self.webhook_restored: dict[str, float] = {}           # apps whose webhook signal came from the database
         self.mem_low_since: float | None = None                # memory below mem_alert_mb since then
+        self.gone_apps: set[str] = set()                       # apps whose last container went (annex remove), until one comes back
 
     # --- plumbing ----------------------------------------------------------
     def _in_maintenance(self, subject: str, now: float) -> bool:
@@ -304,6 +305,7 @@ class Engine:
         if c is None:
             c = self.ctrs[ev.cid] = _Ctr(ev.cid, ev.name, ev.subject, getattr(ev, "ignore_stopped", False))
         c.name, c.subject, c.known = ev.name, ev.subject, True
+        self.gone_apps.discard(app_of(ev.subject) or "")
         return c
 
     def _app_degraded(self, app: str) -> bool:
@@ -382,6 +384,8 @@ class Engine:
                 self._clear(now, subject, "job-failed", out)
             elif self._app_degraded(inp.app):
                 pass  # the app is down: its jobs fail because of that (one problem, one alert); a real job bug shows next run
+            elif inp.app in self.gone_apps and not self._subject_has_container(f"app:{inp.app}"):
+                pass  # the app was removed: a run that fired between `annex remove`'s compose down and the scheduler's restart (D100)
             else:
                 self._raise(now, subject, "job-failed", inp.detail or "the job exited with an error", out)
         elif isinstance(inp, HookFailing):
@@ -570,6 +574,7 @@ class Engine:
             for name in list(self.signals.get(s, {})):
                 self._clear(now, s, name, out, quiet=True)
         if app and subject.startswith("app:"):
+            self.gone_apps.add(app)
             self.hooks_failing.pop(app, None)
             self.webhook_restored.pop(app, None)
             self.requests.pop(app, None)
