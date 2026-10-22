@@ -307,7 +307,7 @@ def platform_label_offenders(labels: dict | None, app: str) -> list[str]:
     com.kaldi.annex=true and com.kaldi.annex.app=<app>, which land on the image too: those two are fine."""
     allowed = {"com.kaldi.annex": "true", "com.kaldi.annex.app": app}
     return sorted(k for k, v in (labels or {}).items()
-                  if k.startswith(PLATFORM_LABEL_PREFIXES) and allowed.get(k) != v)
+                  if k.lower().startswith(PLATFORM_LABEL_PREFIXES) and allowed.get(k) != v)
 
 
 def _build(r: Remote, m: mf.Manifest, image: str) -> None:
