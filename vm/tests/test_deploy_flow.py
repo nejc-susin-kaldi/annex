@@ -34,7 +34,7 @@ class Deploy(Base):
     def test_the_source_is_unpacked_and_the_compose_file_is_json_compose_reads(self):
         lines, _ = self.go("deploy", deploy_stdin(manifest()))
         d = self.base / "deploy" / "demo"
-        self.assertEqual(sorted(p.name for p in (d / "src").iterdir()), ["Dockerfile", "app.py"])
+        self.assertEqual(sorted(p.name for p in (d / "src").iterdir()), ["Dockerfile", "annex.yaml", "app.py"])
         self.assertFalse((d / "src.new").exists())
         compose = json.loads((d / "compose.yaml").read_text())
         self.assertEqual(compose["services"]["demo"]["image"], "annex-app/demo:r1")

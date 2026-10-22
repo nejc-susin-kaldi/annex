@@ -91,12 +91,45 @@ def source_tar(files=None) -> bytes:
     return buf.getvalue()
 
 
-def deploy_stdin(m, overrides=None, tar=None) -> io.BytesIO:
-    meta = {"line": {"manifest": m.to_dict(), "deployed_at": "2026-10-22T11:00:00.000+02:00",
-                     "deployed_by": "kim@mac", "via": "cli", "source": "~/apps/demo", "git": None, "snapshot": None}}
+def yaml_for(m) -> str:
+    """The annex.yaml that loads as manifest m (the keys are the file's, not the dataclass's)."""
+    raw = {"name": m.name, "owner": m.owner, "description": m.description, "type": m.type}
+    if m.port is not None:
+        raw.update(port=m.port, healthcheck=m.healthcheck)
+    raw["storage"] = {"postgres": m.postgres, "files": m.files}
+    if m.views:
+        raw["data"] = {"views": m.views}
+    if m.schedule:
+        raw["schedule"] = [{"name": j.name, "cron": j.cron, "command": j.command} for j in m.schedule]
+    raw.update(env=m.env, secrets=m.secrets, egress=m.egress)
+    if m.notify_email or m.notify_slack:
+        raw["notify"] = {"email": m.notify_email, "slack": m.notify_slack}
+    if m.webhooks:
+        raw["webhooks"] = [{"name": w.name, "path": w.path, "verify": w.verify, "secret": w.secret} for w in m.webhooks]
+    if m.alerts_to != ["owner"]:
+        raw["alerts"] = {"to": m.alerts_to}
+    if m.memory_mb != dep.mf.MEMORY_DEFAULT_MB:
+        raw["resources"] = {"memory": f"{m.memory_mb}m"}
+    import yaml
+    return yaml.safe_dump(raw, sort_keys=False)
+
+
+def deploy_meta(m, **extra) -> dict:
+    line = {"manifest": m.to_dict(), "deployed_at": "2026-10-22T11:00:00.000+02:00",
+            "deployed_by": "kim@mac", "via": "cli", "source": "~/apps/demo", "git": None, "snapshot": None}
+    return {"line": line, **extra}
+
+
+def deploy_stdin(m, overrides=None, tar=None, cli=None) -> io.BytesIO:
+    """The meta line and the source (by default the files a build needs plus the annex.yaml that loads as m)."""
+    meta = deploy_meta(m)
     if overrides:
         meta["overrides"] = overrides
-    return io.BytesIO(json.dumps(meta).encode() + b"\n" + (source_tar() if tar is None else tar))
+    if cli is not None:
+        meta["cli"] = cli
+    if tar is None:
+        tar = source_tar({"Dockerfile": "FROM scratch\nUSER 10001\n", "app.py": "print('hi')\n", "annex.yaml": yaml_for(m)})
+    return io.BytesIO(json.dumps(meta).encode() + b"\n" + tar)
 
 
 class Base(unittest.TestCase):
