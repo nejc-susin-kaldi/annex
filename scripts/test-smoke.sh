@@ -17,6 +17,8 @@ py() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 echo "Local"
 "$ROOT/scripts/sync-runtime.sh" --check >/dev/null && ok "runtime helpers: every copy matches runtime/" \
   || bad "runtime helpers" "a copy differs: scripts/sync-runtime.sh"
+"$ROOT/scripts/sync-contract.sh" --check >/dev/null && ok "contract summaries: every copy matches contract.md" \
+  || bad "contract summaries" "a copy is stale: scripts/sync-contract.sh"
 out=$(cd "$ROOT" && uv run --quiet --python 3.13 --with-requirements ops/requirements.txt --with pytest pytest ops/tests -q 2>&1 | tail -1)
 has "annex-ops unit tests" " passed" "$out"
 (cd "$ROOT" && python3 -m unittest discover -s vm/tests -q >/dev/null 2>&1) && ok "annex_vm unit tests" || bad "annex_vm unit tests" "failed"

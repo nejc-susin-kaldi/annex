@@ -97,12 +97,15 @@ async def annex_status(app: str) -> str:
 
 @server.tool()
 async def annex_logs(app: str, tail: int = 100, since: str | None = None, release: str | None = None,
-                     level: str | None = None, grep: str | None = None, request: str | None = None) -> str:
+                     level: str | None = None, grep: str | None = None, request: str | None = None,
+                     source: str = "app") -> str:
     """An app's logs, stored for 14 days: they outlive the container, so a rolled-back release's lines are still
     here. tail: the last N matching lines; since: e.g. '10m', '2h' or '7d'; release: e.g. 'r4'; level: debug,
     info, warn or error (this level and above); grep: text in the message or fields; request: a request id (from
-    the X-Request-Id response header or another log line). Each line shows time, release, level, message and fields."""
-    return await _call(ops.logs, app, tail, since, release, level, grep, request)
+    the X-Request-Id response header or another log line); source: which stored stream, 'app' (the app's own lines, default), 'gateway' (the data gateway's lines
+    about this app) or 'all'.
+    Each line shows time, release, level, message and fields."""
+    return await _call(ops.logs, app, tail, since, release, level, grep, request, source)
 
 
 @server.tool()

@@ -861,3 +861,24 @@ It takes about 63 MB on disk and seeds in under a minute.
 **Tests.** `runtime/tests/test_csrf.py` and `csrf.test.mjs` (both runtimes: headerless, safe methods, each `Sec-Fetch-Site` value, own-host and sibling `Origin`, port, `null`, forwarded host, webhook-delivery headers, opt-out values, the middleware answering 403 or passing); `cli/tests/test_manifest_env.py` (`ANNEX_CSRF` values, other `ANNEX_` names still refused); `cli/tests/test_contract.py` (the section is core). `scripts/test-apps.sh` "Cross-site requests": through the front door with a login, a foreign `Origin` plus `cross-site`, a foreign `Origin` alone and `same-site` get 403, same-origin and headerless POSTs pass (404 from a probe path), a cross-site GET is untouched. Not run here (VM): `test-apps.sh`.
 
 **Prod:** per-app session cookies (a host-only cookie per app) or an origin check in the front door, once the IdP is decided (production item 13); this runtime check stays as the second layer.
+
+## D94. Contract and runtime versions; generated summaries in the agent-facing copies (22 Oct, hardening C4)
+**What.**
+- **`ANNEX_CONTRACT_VERSION: 1`** is the second line of `cli/src/annex_cli/contract.md` (the title lost its old "v0"); it is part of the core, so every agent sees it. `docs/app-contract.md` is a symlink to `contract.md`, so there is nothing to copy there (the plan's "copy" step is not needed). Raise it when a rule changes in a way an existing app would notice.
+- **`__version__ = 1`** in `runtime/annex_runtime.py` and `export const __version__ = 1` in `annex_runtime.js` (synced to every copy by `sync-runtime.sh`). Raise it when a helper is added or changed.
+- **The deploy records both** in the release dict the CLI builds: `contract_version` and `runtime` (`{"annex_runtime.py": 1}`, per helper file the app folder carries; an old copy without a version is 0). Only the dict was extended, not how `releases.jsonl` is written (C1 moves that to the VM).
+- **The runtime warning** now reads "your runtime is v1, the current one is v2" (a copy without a version: "v0 (before versions)"); a copy of the current version that was edited gets its own wording, a newer one a third. Pure functions `runtime_version`, `runtime_message`, `runtime_versions`, `contract_version` in `ops.py`.
+- **`scripts/sync-contract.sh`** (`--check` in `test-all.sh` and `test-smoke.sh`) regenerates a summary between `<!-- contract:begin -->` and `<!-- contract:end -->` in `skills/annex/SKILL.md` and each `templates/*/AGENTS.md`: the version, the core section headings and the topics with their descriptions (read from `CONTRACT_TOPICS` in `ops.py` by `ast`, so no dependencies). It does not copy rules: the copies say "run `annex contract`". `SKILL.md`'s "Rules that matter" stays as a digest and is marked "the contract wins".
+- **MCP `annex_logs`** gets `source` (`app`, `gateway`, `all`), which `ops.logs` and the CLI already had.
+
+**Why.** An app's copy of the runtime could only be called "different"; an agent can't tell whether that is old, edited or newer. Rules copied by hand into the skill and four AGENTS.md files had already drifted (D74, D91 each touched several). A short generated block can't drift and costs nothing to keep.
+
+**Alternatives.** Copy the whole core into each AGENTS.md (large, and the topics system exists to avoid that); a semantic version string (an integer is enough: only "older or not" is asked); a hash of the runtime (no ordering, no message).
+
+**Limits.** The runtime version is raised by hand: a change that forgets to is not detected (the byte comparison still warns, as "same version, file differs"). Rollback releases don't carry the two fields. Existing deployed releases have none.
+
+**Tests.** `cli/tests/test_versions.py` (version line, parsing, the message for old, unversioned, newer, edited and equal, folder scan; topics and core unchanged); `sync-contract.sh --check` and `sync-runtime.sh --check` green. Not run here (VM): `test-smoke.sh`, a deploy with an old runtime copy.
+
+**Prod:** the version pair goes into the image's labels and the release record in the registry pipeline.
+
+

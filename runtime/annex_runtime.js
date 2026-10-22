@@ -5,6 +5,8 @@ import { readFileSync } from "node:fs";
 // Helpers for the Annex app contract: identity, logging, the data gateway, email, Slack and incoming webhooks.
 // Keep this file as is.
 
+export const __version__ = 1; // raised when a helper is added or changed; a deploy tells you when your copy is older
+
 /**
  * The signed-in user, from the headers Annex's front door sets (and strips from clients). Trustworthy only on the
  * front-door path, which is the only way a request reaches the app: apps can't reach each other (each is on its own

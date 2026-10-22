@@ -23,6 +23,7 @@ done
 suites=(
   "smoke|scripts/test-smoke.sh"
   "runtime|scripts/sync-runtime.sh --check"
+  "contract|scripts/sync-contract.sh --check"
   "unit|uv run --quiet --python 3.13 --with-requirements ops/requirements.txt --with pytest pytest ops/tests -q"
   "vm-unit|python3 -m unittest discover -s vm/tests -q"
   "cli-unit|env PYTHONPATH=cli/src python3 -m unittest discover -s cli/tests -q"
