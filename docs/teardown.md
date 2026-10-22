@@ -6,6 +6,8 @@ When the demo stage is over. Steps 1–3 come from the brief; build-specific ite
 - Push the repo to GitHub, if that hasn't happened. Nejc adds the remote; `.env` and `.build/` are gitignored and stay local.
 - Optionally copy anything you want from the VM first, e.g. `scripts/backup.sh` and then `scp annex:/srv/annex/backups/<archive> .`. Everything on the VM is synthetic.
 
+*(build)* App networks (`annex-app-<app>`, `annex-egress-<app>`, D88) carry the label `com.kaldi.annex=true`, so `scripts/wipe-vm.sh` removes them with the other networks (it removes the containers first); `annex remove` removes an app's networks on its own. Nothing outside Docker was changed for them (no `daemon.json`).
+
 ## 1. Destroy the VM
 On `dronky`, as `neon`. This deletes the disk and its snapshot.
 ```bash
