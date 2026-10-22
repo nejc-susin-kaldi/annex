@@ -23,6 +23,16 @@ page=$(c -b "$TMP/sam.jar" "$APP_URL/" | text)
 has "greets sam by name" "Hello, Sam Novak" "$page"
 has "greets cm by name" "Hello, Maja Horvat" "$(c -b "$TMP/cm.jar" "$APP_URL/" | text)"
 
+echo "Cross-site requests (A4: the runtime refuses state-changing requests from other sites)"
+# /csrf-probe doesn't exist: 404 means the request got past the check, 403 means the check refused it
+post() { c -b "$TMP/sam.jar" -o /dev/null -w '%{http_code}' -X POST "$@" "$APP_URL/csrf-probe"; }
+[ "$(post -H 'Origin: https://evil.example' -H 'Sec-Fetch-Site: cross-site')" = 403 ] && ok "POST with a foreign Origin and cross-site is refused (403)" || bad "foreign Origin + cross-site refused" "not 403"
+[ "$(post -H 'Origin: https://evil.example')" = 403 ] && ok "POST with only a foreign Origin is refused" || bad "foreign Origin refused" "not 403"
+[ "$(post -H 'Sec-Fetch-Site: same-site')" = 403 ] && ok "POST from a sibling app (same-site) is refused" || bad "same-site refused" "not 403"
+[ "$(post -H "Origin: $APP_URL" -H 'Sec-Fetch-Site: same-origin')" = 404 ] && ok "same-origin POST still works" || bad "same-origin POST" "not let through"
+[ "$(post)" = 404 ] && ok "POST without Origin (curl, server to server) still works" || bad "headerless POST" "not let through"
+[ "$(c -b "$TMP/sam.jar" -o /dev/null -w '%{http_code}' -H 'Sec-Fetch-Site: cross-site' "$APP_URL/healthz")" = 200 ] && ok "cross-site GET is not touched" || bad "cross-site GET" "refused"
+
 echo "Scoped data access"
 has "granted view client_summary is readable" "client_summary : allowed" "$page"
 has "granted view top_clients_by_aum is readable" "top_clients_by_aum : allowed" "$page"

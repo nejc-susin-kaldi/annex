@@ -78,6 +78,9 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `mail`, `ops`, `s
 - **Health gate.** Every deploy is a numbered release (`r1`, `r2`, …). A web app's new release must return 200 on its `healthcheck` within 60 s (a job-only app must keep running). If it doesn't, Annex switches back to the previous release automatically, and the deploy fails with the new release's last log lines. Your database and `/data` are left as they are, and so are any changes the failed release made to them.
 - **Jobs** run inside the app's container with the same environment (`docker exec`). In `type: job`, the container idles (`sleep infinity`) between runs. Trigger a job by hand with `annex run <app> <job>`. A job's exit code and output are its result.
 
+## Cross-site requests
+One session cookie serves every app, so a page of another app, or any website, can make a signed-in user's browser send a state-changing request to your app with their identity. Your app must refuse those: a `POST`, `PUT`, `PATCH` or `DELETE` is rejected (403) when its `Sec-Fetch-Site` header is anything but `same-origin` or `none`, or when its `Origin` header is present and is not the app's own host. Requests with neither header (curl, another server, Annex's webhook delivery) are allowed. The templates already do this with the runtime's `CsrfMiddleware` (Python) or `csrfGuard` (Node): keep it on. In another stack, call the runtime's `csrf_violation` first in every handler, or write the same check. An app that other sites' pages call on purpose sets `env: {ANNEX_CSRF: "off"}` (quoted, or YAML reads it as false) and must then authenticate those calls itself; say why in the app's README. Reads (`GET`) must not change anything.
+
 ## Email and Slack
 Never run an SMTP client or hold a Slack token. Declare `notify:` in `annex.yaml`; Annex injects `ANNEX_OPS_URL` and an `ANNEX_OPS_TOKEN` that can do exactly what you declared. The python and node templates ship helpers (`send_email`, `post_slack` / `sendEmail`, `postSlack`); the raw API is below.
 - `POST $ANNEX_OPS_URL/v1/email` with `Authorization: Bearer $ANNEX_OPS_TOKEN` and JSON `{"to": ["cm", "sam@annex.example"], "subject": "Report ready", "template": "notice", "data": {"title": "...", "body": "...", "link": "https://...", "link_text": "Open"}}`. Instead of `template`+`data`, give `text` or `html` (exactly one of the three). Answers `{"id", "to": [resolved addresses]}`.
@@ -149,7 +152,8 @@ If the deploy rejects something, the error says what to change.
 |---|---|
 | `PORT` | web, web+job |
 | `ANNEX_APP_NAME`, `ANNEX_BASE_URL` | always (`ANNEX_BASE_URL` is the app's public URL) |
-| `LOG_LEVEL` | always (default `info`; the one injected name you may override under `env:`: debug, info, warn or error) |
+| `LOG_LEVEL` | always (default `info`; you may override it under `env:`: debug, info, warn or error) |
+| `ANNEX_CSRF` | not injected; set `"off"` under `env:` to turn off the runtime's cross-site check (see Cross-site requests) |
 | `DATABASE_URL` | `storage.postgres: true` (`postgres://…@appdata-db:5432/app_<name>`) |
 | `DATA_DIR=/data` | `storage.files: true` |
 | `ANNEX_GATEWAY_URL`, `ANNEX_GATEWAY_TOKEN` | `data.views` is not empty |

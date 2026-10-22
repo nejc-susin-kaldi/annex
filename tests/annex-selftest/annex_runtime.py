@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -41,6 +41,53 @@ def current_user(headers) -> User:
         email=headers.get("remote-email", ""),
         groups=[g for g in headers.get("remote-groups", "").split(",") if g],
     )
+
+
+# --- Cross-site requests (`annex contract`, "Cross-site requests") ---------------------------------
+# One session cookie serves every app, so a page of another app (or any site) could make the user's browser POST
+# to yours with their identity. Browsers say where a request comes from: refuse state-changing requests whose
+# Sec-Fetch-Site is not same-origin/none, or whose Origin is not this app's own host. Requests with neither header
+# (curl, server to server, Annex's webhook delivery) pass. Enable it with `app.add_middleware(CsrfMiddleware)`
+# (FastAPI/Starlette), or call csrf_violation(method, headers) first in every handler of another framework and answer
+# 403 when it returns text. ANNEX_CSRF: "off" (under env: in annex.yaml) turns it off for an app that other sites call on purpose.
+_STATE_CHANGING = ("POST", "PUT", "PATCH", "DELETE")
+
+
+def csrf_violation(method: str, headers) -> str | None:
+    """Why this request must be refused (a short text), or None. `headers` has case-insensitive keys (Starlette's
+    request.headers, http.server's self.headers)."""
+    if method.upper() not in _STATE_CHANGING or os.environ.get("ANNEX_CSRF", "").strip().lower() in ("off", "false", "0", "no"):
+        return None
+    site = (headers.get("sec-fetch-site") or "").strip().lower()
+    if site and site not in ("same-origin", "none"):
+        return f"Sec-Fetch-Site is {site}"
+    origin = headers.get("origin")
+    if origin is not None:
+        own = {(headers.get("host") or "").strip().lower(),
+               (headers.get("x-forwarded-host") or "").split(",")[0].strip().lower()} - {""}
+        if urlparse(origin.strip()).netloc.lower() not in own:
+            return f"Origin {origin[:100]} is not this app"
+    return None
+
+
+class CsrfMiddleware:
+    """ASGI middleware (FastAPI, Starlette): answers 403 to a cross-site state-changing request (csrf_violation)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in scope["headers"]}
+            why = csrf_violation(scope["method"], headers)
+            if why:
+                log.warn("cross-site request refused", method=scope["method"], path=scope["path"], why=why)
+                body = b"Cross-site request refused"
+                await send({"type": "http.response.start", "status": 403,
+                            "headers": [(b"content-type", b"text/plain"), (b"content-length", str(len(body)).encode())]})
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)
 
 
 # --- Logging: one JSON object per line on stdout (`annex contract logging`) ----------------------

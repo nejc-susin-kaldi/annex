@@ -11,9 +11,11 @@ import uvicorn
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
-from annex_runtime import GatewayError, browser_errors_js, current_user, gateway, log, report_browser_error, request_context
+from annex_runtime import (CsrfMiddleware, GatewayError, browser_errors_js, current_user, gateway, log,
+                           report_browser_error, request_context)
 
 app = FastAPI(title="client-lookup")
+app.add_middleware(CsrfMiddleware)  # refuses state-changing requests from other sites (contract: Cross-site requests)
 
 @app.middleware("http")
 async def request_log(request: Request, call_next):
