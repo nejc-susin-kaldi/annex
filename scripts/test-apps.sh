@@ -59,4 +59,19 @@ pout=$(selftest_deploy "$ROOT/.build/selftest-plain") && ok "an app that logs wi
 has "  ...with the warning" "logs aren't structured" "$pout"
 has "  ...that says how to fix it" "use \`log\` from annex_runtime.py" "$pout"
 "$ANNEX" remove annex-selftest-plain --yes >/dev/null 2>&1 && ok "annex-selftest-plain removed" || bad "annex-selftest-plain removed" "failed"
+
+echo "Build limits (D95)"
+BIG=annex-selftest-big
+on_exit "selftest_remove $BIG"
+selftest_build "$ROOT/.build/selftest-big" --name $BIG --drop notify,webhooks --big-file 120
+if out=$(ANNEX_IMAGE_MAX_MB=100 selftest_deploy "$ROOT/.build/selftest-big"); then bad "an image above the cap is refused" "deploy succeeded: $(tail -3 <<<"$out")"
+else has "an image above the cap is refused, naming the size and the limit" "limit of 100 MB" "$out"; has "  ...and what to do" "slim base image" "$out"; fi
+expect "the refused image is removed" "" "$(vm "docker image ls -q annex-app/$BIG")"
+expect "the refused release is recorded as failed" "failed" "$("$ANNEX" --json releases $BIG | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["result"])')"
+out=$(ANNEX_BUILD_MIN_FREE_GB=100000 selftest_deploy "$ROOT/.build/selftest-big") && bad "a build with too little free disk is refused" "deploy succeeded" \
+  || has "a build with too little free disk is refused, naming docker system df" "docker system df" "$out"
+selftest_build "$ROOT/.build/selftest-big" --name $BIG --drop notify,webhooks
+out=$(selftest_deploy "$ROOT/.build/selftest-big") && ok "the normal fixture deploys under the default limits ($BIG)" \
+  || bad "the normal fixture deploys under the default limits ($BIG)" "$(tail -3 <<<"$out")"
+expect "the app container has a process limit of 256" "256" "$(vm "docker inspect -f '{{.HostConfig.PidsLimit}}' annex-app-$BIG")"
 finish

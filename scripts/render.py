@@ -95,6 +95,9 @@ def derive(env: dict[str, str]) -> dict[str, str]:
         "ANNEX_ALERT_SLACK_CHANNEL": env.get("ANNEX_ALERT_SLACK_CHANNEL", "#annex-alerts"),
         # per-app networks (D88): read by vm/annex_vm.py networks-sync from the platform .env
         "ANNEX_APP_SUBNETS": app_subnets,
+        # build limits (D95), read by the CLI from the platform .env; empty = the CLI's defaults (3 GB, 2048 MB)
+        "ANNEX_BUILD_MIN_FREE_GB": env.get("ANNEX_BUILD_MIN_FREE_GB", ""),
+        "ANNEX_IMAGE_MAX_MB": env.get("ANNEX_IMAGE_MAX_MB", ""),
         # what annex-ops (inside the VM) requests to check the front door: no port suffix
         "ANNEX_FRONTDOOR_URL": ("https" if mode == "local" else "http") + "://" + pattern.replace("{name}", "home") + "/",
     }

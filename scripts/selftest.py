@@ -86,6 +86,9 @@ def build(a: argparse.Namespace) -> None:
         k, _, v = kv.partition("=")
         y = set_env(y, k, v)
     (out / "annex.yaml").write_text(y)
+    if a.big_file:  # D95: an image bigger than the cap; random data, so no layer compression hides it
+        df = out / "Dockerfile"
+        df.write_text(df.read_text().replace("USER 10001\n", f"RUN head -c {int(a.big_file) * 1024 * 1024} /dev/urandom > /opt/big.bin\nUSER 10001\n", 1))
     if a.evil_label:
         df = out / "Dockerfile"
         label = "LABEL traefik.http.routers.evil.rule=Host(`evil.example`)\n"
@@ -103,6 +106,7 @@ def main() -> None:
     b.add_argument("--job-only", action="store_true")
     b.add_argument("--broken-health", action="store_true")
     b.add_argument("--evil-label", action="store_true")
+    b.add_argument("--big-file", type=int, metavar="MB")
     b.add_argument("--no-postgres", action="store_true")
     b.add_argument("--no-views", action="store_true")
     b.add_argument("--views")
