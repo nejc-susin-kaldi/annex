@@ -78,7 +78,8 @@ The archive contains the secrets: copy it only to places that may hold them, and
 2. **Put the archive on the VM** (`scp annex-<time>.tar.gz annex:/srv/annex/backups/`; `chmod 700 /srv/annex/backups`, `chmod 600` the archive).
 3. **Unpack the files** (sudo, so the owners in the archive are kept: ops runs as uid 10001 and reads `secrets/hooks` and `state/directory`):
    ```
-   ssh annex 'cd /srv/annex && sudo tar -xzpf backups/annex-<time>.tar.gz --strip-components=1 --same-owner backup/secrets backup/state backup/apps backup/dumps'
+   ssh annex 'cd /srv/annex && sudo tar -xzpf backups/annex-<time>.tar.gz --strip-components=1 --same-owner /backup/secrets /backup/state /backup/apps /backup/dumps'
+   (The archive's member names start with `/backup/`; tar strips the leading slash with a notice. Checked on the VM on 22 Oct: secrets identical to the live ones, the dumps readable by `pg_restore --list`.)
    ```
    `secrets/` is now the old VM's. `.env` keeps the old values too if you restore the same `.env` on the Mac (`ANNEX_*` settings, domain, TLS mode).
 4. **Bootstrap and push.** `scripts/bootstrap.sh` (it never replaces an existing secret, so it only fills the layout and reissues the certificate), then `scripts/push.sh`. The platform starts empty; Authelia has the old users and the apps' secrets are in place.
@@ -93,7 +94,7 @@ The archive contains the secrets: copy it only to places that may hold them, and
 
 **Try it without touching the VM's data (a scratch directory).** Same unpack with a different target, plus a throwaway Postgres on the dumps:
 ```
-ssh annex 'mkdir -p /srv/annex/restore-scratch && cd /srv/annex/restore-scratch && sudo tar -xzpf ../backups/annex-<time>.tar.gz --strip-components=1 --same-owner backup/secrets backup/state backup/apps backup/dumps'
+ssh annex 'mkdir -p /srv/annex/restore-scratch && cd /srv/annex/restore-scratch && sudo tar -xzpf ../backups/annex-<time>.tar.gz --strip-components=1 --same-owner /backup/secrets /backup/state /backup/apps /backup/dumps'
 ssh annex 'cd /srv/annex && sudo diff -rq secrets restore-scratch/secrets'          # only changes since the archive was taken
 ssh annex 'cat /srv/annex/restore-scratch/dumps/current/MARKER'
 ssh annex 'docker run -d --rm --name annex-restore-scratch -e POSTGRES_PASSWORD=scratch --network none postgres:16.15-alpine3.24'
