@@ -778,3 +778,25 @@ It takes about 63 MB on disk and seeds in under a minute.
 **Tests.** `ops/tests/test_host.py`: the engine rule (open, exact-day boundary, no repeat, clear, joining the overdue incident, unreadable marker), marker parsing, `path_read` on a fake tar. Not run here (VM): a backup, the archive's contents and mode, the scratch restore.
 
 **Prod:** archives to S3 with offen's GPG encryption and a key outside the VM; secrets in a secrets manager make this moot for most of `secrets/`.
+
+## D89. Log shipper: the cap before the parse, inserts only on the sink thread (22 Oct, hardening B6)
+**What.**
+- `ContainerHandler` and `JobOutput` now work in this order: line in the retention window, replay check (`Recent`, on a hash of the raw line: `logship.line_hash`, the same value `make_row` stores in `h`), **rate cap**, **parse**, row. The cap only needs `ns`, so a flood costs a hash and a counter per line instead of a JSON parse and the scrubbing regexes. The dropped-lines row is built as before (same text, same `fields`, same timestamp, one per flooded second, `flush_drops` for a flood that stops). Its `app` is now the container's own app (it used to be the app of the line that carried the report; only the gateway's cap differs, where that line could be any app's).
+- `logstore.Sink.add` only enqueues (a full batch just wakes the sink thread). The sink thread (`log-sink`, B1's beat and gauge unchanged) makes every insert, once a second or at once when woken. A slow `INSERT` stalls the sink thread and nobody else; followers go on reading and the budgets of D86 bound the buffer, with the same `lost` counter.
+- `Sink.flush(timeout=5)` (the follower's `before_save`) no longer inserts inline: it wakes the sink thread and waits until every row added **before the call** is stored. It returns **False** on timeout and as soon as an insert attempt fails, and then `Follower._save_exact` skips the cursor save, so the cursor stays on the last stored line and a restart replays from there.
+- Cursor-safety invariant: rows are numbered as they are added (`added`); a successful insert sets `stored` to the number that was last in the batch it took; `flush` is True only when `stored >= added-at-call`. A row added while a batch is in flight is not covered by that batch. A failed batch goes back to the front of the buffer and `stored` does not move. Rows the budget trims are gone for good and counted (`lost`), so they no longer hold a flush back (as before: the cursor moves past them).
+- A sink with no thread (`ctl logs-drain` makes its own) still inserts inline in `flush()`; `drain` flushes every 500 lines, as `add` used to.
+
+**Why.** The cap sat after the parse, so a chatty container made ops parse and scrub every line it was about to drop. And `add` inserted inline once 500 rows were waiting, on the follower's own thread: a slow database stalled the reader of one container's log (and, through `before_save`, the same again at every cursor save), until Docker's pipe backed up into the container.
+
+**Alternatives.**
+- Cap before the replay check: a replay after a restart (the follower re-reads a margin) would count against the cap and could cut genuine lines of that second.
+- A cap check that skips counting lines the parser would drop: needs the parse, which is the cost to avoid. Lines that parse to nothing (empty, the ops health-check lines) now count; they are a handful a minute, and a flood of noise is still a flood.
+- `flush()` waiting without a timeout: a database outage would park every follower; with the timeout and the early False on a failed insert they come back, skip the save and read on.
+- A bounded queue that blocks `add` when full: that is the stall again; the budget drops the oldest instead (D86).
+
+**Not done.** `flush_drops` and the dropped rows still depend on the shipper thread's one-second tick, as before. A lost row (budget) is still not recovered from Docker's log.
+
+**Tests.** `ops/tests/test_logship.py` (5 new): the parser is not called for lines over the cap (container and job output), the dropped-lines row, replays don't count, parser-dropped lines do count, a cursor is not saved while the sink's insert is in flight and is saved after. `ops/tests/test_logstore.py` (7 new): `add` never touches the database, `flush` waits for the thread and only the thread inserts, timeout, early False on a failed insert, rows added during an insert are not covered, budget-dropped rows don't block, threadless inline flush. Not run here (VM): `scripts/test-logs.sh` (section 5 restart without gap or duplicates, section 6 the cap) and the drain check.
+
+**Prod:** a log pipeline with its own disk buffer (Vector or Fluent Bit) instead of in-process buffers.

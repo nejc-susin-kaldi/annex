@@ -1,5 +1,6 @@
 """Log shipping's decisions: parsing, secrets, the rate cap, what is shipped (M2.2). All pure: no database, no Docker."""
 import json
+import threading
 import time
 
 from annex_ops import docker_api, engine as eng, logship as ls, logstore, watch_docker
@@ -257,3 +258,105 @@ def test_the_shipper_starts_a_follower_that_ended_again_and_leaves_a_stopped_one
     shipper.revive()                       # throttled: not again within 5 s
     assert started == ["in-dead"]
     assert shipper.status() == {"followers": 3, "waiting": 0}
+
+
+# --- B6: the cap before the parse, and the sink off the follower's thread ---------------------------------------
+def _handler(monkeypatch, limit, parse=None):
+    sink = logstore.Sink(max_rows=10**6, max_bytes=10**9)
+    calls = []
+
+    def counting(raw):
+        calls.append(raw)
+        return ls.parse_app_line(raw)
+
+    monkeypatch.setattr(ls.config, "log_settings", lambda: ls.LogSettings(log_rate_per_s=limit))
+    h = ls.ContainerHandler(ls.Spec("app", parse or counting), "app-x-1", "x", 3, sink)
+    return h, sink, calls
+
+
+def test_the_rate_cap_runs_before_the_parse(monkeypatch):
+    h, sink, calls = _handler(monkeypatch, 3)
+    base = (int(time.time()) - 5) * 10**9
+    for i in range(10):
+        h(base + i, "stdout", f"line {i}")
+    assert len(calls) == 3                       # the seven over the cap were never parsed
+    h(base + 10**9, "stdout", "next second")     # the next second reports the drops
+    msgs = [r.msg for r in sink.buf]
+    assert [m for m in msgs if m.startswith("line")] == ["line 0", "line 1", "line 2"]
+    dropped = [r for r in sink.buf if r.msg.startswith("annex-ops dropped 7 log line(s)")]
+    assert len(dropped) == 1 and dropped[0].fields == {"dropped": 7, "limit_per_s": 3} and dropped[0].app == "x"
+    assert "next second" in msgs
+
+
+def test_a_replayed_line_does_not_count_against_the_cap(monkeypatch):
+    h, sink, calls = _handler(monkeypatch, 2)
+    ns = (int(time.time()) - 5) * 10**9
+    for _ in range(5):
+        h(ns, "stdout", "same line")             # a follower replaying its margin after a restart
+    h(ns + 1, "stdout", "another")
+    assert [r.msg for r in sink.buf] == ["same line", "another"]
+
+
+def test_lines_the_parser_drops_still_count_toward_the_cap(monkeypatch):
+    h, sink, calls = _handler(monkeypatch, 2, parse=lambda raw: None)
+    base = (int(time.time()) - 5) * 10**9
+    for i in range(6):
+        h(base + i, "stdout", f"noise {i}")
+    h(base + 10**9, "stdout", "x")
+    assert [r.msg for r in sink.buf] == ["annex-ops dropped 4 log line(s) of this container: it wrote more than 2 lines in one second"]
+
+
+def test_job_output_is_capped_before_the_parse_too(monkeypatch):
+    monkeypatch.setattr(ls.config, "log_settings", lambda: ls.LogSettings(log_rate_per_s=2))
+    sink = logstore.Sink(max_rows=10**6, max_bytes=10**9)
+    rel = ls.Releases()
+    rel.by_app["x"] = 1
+    j = ls.JobOutput(sink, rel)
+    j.jobs = {"app-x.job.tick": ("x", "tick")}
+    j.refreshed = time.time()
+    calls = []
+    real = ls.parse_app_line
+    monkeypatch.setattr(ls, "parse_app_line", lambda t: calls.append(t) or real(t))
+    base = (int(time.time()) - 5) * 10**9
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 5))
+    j(base, "stdout", f'{stamp} [Job "app-x.job.tick" (abc)] StdOut: first')
+    for i in range(1, 6):
+        j(base + i, "stdout", f"bare {i}")
+    assert len(calls) == 2 and [r.msg for r in sink.buf] == ["first", "bare 1"]
+
+
+def _row_for_test():
+    return ls.make_row(int(time.time()) * 10**9, "stdout", "x", ls.Parsed("info", "x"), "c", "x", 1, "c")
+
+
+def test_a_cursor_is_not_saved_past_lines_the_sink_has_not_stored(monkeypatch):
+    from annex_ops import follow_logs
+    release, entered = threading.Event(), threading.Event()
+
+    def slow_insert(rows, known):
+        entered.set()
+        release.wait(5)
+        return 0
+
+    monkeypatch.setattr(logstore, "insert_rows", slow_insert)
+    sink = logstore.Sink(max_rows=100, max_bytes=10**6)
+    sink.threaded = True            # as if its thread ran; the test drives it by hand
+    saved = {}
+
+    class Store:
+        def set(self, key, ts):
+            saved[key] = ts
+
+    f = follow_logs.Follower("c", lambda *a: None, Store(), key="ship:c:1", exact=True,
+                             before_save=lambda: sink.flush(0.2))
+    sink.add(_row_for_test())
+    t = threading.Thread(target=sink._insert_pending)
+    t.start()
+    assert entered.wait(2)
+    start = time.monotonic()
+    f._save_exact(123)               # the insert is still running: flush times out, the cursor stays where it was
+    assert saved == {} and time.monotonic() - start < 2
+    release.set()
+    t.join(2)
+    f._save_exact(124)               # stored now
+    assert saved == {"ship:c:1": 124 / 1e9}
