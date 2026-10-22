@@ -137,11 +137,11 @@ RELEASES_SHOWN = 25
 def releases_page(who: v.Who, d: dict, now: datetime | None = None, show_all: bool = False) -> str:
     app = d["app"]
     shown = d["releases"] if show_all else d["releases"][:RELEASES_SHOWN]
-    rows = [[f"r{r['release']}", release_state(r), v.rel_time(r["deployed_at_raw"], now), r["deployed_by"] or "", r["via"] or "", r["git"] or "", r["note"] or "",
+    rows = [[f"r{r['release']}", release_state(r), v.rel_time(r["deployed_at_raw"], now), r["deployed_by"] or "", r["via"] or "", r["git"] or "", r.get("cli") or "", r["note"] or "",
              v.link(f"/apps/{app}/logs?release={r['release']}", "logs")] for r in shown]
     more = (f'<p class="muted">Showing the newest {RELEASES_SHOWN} of {len(d["releases"])}. <a href="/apps/{e(app)}/releases?all=1">Show all</a></p>'
             if len(shown) < len(d["releases"]) else "")
-    body = [str(v.table(["Release", "Result", "When", "By", "Via", "Git", "Note", ""], rows, "no release history (deployed before releases were recorded)")), more,
+    body = [str(v.table(["Release", "Result", "When", "By", "Via", "Git", "CLI", "Note", ""], rows, "no release history (deployed before releases were recorded)")), more,
             str(v.cli_block(f"annex releases {app}", f"annex rollback {app}", f"annex deploy <folder>"))]
     return shell(who, d, "releases", "".join(body), "Releases")
 
@@ -211,6 +211,10 @@ def config_page(who: v.Who, d: dict) -> str:
     else:
         body = "".join(f"<section><h2>{e(t)}</h2><dl class=\"kv\">" + "".join(f"<dt>{e(k)}</dt><dd>{e(x)}</dd>" for k, x in rows) + "</dl></section>"
                        for t, rows in config_groups(m))
+        live = next((r for r in d.get("releases") or [] if r.get("live")), None)
+        if live:
+            body += ('<section><h2>Release</h2><dl class="kv">' + f"<dt>live release</dt><dd>r{e(live['release'])}</dd>"
+                     + f"<dt>made with CLI commit</dt><dd>{e(live.get('cli') or 'not recorded (before the CLI reported it)')}</dd></dl></section>")
         body += '<p class="muted hint">The live release\'s annex.yaml as deployed. Secret and token values are never shown (they aren\'t here).</p>'
     body += str(v.cli_block(f"annex status {d['app']}", f"annex secret set {d['app']} <NAME>"))
     return shell(who, d, "config", body, "Config")

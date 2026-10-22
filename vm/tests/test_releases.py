@@ -43,6 +43,17 @@ class Sql(unittest.TestCase):
         self.assertTrue(quoted.startswith(tag) and quoted.endswith(tag))
         self.assertEqual(quoted.count(tag), 2)
 
+    def test_the_cli_commit_travels_to_the_database_row(self):
+        cli = {"commit": "a" * 40, "dirty": False}
+        self.assertEqual(vm.release_row("x", {**LIVE, "cli": cli})["cli"], cli)
+        self.assertIsNone(vm.release_row("x", LIVE)["cli"])  # a line from before the CLI reported its commit
+        self.assertIn("cli jsonb", vm.RELEASE_COLUMNS)
+        self.assertIn("r.cli", vm.releases_sql([vm.release_row("x", {**LIVE, "cli": cli})]))
+
+    def test_the_migration_adds_the_column_and_is_new(self):
+        sql = (Path(__file__).resolve().parents[2] / "db/appdata/migrations/005_releases_cli.sql").read_text()
+        self.assertIn("ADD COLUMN IF NOT EXISTS cli jsonb", sql)
+
     def test_the_insert_is_idempotent(self):
         sql = vm.releases_sql([vm.release_row("x", LIVE)])
         self.assertIn("ON CONFLICT (app, deployed_at, release) DO NOTHING", sql)

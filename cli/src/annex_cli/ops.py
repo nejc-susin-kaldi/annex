@@ -104,6 +104,29 @@ def contract_version() -> int:
     return int(m.group(1)) if m else 0
 
 
+def _checkout(*args: str) -> str | None:
+    try:
+        r = subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def cli_version() -> dict:
+    """What this CLI is, for the VM to judge (D103): the commit of the checkout it runs from ("unknown" when that
+    isn't a repository), whether the tree has uncommitted changes, and the contract version it ships."""
+    commit = _checkout("rev-parse", "HEAD") or "unknown"
+    dirty = commit != "unknown" and bool(_checkout("status", "--porcelain"))
+    return {"commit": commit, "dirty": dirty, "contract_version": contract_version()}
+
+
+def cli_label(cli: dict | None) -> str | None:
+    """A release's `cli` (commit, dirty) as one short text: 3f2a9c1d4b7e, +dirty when it had uncommitted changes."""
+    if not isinstance(cli, dict) or not cli.get("commit"):
+        return None
+    return cli["commit"][:12] + ("+dirty" if cli.get("dirty") else "")
+
+
 def runtime_version(text: str | None) -> int:
     """The `__version__` of a copy of annex_runtime.py / .js; 0 for a copy from before versions (C4)."""
     m = re.search(r"^(?:export const )?__version__\s*=\s*(\d+)", text or "", re.M)
@@ -346,7 +369,7 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
             "source": str(folder).replace(str(Path.home()), "~", 1), "git": _git(folder), "snapshot": None,
             "contract_version": contract_version(), "runtime": runtime_versions(folder)}
     overrides = {k: os.environ[k] for k in DEPLOY_OVERRIDES if os.environ.get(k, "").strip()}
-    meta = {"line": line, **({"overrides": overrides} if overrides else {})}
+    meta = {"line": line, "cli": cli_version(), **({"overrides": overrides} if overrides else {})}
     body = json.dumps(meta, default=str).encode() + b"\n" + _tar(folder)
     res = r.call("deploy", m.name, "--actor", _who(), "--via", via, input=body, progress=progress)
     res.pop("ok", None)
@@ -476,6 +499,7 @@ def releases(app: str) -> list[dict]:
             "release": x["release"], "current": current, "result": x["result"],
             "deployed_at": x["deployed_at"], "deployed_by": x["deployed_by"], "via": x["via"],
             "git": (git.get("sha", "") + ("+dirty" if git.get("dirty") else "")) or None,
+            "cli": cli_label(x.get("cli")),
             "image": x["image"], "image_kept": x["image"] in images,
             "can_roll_back_to": x["result"] == "live" and not current and x["image"] in images,
             "data_snapshot": x["release"] in data_from, "note": note,
@@ -542,6 +566,9 @@ def status(app: str) -> dict:
         info["alerts_to"] = ", ".join(record.get("alerts_to", ["owner"]))
         if record.get("webhooks"):
             info["webhooks"] = _webhook_urls(r, app, record["webhooks"])
+    cli = cli_label((_live(_releases(r, app)) or {}).get("cli"))
+    if cli:
+        info["cli"] = cli  # the commit of the CLI that made the live release
     deploy_line = _deploy_state(r, app)
     if deploy_line:
         info["deploy"] = deploy_line
