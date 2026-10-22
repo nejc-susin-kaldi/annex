@@ -48,7 +48,9 @@ expect "annex users list shows them" True "$(in_list "$U")"
 has "a duplicate login is refused" "already exists" "$("$ANNEX" users add "$U" --name X --email "x$EMAIL" 2>&1)"
 has "a bad login is refused, saying how to fix it" "lowercase" "$("$ANNEX" users add Bad --name X --email x@annex.example 2>&1)"
 has "a bad email is refused" "is not an address" "$("$ANNEX" users add tst-bad --name X --email nope 2>&1)"
-expect "the users file is still the annex user's, mode 600" "annex 600" "$(vm "stat -c '%U %a' $DATA/secrets/authelia/users.yml")"
+# owned by the account that runs annex_vm.py (annex on the VM, you on the local stack), not root; python3, not stat -c (macOS)
+expect "the users file is still the annex user's, mode 600" "$(vm whoami) 600" \
+  "$(vm "python3 -c 'import os, pwd, sys; s = os.stat(sys.argv[1]); print(pwd.getpwuid(s.st_uid).pw_name, format(s.st_mode & 0o777, \"o\"))' $DATA/secrets/authelia/users.yml")"
 
 echo "Self-service password change (Authelia's settings page: a code by email, then the new password)"
 c -b "$TMP/$U.jar" -c "$TMP/$U.jar" -o /dev/null -X POST "$AUTH_URL/api/user/session/elevation"

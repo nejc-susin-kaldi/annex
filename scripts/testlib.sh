@@ -32,6 +32,11 @@ _run_exit() {
 }
 trap _run_exit EXIT
 
+# After a file in state/ops (tuning.json, test-mode) is written on the host, annex-ops lists the directory once. Docker
+# Desktop's file sharing can keep a container's view of a name that was removed and then created again on the host
+# (ENOENT, for minutes) until the directory is read; on the VM this is a harmless ls (D100).
+ops_state_seen() { vm "docker exec annex-ops-1 ls /annex/state >/dev/null 2>&1 || true"; }
+
 # Test mode (D74): for the length of a run, annex-ops posts every Slack message to #annex-selftest, marked [TEST], so
 # nobody is notified by a test. The file holds an end time (three hours ahead), so a run that dies leaves nothing behind
 # for long. Switched on when a suite sources this file, off when it exits. ANNEX_TEST_MODE=0 skips it.
@@ -39,6 +44,7 @@ test_mode() { # test_mode on|off
   [ "${ANNEX_TEST_MODE:-1}" = 0 ] && return 0
   local f=$DATA/state/ops/test-mode
   if [ "$1" = on ]; then vm "mkdir -p $DATA/state/ops && echo \$((\$(date +%s) + 10800)) > $f && chmod 644 $f" >/dev/null 2>&1 || true
+    ops_state_seen
   else vm "rm -f $f" >/dev/null 2>&1 || true; fi
 }
 

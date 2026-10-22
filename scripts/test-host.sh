@@ -9,7 +9,7 @@ SAM=sam@annex.example
 ADMIN=admin@annex.example
 TUNING=$DATA/state/ops/tuning.json
 on_exit "vm 'rm -f $TUNING' >/dev/null 2>&1"
-tune() { vm "printf '%s' '$1' > $TUNING && chmod 644 $TUNING"; }
+tune() { vm "printf '%s' '$1' > $TUNING && chmod 644 $TUNING"; ops_state_seen; }
 ctl() { vm "docker exec annex-ops-1 python -m annex_ops.ctl $* --json"; }
 login kaldi-admin >/dev/null
 mail_clear
@@ -29,12 +29,14 @@ BASE='"host_sample_s": 5, "tick_s": 5'
 echo "What ops sees"
 h=$(ctl host)
 field() { python3 -c 'import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$h" "$1"; }
-df_pct=$(vm "df --output=pcent / | tail -1 | tr -dc 0-9")
+# the filesystem ops measures (the one under the data dir: the VM's root, or the Mac's disk for the local stack), with
+# POSIX df; memory as the Docker host has it (the VM, or Docker Desktop's VM), read in another platform container
+df_pct=$(vm "df -P $DATA/state/ops | awk 'NR == 2 {print \$5}' | tr -dc 0-9")
 diff=$(python3 -c "print(abs(float('$(field disk_used_pct)') - $df_pct) <= 2)")
-expect "disk use matches df on the VM ($df_pct %)" True "$diff"
-avail=$(vm "awk '/MemAvailable/ {print int(\$2/1024)}' /proc/meminfo")
+expect "disk use matches df on $WHERE ($df_pct %)" True "$diff"
+avail=$(vm "docker exec annex-appdata-db-1 awk '/MemAvailable/ {print int(\$2/1024)}' /proc/meminfo")
 diff=$(python3 -c "print(abs(float('$(field mem_available_mb)') - $avail) <= 200)")
-expect "available memory matches the VM's (about $avail MB)" True "$diff"
+expect "available memory matches the Docker host's (about $avail MB)" True "$diff"
 age=$(field backup_age_h)
 python3 -c "import sys; sys.exit(0 if 0 <= float('$age') < 26 else 1)" && ok "the newest backup is $age h old" || bad "backup age" "$age"
 

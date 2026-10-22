@@ -35,7 +35,7 @@ deployed=$("$ANNEX" list | awk 'NR > 1 {print $1}')
 remove=()
 for app in $deployed; do is_kept "$app" || remove+=("$app"); done
 
-echo "Demo reset on $SSH_HOST:"
+echo "Demo reset on $WHERE:"
 echo "  start platform with extras (Metabase, Dozzle)"
 [ ${#remove[@]} -gt 0 ] && echo "  REMOVE with their data: ${remove[*]}"
 echo "  redeploy client-lookup"

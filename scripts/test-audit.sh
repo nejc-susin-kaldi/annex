@@ -34,7 +34,7 @@ variant() { # variant DIR [broken]: annex-selftest with one secret of its own (A
 
 echo "Setup"
 for u in sam kaldi-admin cm; do expect "$u signs in" 200 "$(login $u)"; done
-vm "printf '%s' '{\"audit_scan_s\": 5, \"audit_bucket_s\": 20}' > $TUNING && chmod 644 $TUNING"
+vm "printf '%s' '{\"audit_scan_s\": 5, \"audit_bucket_s\": 20}' > $TUNING && chmod 644 $TUNING"; ops_state_seen
 sleep 8
 START=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%S"))')   # the trail keeps earlier runs: look only at this one
 START_EPOCH=$(date +%s)
@@ -123,8 +123,8 @@ has "the Deploys chip keeps deploys and rollbacks only" "deploy" "$(as kaldi-adm
 hasnt "  ...and not the secret" "secret.set" "$(as kaldi-admin "$CON/audit?app=$APP&chip=Deploys" | sed 's/<style>.*<\/style>//; s/<[^>]*>/ /g' | tr -s ' \n')"
 has "the Failures chip finds the failed deploy" "deploy.failed" "$(as kaldi-admin "$CON/audit?app=$APP&chip=Failures" | sed 's/<style>.*<\/style>//; s/<[^>]*>/ /g' | tr -s ' \n')"
 has "the page says who may read it" "For admins" "$page"
-expect "the console's role reads the view, not the send log directly" "permission denied" "$(printf 'SET ROLE annex_console;\nSELECT 1 FROM annex_ops.sends LIMIT 1;\n' | ssh annex 'docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops -At -f -' 2>&1 | grep -o 'permission denied' | head -1)"
-expect "  ...and can't write to the trail" "permission denied" "$(printf 'SET ROLE annex_console;\nINSERT INTO annex_ops.audit_events (action) VALUES ($$x$$);\n' | ssh annex 'docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops -At -f -' 2>&1 | grep -o 'permission denied' | head -1)"
+expect "the console's role reads the view, not the send log directly" "permission denied" "$(printf 'SET ROLE annex_console;\nSELECT 1 FROM annex_ops.sends LIMIT 1;\n' | vm 'docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops -At -f -' 2>&1 | grep -o 'permission denied' | head -1)"
+expect "  ...and can't write to the trail" "permission denied" "$(printf 'SET ROLE annex_console;\nINSERT INTO annex_ops.audit_events (action) VALUES ($$x$$);\n' | vm 'docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops -At -f -' 2>&1 | grep -o 'permission denied' | head -1)"
 
 echo "Idempotent copies"
 before=$(vm "docker exec annex-appdata-db-1 psql -U postgres -d annex_ops -Atc \"select count(*) from annex_ops.audit_events where ref like 'release:%'\"")

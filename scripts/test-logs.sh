@@ -179,7 +179,7 @@ expect "partitions exist for today and two days ahead" 3 "$(sql "SELECT count(*)
 sql "CREATE TABLE IF NOT EXISTS annex_ops.logs_19990101 PARTITION OF annex_ops.logs FOR VALUES FROM ('1999-01-01 00:00:00+00') TO ('1999-01-02 00:00:00+00')" >/dev/null
 sql "INSERT INTO annex_ops.logs (ts, app, container, stream, msg, h) VALUES ('1999-01-01 10:00:00+00', 'old', 'x', 'stdout', 'ancient', md5('ancient')::uuid)" >/dev/null
 expect "an ancient partition with a line is there" 1 "$(sql "SELECT count(*) FROM annex_ops.logs_19990101")"
-vm "printf '%s' '{\"log_retention_days\": 2, \"log_housekeeping_s\": 5}' > $TUNING && chmod 644 $TUNING"
+vm "printf '%s' '{\"log_retention_days\": 2, \"log_housekeeping_s\": 5}' > $TUNING && chmod 644 $TUNING"; ops_state_seen
 wait_wait() { [ "$(sql "SELECT count(*) FROM pg_class WHERE relname='logs_19990101'")" = 0 ]; }
 wait_for 40 wait_wait && ok "housekeeping dropped it (a whole partition, with retention shortened to 2 days)" || bad "partition roll" "still there after 40 s"
 expect "today's lines are untouched" True "$([ "$(sql "SELECT count(*) FROM annex_ops.logs WHERE app='$APP'")" -gt 0 ] && echo True || echo False)"

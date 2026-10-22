@@ -22,7 +22,7 @@ mkdir -p "${WORK:?}" && find "${WORK:?}" -mindepth 1 -delete
 py() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 text() { sed 's/<style>.*<\/style>//; s/<[^>]*>/ /g' | tr -s ' \n'; }
 psql_as() { # psql_as ROLE SQL: run SQL as that role (SET ROLE), print output and errors
-  printf 'SET ROLE %s;\n%s\n' "$1" "$2" | ssh annex 'docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops -At -f -' 2>&1 | grep -v '^SET$'
+  printf 'SET ROLE %s;\n%s\n' "$1" "$2" | vm 'docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops -At -f -' 2>&1 | grep -v '^SET$'
 }
 cleanup() {
   vm "rm -f $TUNING" >/dev/null 2>&1 || true
@@ -32,7 +32,7 @@ on_exit cleanup
 
 echo "Setup"
 for u in sam cm kaldi-admin; do expect "$u signs in" 200 "$(login $u)"; done
-vm "printf '%s' '{\"errors_scan_s\": 4, \"errors_settle_s\": 4}' > $TUNING && chmod 644 $TUNING"
+vm "printf '%s' '{\"errors_scan_s\": 4, \"errors_settle_s\": 4}' > $TUNING && chmod 644 $TUNING"; ops_state_seen
 sleep 6
 A=annex-selftest; B=annex-selftest-other
 selftest_build "$WORK/b" --name $B --owner kaldi-admin --no-postgres --drop notify,webhooks
@@ -153,12 +153,13 @@ has "the health state is annex status's" "annex-selftest up" "$summary"
 cli=$("$ANNEX" logs annex-selftest --request "$RID")
 nlines=$(grep -c . <<<"$cli")
 expect "a request's log lines: as many as annex logs --request" "$nlines" "$(as sam "$CON/apps/annex-selftest/logs?request=$RID" | grep -o 'class="log' | wc -l | tr -d ' ')"
-for i in $(seq 1 15); do [ "$("$ANNEX" --json errors annex-selftest | py 'len(d)')" -ge 2 ] && break; sleep 4; done
+# wait for the /boom group itself, not a count: the emitted error and its traceback make two groups before it settles
+for i in $(seq 1 30); do [ "$("$ANNEX" --json errors annex-selftest | py 'any(g["title"] == "ZeroDivisionError in handle_boom" for g in d)')" = True ] && break; sleep 4; done
 errs=$("$ANNEX" --json errors annex-selftest)
 expect "the error groups on the page are annex errors' (count)" "$(py 'len(d)' <<<"$errs")" "$(as sam "$CON/apps/annex-selftest/errors?s=all" | grep -oE 'class="st (bad|off)"><i aria-hidden="true"></i>(active|quiet)' | wc -l | tr -d ' ')"
 has "  ...with their request ids linked to the logs" "/apps/annex-selftest/logs?request=" "$(as sam "$CON/apps/annex-selftest/errors?s=all")"
 has "  ...and what the error was" "ZeroDivisionError in handle_boom" "$(as sam "$CON/apps/annex-selftest/errors?s=all" | text)"
-has "the summary lists the active error group under what needs attention" "ZeroDivisionError in handle_boom" "$summary"
+has "the summary lists the active error group under what needs attention" "ZeroDivisionError in handle_boom" "$(as kaldi-admin "$CON/apps/annex-selftest" | text)"
 expect "an app with no errors says so" "no errors seen" "$(as kaldi-admin "$CON/apps/annex-selftest-other/errors" | text | grep -o 'no errors seen')"
 has "the config shows names of injected variables, never values" "ANNEX_APP_NAME" "$(as sam "$CON/apps/annex-selftest/config" | text)"
 hasnt "  ...and no token in any page" "ANNEX_GATEWAY_TOKEN=" "$(as sam "$CON/apps/annex-selftest/config" | text)"

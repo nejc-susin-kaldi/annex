@@ -85,10 +85,11 @@ deploy_out=$("$ROOT/annex" deploy "$SELFTEST_DIR" 2>&1) && ok "$APP deployed" ||
 has "the deploy lists the public Trello URL" "$HOOKS_URL/h/$APP/trello" "$deploy_out"
 has "the deploy lists ANNEX_HOOK_TOKEN and ANNEX_HOOKS_URL" "ANNEX_HOOK_TOKEN" "$deploy_out"
 has "  ...and ANNEX_HOOKS_URL" "ANNEX_HOOKS_URL" "$deploy_out"
-vm "printf '%s' '{\"hook_backoff_s\": \"3,5,10\", \"tick_s\": 5}' > $TUNING && chmod 644 $TUNING"
+vm "printf '%s' '{\"hook_backoff_s\": \"3,5,10\", \"tick_s\": 5}' > $TUNING && chmod 644 $TUNING"; ops_state_seen
 ok "short retry delays written to state/ops/tuning.json (removed on exit)"
 expect "kaldi-admin logs in (for Mailpit)" 200 "$(login kaldi-admin)"
-expect "the hooks file is owned by the ops user and private" "10001 600" "$(vm "stat -c '%u %a' $DATA/secrets/hooks/$APP.json")"
+# read in the ops container that uses it: on the Mac's bind mounts the host side always shows the Mac user (D98)
+expect "the hooks file is owned by the ops user and private" "10001 600" "$(vm "docker exec annex-ops-1 stat -c '%u %a' /annex/hooks/$APP.json")"
 sleep 8
 
 # --- 2. Trello --------------------------------------------------------------------------------------------------------
@@ -212,7 +213,7 @@ wait_status "$EID" delivered 30 && ok "  ...and are delivered" || bad "delivered
 # --- 10. alert ----------------------------------------------------------------------------------------------------------------------------------------------
 echo "Alert"
 c -o /dev/null -X DELETE -b "$TMP/kaldi-admin.jar" "$MAIL_URL/api/v1/messages"
-vm "printf '%s' '{\"hook_backoff_s\": \"3,5,10\", \"tick_s\": 5, \"stopped_grace_s\": 10, \"hook_alert_after_s\": 20}' > $TUNING && chmod 644 $TUNING"
+vm "printf '%s' '{\"hook_backoff_s\": \"3,5,10\", \"tick_s\": 5, \"stopped_grace_s\": 10, \"hook_alert_after_s\": 20}' > $TUNING && chmod 644 $TUNING"; ops_state_seen
 sleep 8
 vm "docker stop -t 1 $C_APP >/dev/null"
 trello_event t7 "alert-$RANDOM"

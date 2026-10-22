@@ -39,6 +39,7 @@ if [ "$TARGET" = local ]; then
   esac
   # the same command string a script would send over ssh runs here, with the same environment
   vm() { bash -c "$*"; }
+  vm_tty() { bash -c "$*"; }   # an interactive command (psql): the terminal is already this one
   # put FILE... DIR: copy files into a directory of the stack (scp to the VM)
   put() { local dest=${*: -1}; cp "${@:1:$#-1}" "$dest"; }
   # rsync destination for a directory of the stack
@@ -46,6 +47,7 @@ if [ "$TARGET" = local ]; then
   WHERE="the local stack ($DATA)"
 else
   vm() { ssh "$SSH_HOST" "$@"; }
+  vm_tty() { ssh -t "$SSH_HOST" "$@"; }
   put() { local dest=${*: -1}; scp -q "${@:1:$#-1}" "$SSH_HOST:$dest"; }
   dest() { printf '%s:%s' "$SSH_HOST" "$1"; }
   WHERE=$SSH_HOST

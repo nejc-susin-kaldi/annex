@@ -50,7 +50,7 @@ variant() { # variant DIR: the self-test app (its /raise endpoint fails on reque
 echo "Setup"
 expect "sam logs in" 200 "$(login sam)"
 expect "kaldi-admin logs in" 200 "$(login kaldi-admin)"
-vm "printf '%s' '{\"errors_scan_s\": 4, \"errors_settle_s\": 4}' > $TUNING && chmod 644 $TUNING"
+vm "printf '%s' '{\"errors_scan_s\": 4, \"errors_settle_s\": 4}' > $TUNING && chmod 644 $TUNING"; ops_state_seen
 ok "short scan times written to state/ops/tuning.json (removed on exit)"
 sleep 8
 variant v1

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The demo client's database (Goat Arcade, D77): a separate compose project on the VM, outside the platform.
+# The demo client's database (Goat Arcade, D77): a separate compose project on the VM (or the local stack, D99), outside the platform.
 # Usage: scripts/democlient.sh up | down | status | check | link | dictionary | psql | reseed [--anchor YYYY-MM-DD] [--yes]
 #   up      start arcade-db (seeds it on first start)    link        connect product-db to it and (re)apply the views
 #   down    stop it, keep the data                       check       prove the seed's planted stories
@@ -9,12 +9,12 @@
 source "$(dirname "$0")/lib.sh"
 
 cmd=${1:-}; shift || true
-log "Syncing democlient/ to $SSH_HOST:$DATA/democlient"
-rsync -rlpt --delete "$ROOT/democlient/" "$SSH_HOST:$DATA/democlient/"
+log "Syncing democlient/ to $DATA/democlient on $WHERE"
+rsync -rlpt --delete "$ROOT/democlient/" "$(dest "$DATA/democlient/")"
 
 case "$cmd" in
   up|down|status|check|link) vm "bash $DATA/democlient/vm.sh $cmd" ;;
-  psql) ssh -t "$SSH_HOST" "bash $DATA/democlient/vm.sh psql" ;;
+  psql) vm_tty "bash $DATA/democlient/vm.sh psql" ;;
   dictionary)
     out=$ROOT/docs/goat-arcade/data-dictionary.md
     mkdir -p "$(dirname "$out")"
@@ -39,7 +39,7 @@ case "$cmd" in
       esac
     done
     if [ -z "$yes" ]; then
-      read -r -p "Wipe Goat Arcade's database on $SSH_HOST and seed it again? [y/N] " a
+      read -r -p "Wipe Goat Arcade's database on $WHERE and seed it again? [y/N] " a
       [ "$a" = y ] || { echo "democlient: nothing changed"; exit 1; }
     fi
     vm "bash $DATA/democlient/vm.sh reseed $anchor"

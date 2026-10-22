@@ -76,7 +76,7 @@ echo "Setup"
 BASE_ID=$(vm "docker exec annex-ops-1 python -m annex_ops.ctl incidents --limit 1 --json" 2>/dev/null | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r[0]["id"] if r else 0)' 2>/dev/null || echo 0)
 selftest_build "$ROOT/.build/selftest-alerts" --drop webhooks,notify
 out=$(selftest_deploy "$ROOT/.build/selftest-alerts") && ok "$APP deployed" || { bad "$APP deployed" "$out"; echo "passed $pass, failed $fail"; exit 1; }
-vm "printf '%s' '{\"stopped_grace_s\": 10, \"crash_window_s\": 120, \"crash_stable_s\": 30, \"error_window_s\": 60, \"reminder_first_s\": 90, \"tick_s\": 5, \"check_interval_s\": 5, \"check_timeout_s\": 3}' > $TUNING && chmod 644 $TUNING"
+vm "printf '%s' '{\"stopped_grace_s\": 10, \"crash_window_s\": 120, \"crash_stable_s\": 30, \"error_window_s\": 60, \"reminder_first_s\": 90, \"tick_s\": 5, \"check_interval_s\": 5, \"check_timeout_s\": 3}' > $TUNING && chmod 644 $TUNING"; ops_state_seen
 ok "short thresholds written to state/ops/tuning.json (removed on exit)"
 expect "sam logs in" 200 "$(login sam)"
 expect "kaldi-admin logs in" 200 "$(login kaldi-admin)"
