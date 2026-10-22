@@ -5,8 +5,9 @@ back to the pool, which drops it if it broke or was left in a transaction. The p
 threads: a connection is opened in the caller's thread when none is idle, a semaphore caps how many exist, and one idle for
 `CHECK_AFTER_S` is checked before it is handed out. (psycopg-pool's background workers got its bookkeeping stuck on the VM:
 four idle connections, every caller timing out; and a one-shot `ctl` command waited for them at exit.) When all
-connections are busy for `POOL_WAIT_S` the caller gets an OpsError 503, never a hang. Size: `OPS_DB_POOL_MAX` (ops 4; the
+connections are busy for `POOL_WAIT_S` the caller gets an OpsError 503, never a hang. Size: `OPS_DB_POOL_MAX` (ops 8; the
 console and webhook receiver, separate containers running this same package, 2: compose sets it)."""
+import sys
 import threading
 import time
 from contextlib import contextmanager
@@ -38,6 +39,8 @@ class Pool:
         self.idle: list[tuple[psycopg.Connection, float]] = []  # (connection, when it came back), newest last
         self.lock = threading.Lock()
         self.closed = False
+        self.holders: dict[int, tuple[str, float, str]] = {}  # id(conn) -> (thread, since, where it was taken)
+        self.last_report = 0.0
 
     def _take_idle(self) -> psycopg.Connection | None:
         while True:
@@ -62,13 +65,18 @@ class Pool:
         if self.closed:
             raise PoolClosed("the pool is closed")
         if not self.slots.acquire(timeout=POOL_WAIT_S):
+            self._report()
             raise PoolTimeout(f"no connection free in {POOL_WAIT_S} s")
         conn = None
         try:
             conn = self._take_idle() or psycopg.connect(self.url, autocommit=True, connect_timeout=5)
+            with self.lock:
+                self.holders[id(conn)] = (threading.current_thread().name, time.monotonic(), _caller())
             yield conn
         finally:
             if conn is not None:
+                with self.lock:
+                    self.holders.pop(id(conn), None)
                 reusable = (not self.closed and not conn.closed and not conn.broken
                             and conn.info.transaction_status == pq.TransactionStatus.IDLE)
                 if reusable:
@@ -77,6 +85,17 @@ class Pool:
                 else:
                     conn.close()
             self.slots.release()
+
+    def _report(self) -> None:
+        """A caller waited POOL_WAIT_S for nothing: say who holds the connections (once a minute at most)."""
+        now = time.monotonic()
+        with self.lock:
+            if now - self.last_report < 60:
+                return
+            self.last_report = now
+            held = sorted(self.holders.values(), key=lambda h: h[1])
+        lines = [f"  {name}: {now - since:.1f} s, taken at {where}" for name, since, where in held]
+        print("db: the pool is full; holders:\n" + "\n".join(lines), file=sys.stderr, flush=True)
 
     def close(self, timeout: float = 0) -> None:
         self.closed = True
@@ -88,6 +107,14 @@ class Pool:
     def get_stats(self) -> dict:
         with self.lock:
             return {"pool_max": self.max_size, "pool_available": len(self.idle)}
+
+
+def _caller() -> str:
+    """file:line of the first frame outside this module and contextlib: who asked for the connection."""
+    f = sys._getframe(2)
+    while f is not None and (f.f_code.co_filename == __file__ or f.f_code.co_filename.endswith("contextlib.py")):
+        f = f.f_back
+    return f"{f.f_code.co_filename.rsplit('/', 1)[-1]}:{f.f_lineno} {f.f_code.co_name}" if f else "?"
 
 
 _pool: Pool | None = None

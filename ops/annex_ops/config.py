@@ -12,7 +12,7 @@ def _int(name: str, default: int) -> int:
 
 
 DATABASE_URL = os.environ.get("OPS_DATABASE_URL", "")
-DB_POOL_MAX = _int("OPS_DB_POOL_MAX", 4)  # connections this process may hold; compose sets 2 for the console and the receiver (D84)
+DB_POOL_MAX = _int("OPS_DB_POOL_MAX", 8)  # connections this process may hold; compose sets 2 for the console and the receiver (D84)
 USERS_FILE = os.environ.get("OPS_USERS_FILE", "/annex/directory/users.json")
 
 EMAIL_DOMAINS = [d.lower() for d in _list("ANNEX_EMAIL_DOMAINS", "annex.example")]

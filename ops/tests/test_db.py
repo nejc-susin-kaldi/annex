@@ -191,3 +191,15 @@ def test_connect_maps_a_real_pool_timeout_and_returns_the_connection(opened, mon
     with db.connect() as conn:  # nothing leaked
         assert conn is opened[0]
     monkeypatch.setattr(db, "_pool", None)
+
+
+def test_a_full_pool_names_its_holders(opened, monkeypatch, capsys):
+    monkeypatch.setattr(db, "POOL_WAIT_S", 0.05)
+    p = db.Pool("postgres://x", 1)
+    with p.connection():
+        with pytest.raises(db.PoolTimeout):
+            with p.connection():
+                pass
+    err = capsys.readouterr().err
+    assert "the pool is full" in err and "test_db.py" in err and "test_a_full_pool_names_its_holders" in err
+    assert p.holders == {}

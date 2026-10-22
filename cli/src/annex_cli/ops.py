@@ -16,6 +16,7 @@ import socket
 import subprocess
 import tarfile
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -344,7 +345,9 @@ def _record(r: Remote, app: str) -> dict | None:
 
 
 def _now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    # milliseconds: since D92 a deploy is stamped when it begins, often in the same second as the step before it
+    # (a `secret set`), and the audit trail orders by this time
+    return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
 def _who() -> str:

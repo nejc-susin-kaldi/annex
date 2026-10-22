@@ -200,6 +200,12 @@ services:
       - -c
       - max_connections=60
       - -c
+      - tcp_keepalives_idle=60  # a client container that vanished without closing (a recreate) is dropped in about 2 minutes, not hours
+      - -c
+      - tcp_keepalives_interval=10
+      - -c
+      - tcp_keepalives_count=6
+      - -c
       - work_mem=4MB
       - -c
       - maintenance_work_mem=32MB
@@ -299,7 +305,7 @@ services:
     environment:
       <<: *tz
       OPS_WATCHERS: "0"
-      OPS_DB_POOL_MAX: "2"  # D84: this container holds at most 2 database connections (ops: 4)
+      OPS_DB_POOL_MAX: "2"  # D84: this container holds at most 2 database connections (ops: 8)
       ANNEX_HOST_HOOKS: ${ANNEX_HOST_HOOKS}
       ANNEX_URL_HOOKS: ${ANNEX_URL_HOOKS}
     volumes:
