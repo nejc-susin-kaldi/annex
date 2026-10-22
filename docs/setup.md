@@ -10,7 +10,7 @@ Nothing here is installed by Annex; check that each is present.
 - `mkcert` with its root CA trusted (section 2); `scripts/bootstrap.sh` issues the wildcard certificate with it.
 - `rsync` and `ssh` (the platform bundle is synced over SSH; `ssh annex` must work without a password prompt).
 - `node` (`scripts/test-smoke.sh` runs the runtime's logging tests with it and skips them when it is missing).
-- `docker`, only for the optional context in section 1.
+- `docker`, only for the optional context in section 1, and Docker Desktop for the local stack (section 9).
 
 **On the VM (`annex`):**
 - Docker with the Compose plugin, `jq` and `python3-yaml` (PyYAML, used by `vm/annex_vm.py users-*`). Installing packages is a system change: if one is missing, ask Nejc.
@@ -180,3 +180,58 @@ SQL
 and then tell the build agent to remove the role, `APPDATA_DB_METABASE_USAGE_PASSWORD` and `usage_pw` from `db/appdata/bootstrap.sql`, `scripts/push.sh` and `vm/bootstrap-secrets.sh` (until then a push would create the role again).
 
 Undo: check out the commit before M2.9 and run `scripts/push.sh --extras`; `vm/metabase-setup.sh` of that commit creates the connection, cards and dashboard again (the history in the usage tables is untouched, so the charts fill in at once).
+
+## 9. Local stack: the platform on Docker Desktop (D99)
+A second, private copy of the platform on the Mac, for development and the suites (control-plane plan, lane "local"). It has its own settings, data, hostnames and ports, so it runs alongside the VM's stack and the tunnel. Nothing here is a system change except the optional `/etc/hosts` lines at the end.
+
+**Selection is per command.** Every script and `./annex` take `ANNEX_ENV=local` in front; without it they talk to the VM as before. Don't export it in your shell profile.
+```bash
+ANNEX_ENV=local scripts/bootstrap.sh && ANNEX_ENV=local scripts/push.sh && ANNEX_ENV=local scripts/test-smoke.sh
+```
+```bash
+ANNEX_ENV=local ./annex list
+```
+
+**Prerequisites** (on top of the Mac list at the top):
+- Docker Desktop running, with the context `desktop-linux` (`docker --context desktop-linux info` answers). The scripts and the CLI set `DOCKER_CONTEXT=desktop-linux` for their own commands only; your current context is never switched, and a context that points at the VM is refused.
+- Memory for Docker Desktop: at least 4 GiB (Settings → Resources); the core platform is about 1.4 GiB (D97), each app 20–50 MiB.
+- `python3` with PyYAML (`python3 -c 'import yaml'`): the scripts run `vm/annex_vm.py users-sync` with it, as the VM does with `python3-yaml`. `./annex` uses its own Python (uv), which has it.
+- `mkcert`, `jq`, `rsync`, `openssl`, `uv`: `scripts/bootstrap.sh` checks them.
+
+**Settings.** `.env.local.example` is committed and used as it is; copy it to `.env.local` (gitignored) only to change something. It sets `ANNEX_TARGET=local` (commands run here with `bash -c` instead of `ssh annex`), `ANNEX_DATA_DIR=$HOME/.annex/local` (outside the repo, under your home folder so Docker Desktop shares it), hostnames `*.annex-local.home.arpa` (separate from the VM's, so a browser can be signed in to both), and Traefik on `127.0.0.1:9443` (HTTPS) and `127.0.0.1:9080` (HTTP), loopback only. The renders are apart too: `.build/vm/platform` and `.build/local/platform`. `scripts/tunnel.sh` says "local mode: no tunnel" and does nothing. The mkcert certificate is issued into `~/.annex/local/certs` by `bootstrap.sh`; the mkcert CA is already trusted (section 2).
+
+**Browser access (optional, a system change: Nejc runs it).** The suites don't need it (`curl --connect-to`). Then open https://home.annex-local.home.arpa:9443.
+```bash
+echo '127.0.0.1 home.annex-local.home.arpa auth.annex-local.home.arpa console.annex-local.home.arpa mail.annex-local.home.arpa hooks.annex-local.home.arpa gateway.annex-local.home.arpa metabase.annex-local.home.arpa logs.annex-local.home.arpa annex-selftest.annex-local.home.arpa # annex-local' | sudo tee -a /etc/hosts
+```
+Undo (only the local stack's lines; the VM's `# annex` lines stay):
+```bash
+sudo sed -i '' '/# annex-local$/d' /etc/hosts
+```
+With the dnsmasq resolver from section 3, one more line and resolver file cover every app name instead:
+```bash
+echo 'address=/annex-local.home.arpa/127.0.0.1 # annex' >> "$(brew --prefix)/etc/dnsmasq.conf" && sudo brew services restart dnsmasq
+```
+```bash
+echo 'nameserver 127.0.0.1' | sudo tee /etc/resolver/annex-local.home.arpa
+```
+Undo: `sudo rm /etc/resolver/annex-local.home.arpa`; the dnsmasq line goes with section 3's undo (it carries the `# annex` tag).
+
+**Stop it** (keeps the data; `ANNEX_ENV=local scripts/push.sh` starts it again):
+```bash
+cd ~/.annex/local/platform && DOCKER_CONTEXT=desktop-linux docker compose --profile extras stop
+```
+
+**Wipe it** (everything of the local stack: containers, networks, volumes, Annex's images, data and secrets; nothing of the VM, and none of your other Docker images). `scripts/wipe-vm.sh` refuses a local target, because it prunes every image.
+```bash
+export DOCKER_CONTEXT=desktop-linux
+(cd ~/.annex/local/platform && docker compose --profile extras down -v --remove-orphans)
+for d in ~/.annex/local/deploy/*/; do [ -f "$d/compose.yaml" ] && (cd "$d" && docker compose down -v --remove-orphans); done
+docker ps -aq --filter label=com.docker.compose.project=democlient | xargs docker rm -f 2>/dev/null
+docker ps -aq --filter label=com.kaldi.annex=true | xargs docker rm -f 2>/dev/null
+docker network ls -q --filter label=com.kaldi.annex=true | xargs docker network rm 2>/dev/null
+docker image ls -q --filter label=com.kaldi.annex=true | xargs docker rmi -f 2>/dev/null
+rm -rf ~/.annex/local
+unset DOCKER_CONTEXT
+```
+`ANNEX_ENV=local scripts/bootstrap.sh && ANNEX_ENV=local scripts/push.sh` brings it back with new secrets and passwords. The pinned platform images stay in Docker Desktop's cache; `docker --context desktop-linux image rm <image>` removes one if you want the space.
