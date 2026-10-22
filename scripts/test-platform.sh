@@ -150,4 +150,15 @@ else
   expect "annex-clientlink has exactly product-db and arcade-db" "annex-product-db-1 democlient-arcade-db-1" \
     "$(vm "docker network inspect annex-clientlink --format '{{range .Containers}}{{.Name}} {{end}}'" | tr ' ' '\n' | grep . | sort | xargs)"
 fi
+
+echo "Images with platform labels are refused (D83)"
+EVIL=annex-selftest-evil
+on_exit "selftest_remove $EVIL"
+selftest_build "$ROOT/.build/selftest-evil" --name $EVIL --drop notify,webhooks --evil-label
+if out=$(selftest_deploy "$ROOT/.build/selftest-evil"); then bad "an image with a traefik.* label is refused" "deploy succeeded: $(tail -3 <<<"$out")"
+else has "an image with a traefik.* label is refused, naming the label" "labels that are Annex's job: traefik.http.routers.evil.rule" "$out"; fi
+expect "the refused image is removed" "" "$(vm "docker image ls -q annex-app/$EVIL")"
+selftest_build "$ROOT/.build/selftest-evil" --name $EVIL --drop notify,webhooks
+out=$(selftest_deploy "$ROOT/.build/selftest-evil") && ok "the clean fixture still deploys ($EVIL)" \
+  || bad "the clean fixture still deploys ($EVIL)" "$(tail -3 <<<"$out")"
 finish

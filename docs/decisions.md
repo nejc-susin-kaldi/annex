@@ -666,3 +666,25 @@ It takes about 63 MB on disk and seeds in under a minute.
 **Tests.** `ops/tests/test_threads.py` (verdict, registry, `/healthz` 503, `fetch`), a follower surviving an unexpected store error and an unexpected loop error (`test_follow_exact.py`), `Shipper.revive` (`test_logship.py`), the `platform:ops` target (`test_health.py`) and the console's table (`test_console_view.py`). `test-logs.sh` checks that `/healthz` lists the followers and the sink's counters after ops restarts. Not run here (VM): `test-smoke.sh`, `test-logs.sh`.
 
 **Prod:** metrics (Prometheus or CloudWatch) replace the thread table; `/healthz` stays.
+
+
+## D83. Images with platform labels are refused (22 Oct, hardening A2)
+**What.**
+- `_build` reads `docker image inspect -f '{{json .Config.Labels}}'` after the user check and refuses (and `rmi`s) an image with a label key starting `traefik.`, `ofelia.`, `homepage.`, `docker-volume-backup.` or `com.kaldi.annex`. The message names the keys and says labels are Annex's job. The verdict is a pure function, `ops.platform_label_offenders(labels, app)`. `docker build --label com.kaldi.annex=true --label com.kaldi.annex.app=<app>` **does** put those two labels on the image, so exactly those two keys with exactly those values are allowed; any other `com.kaldi.annex*` key, or those keys with other values, is refused.
+- `compose_for` sets `traefik.enable: "false"` on job-only apps and `ofelia.enabled: "false"` on apps without a schedule. Docker merges image labels under the container's, so an image `traefik.enable=true` or `ofelia.enabled=true` can't win even if the inspect were bypassed. Traefik already runs with `exposedByDefault: false`, so the first is belt and braces.
+- The contract line "never write Docker labels" now says a deploy refuses such images.
+
+**Ofelia 0.3.22 (read from `cli/docker-labels.go` at tag v0.3.22).** Ofelia lists containers with `ofelia.enabled=true` and reads their `ofelia.*` labels. `job-exec` is honoured on **any** such container (it execs inside that container; `user` is a label parameter, default root). `job-run`, `job-local` and `job-service-run` are honoured **only** on a container that also has `ofelia.service=true`; app containers never get that label from Annex, so today `job-run` labels on an app are ignored. But an *image* carrying `ofelia.enabled=true`, `ofelia.service=true` and `ofelia.job-run.x.volume=["/:/host"]` would be merged into the container's labels, and `volume` is passed through (`setJobParam` accepts JSON arrays for `volume`, `environment`, `volumes-from`), so Ofelia would start a job container with the host root mounted: **the image check is the only thing between a builder and root on the VM** for that path. The explicit `ofelia.enabled: "false"` stops it for apps without a schedule; for apps with one, only the image check does, so it is not optional. Not tested on the VM; the source is the evidence.
+
+**Why.** Image labels are inherited by the container and are read by Traefik (routes to any host, onto other apps' names), Ofelia (jobs, possibly with host mounts), Homepage (tiles) and the backup tool (stop hooks). A Dockerfile is app code, so it must not be able to speak to the platform (hardening plan "What was found").
+
+**Alternatives.**
+- Deploy-time override of every platform label to empty: Docker has no way to unset an inherited label, only to overwrite known keys; unknown keys would stay.
+- Filtering in Ofelia and Traefik (provider constraints): needs per-service config and does not cover Homepage or backups; the refusal is one place and tells the builder why.
+- Refusing any non-`org.opencontainers.*` label: too strict for base images that carry vendor labels.
+
+**Not done.** Base images that carry such labels would be refused too, with the offending key named; none of the templates do. A label added after the build (a registry pull, `docker tag`) isn't possible: Annex builds the image itself on the VM.
+
+**Tests.** `cli/tests/test_image_labels.py` (the verdict), `test_selftest_builder.py` (the `--evil-label` variant). `scripts/test-platform.sh` deploys the `--evil-label` variant, expects the refusal naming `traefik.http.routers.evil.rule` and no image left, then deploys the clean fixture. Not run here (VM): `test-platform.sh`, `test-smoke.sh`.
+
+**Prod:** an image scanner and a registry policy (only signed images, labels checked at admission) in place of the check in `_build`.

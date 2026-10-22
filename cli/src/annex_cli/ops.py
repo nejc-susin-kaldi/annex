@@ -214,6 +214,7 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
         })
         labels.update(_tile_labels(m, [("Users 7d", "users_7d", "trend"), ("Status", "status", None)]))
     else:
+        labels["traefik.enable"] = "false"  # an image label can't turn routing on (D83)
         # job-only apps idle between runs; jobs are executed inside this container
         svc["command"] = ["sleep", "infinity"]
         labels.update(_tile_labels(m, [("Last run", "last_run", None), ("Status", "status", None)]))
@@ -228,8 +229,8 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
         env["ANNEX_OPS_URL"] = OPS_URL  # the token is in the env file
     if m.webhooks:
         env["ANNEX_HOOKS_URL"] = f"{r.settings.get('ANNEX_URL_HOOKS', '')}/h/{m.name}"  # the token is in the env file
+    labels["ofelia.enabled"] = "true" if m.schedule else "false"  # an image label can't turn the scheduler on (D83)
     if m.schedule:
-        labels["ofelia.enabled"] = "true"
         for j in m.schedule:
             key = f"ofelia.job-exec.{m.name}-{j.name}"
             labels[f"{key}.schedule"] = mf.ofelia_schedule(j.cron)
@@ -297,6 +298,18 @@ def _images(r: Remote, app: str) -> set[str]:
     return set(r.out(f"docker image ls --format '{{{{.Repository}}}}:{{{{.Tag}}}}' annex-app/{_name(app)}").split())
 
 
+# Label prefixes only Annex may set: Traefik routes, Ofelia jobs, Homepage tiles, backup hooks, Annex's own markers (D83).
+PLATFORM_LABEL_PREFIXES = ("traefik.", "ofelia.", "homepage.", "docker-volume-backup.", "com.kaldi.annex")
+
+
+def platform_label_offenders(labels: dict | None, app: str) -> list[str]:
+    """The keys of an image's labels that a Dockerfile must not set, sorted. `docker build` is given exactly
+    com.kaldi.annex=true and com.kaldi.annex.app=<app>, which land on the image too: those two are fine."""
+    allowed = {"com.kaldi.annex": "true", "com.kaldi.annex.app": app}
+    return sorted(k for k, v in (labels or {}).items()
+                  if k.startswith(PLATFORM_LABEL_PREFIXES) and allowed.get(k) != v)
+
+
 def _build(r: Remote, m: mf.Manifest, image: str) -> None:
     d = r.path("deploy", _name(m.name))
     build = r.run(f"docker build --progress=plain --label com.kaldi.annex=true --label com.kaldi.annex.app={m.name} "
@@ -310,6 +323,14 @@ def _build(r: Remote, m: mf.Manifest, image: str) -> None:
         r.run(f"docker rmi {image} >/dev/null 2>&1", check=False)
         raise AnnexError("The image runs as root. End the Dockerfile with a non-root user, e.g. "
                          "'RUN useradd -u 10001 app' and 'USER 10001' (the templates already do this)")
+    raw = r.out(f"docker image inspect -f '{{{{json .Config.Labels}}}}' {image}").strip()
+    bad = platform_label_offenders(json.loads(raw or "null"), m.name)
+    if bad:
+        r.run(f"docker rmi {image} >/dev/null 2>&1", check=False)
+        raise AnnexError(f"The image carries labels that are Annex's job: {', '.join(bad)}. Remove the LABEL lines "
+                         "from the Dockerfile. Annex sets the routing, schedule, discovery-page and backup labels "
+                         "itself from annex.yaml; images may not carry traefik.*, ofelia.*, homepage.*, "
+                         "docker-volume-backup.* or com.kaldi.annex* labels")
 
 
 def _gate(r: Remote, m: mf.Manifest, progress: Progress) -> tuple[str, str] | None:

@@ -1,6 +1,6 @@
 # Annex app contract v0
 
-You write a small folder. Annex does the rest: routing and login, the discovery page entry, schedules, storage, backups and data access. **Never write Docker labels, login code or database credentials.**
+You write a small folder. Annex does the rest: routing and login, the discovery page entry, schedules, storage, backups and data access. **Never write Docker labels, login code or database credentials.** A deploy refuses an image that carries Traefik, Ofelia, Homepage, backup or `com.kaldi.annex` labels (no `LABEL` lines for those in the Dockerfile).
 
 ```
 my-tool/
