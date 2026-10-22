@@ -9,6 +9,7 @@ import getpass
 import io
 import json
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -100,6 +101,42 @@ CONTRACT_TOPICS = {
     "logging": ("Logging", "the log format in detail, request ids, error grouping, browser errors, searching logs"),
     "stack": ("Bring your own stack", "any language or framework without a template (Next.js, Streamlit, Django, Go...)"),
 }
+
+
+def contract_version() -> int:
+    """`ANNEX_CONTRACT_VERSION: n` at the top of contract.md (C4); 0 if the line is missing."""
+    m = re.search(r"^ANNEX_CONTRACT_VERSION:\s*(\d+)\s*$", CONTRACT.read_text(), re.M)
+    return int(m.group(1)) if m else 0
+
+
+def runtime_version(text: str | None) -> int:
+    """The `__version__` of a copy of annex_runtime.py / .js; 0 for a copy from before versions (C4)."""
+    m = re.search(r"^(?:export const )?__version__\s*=\s*(\d+)", text or "", re.M)
+    return int(m.group(1)) if m else 0
+
+
+def runtime_message(name: str, mine: int, current: int, same_bytes: bool) -> str | None:
+    """The deploy warning for one runtime copy, or None when it is the current one. `same_bytes` is whether the
+    uploaded file equals the platform's (a copy of the current version that was edited still gets a note)."""
+    if same_bytes:
+        return None
+    mv = f"v{mine} (before versions)" if mine == 0 else f"v{mine}"
+    if mine < current:
+        return (f"{name}: your runtime is {mv}, the current one is v{current}, so some helpers may be missing or "
+                f"outdated. Replace it with the copy from a new `annex init` folder (templates are kept up to date)")
+    if mine > current:
+        return f"{name}: your runtime is {mv}, newer than the platform's v{current}; check you are using the right Annex"
+    return (f"{name}: your runtime is v{mine}, the current version, but the file differs from the platform's copy. "
+            f"Unless you changed it on purpose, replace it with the copy from a new `annex init` folder")
+
+
+def runtime_versions(folder: Path | None) -> dict[str, int]:
+    """The runtime version of each helper the app folder carries, e.g. {"annex_runtime.py": 1}."""
+    out = {}
+    for name in ("annex_runtime.py", "annex_runtime.js"):
+        if folder and (folder / name).is_file():
+            out[name] = runtime_version((folder / name).read_text(errors="replace"))
+    return out
 
 
 def _contract_sections() -> tuple[str, list[tuple[str, str]]]:
@@ -556,7 +593,8 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
         snapshot = r.vm("snapshot", m.name, "--release", str(n), "--from-release", str(live["release"]))["snapshot"]
     rel = {"release": n, "image": image, "manifest": m.to_dict(), "deployed_at": _now(), "deployed_by": _who(),
            "via": via, "source": str(folder).replace(str(Path.home()), "~", 1), "git": _git(folder),
-           "snapshot": snapshot and snapshot["name"]}
+           "snapshot": snapshot and snapshot["name"],
+           "contract_version": contract_version(), "runtime": runtime_versions(folder)}
 
     failed, prov = _activate(r, m, image, n, progress)
     if failed:
@@ -601,10 +639,11 @@ def _warnings(r: Remote, m: mf.Manifest, folder: Path | None = None) -> list[str
     out = []
     for name in ("annex_runtime.py", "annex_runtime.js"):
         mine, current = (folder / name if folder else None), RUNTIME / name
-        if mine and mine.is_file() and current.is_file() and mine.read_bytes() != current.read_bytes():
-            out.append(f"{name} differs from the platform's current helper, so some helpers may be missing or "
-                       f"outdated. Unless you changed it on purpose, replace it with the copy from a new "
-                       f"`annex init` folder (templates are kept up to date)")
+        if mine and mine.is_file() and current.is_file():
+            msg = runtime_message(name, runtime_version(mine.read_text(errors="replace")),
+                                  runtime_version(current.read_text()), mine.read_bytes() == current.read_bytes())
+            if msg:
+                out.append(msg)
     if m.memory_mb > mf.MEMORY_DEFAULT_MB:
         out.append(f"{m.name} runs with {m.memory_mb}m of memory instead of the default {mf.MEMORY_DEFAULT_MB}m. "
                    "That's fine if it needs it; the platform team sees raised limits in annex list")

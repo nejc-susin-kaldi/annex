@@ -4,6 +4,8 @@ Keep this file as is; build your app in main.py.
 """
 from __future__ import annotations
 
+__version__ = 1  # raised when a helper is added or changed; a deploy tells you when your copy is older
+
 import contextvars
 import hmac
 import json
