@@ -7,9 +7,13 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
-from annex_runtime import GatewayError, browser_errors_js, current_user, gateway, log, report_browser_error, request_context
+from annex_runtime import (CsrfMiddleware, GatewayError, browser_errors_js, current_user, gateway, log,
+                           report_browser_error, request_context)
 
 app = FastAPI(title="__APP_NAME__")
+# Refuses state-changing requests from other sites (the contract's "Cross-site requests"); keep it on. Added before
+# request_log so a refusal still gets a request id and an access line.
+app.add_middleware(CsrfMiddleware)
 
 
 @app.middleware("http")

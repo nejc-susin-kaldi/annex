@@ -21,6 +21,37 @@ export function currentUser(req) {
 }
 
 
+// --- Cross-site requests (`annex contract`, "Cross-site requests") ----------------------------------
+// One session cookie serves every app, so a page of another app (or any site) could make the user's browser POST to
+// yours with their identity. Browsers say where a request comes from: refuse state-changing requests whose
+// Sec-Fetch-Site is not same-origin/none, or whose Origin is not this app's own host. Requests with neither header
+// (curl, server to server, Annex's webhook delivery) pass. Enable it with `app.use(csrfGuard)` before your routes.
+// ANNEX_CSRF: "off" (under env: in annex.yaml) turns it off for an app that other sites call on purpose.
+const STATE_CHANGING = ["POST", "PUT", "PATCH", "DELETE"];
+
+/** Why this request must be refused (a short text), or null. `get` reads a header by name (req.get). */
+export function csrfViolation(method, get) {
+  if (!STATE_CHANGING.includes(String(method).toUpperCase()) || ["off", "false", "0", "no"].includes((process.env.ANNEX_CSRF || "").trim().toLowerCase())) return null;
+  const site = (get("sec-fetch-site") || "").trim().toLowerCase();
+  if (site && site !== "same-origin" && site !== "none") return `Sec-Fetch-Site is ${site}`;
+  const origin = get("origin");
+  if (origin !== undefined && origin !== null) {
+    const own = [get("host"), (get("x-forwarded-host") || "").split(",")[0]].map((h) => (h || "").trim().toLowerCase()).filter(Boolean);
+    let host = "";
+    try { host = new URL(origin.trim()).host.toLowerCase(); } catch { /* "null" or junk: not this app */ }
+    if (!own.includes(host)) return `Origin ${origin.slice(0, 100)} is not this app`;
+  }
+  return null;
+}
+
+/** Express middleware: answers 403 to a cross-site state-changing request (csrfViolation). */
+export function csrfGuard(req, res, next) {
+  const why = csrfViolation(req.method, (n) => req.get(n));
+  if (!why) return next();
+  log.warn("cross-site request refused", { method: req.method, path: req.path, why });
+  res.status(403).type("text/plain").send("Cross-site request refused");
+}
+
 // --- Logging: one JSON object per line on stdout (`annex contract logging`) ------------------------
 // Required: ts, level (debug|info|warn|error), msg. Inside a request every line also gets request_id and user
 // (annexRequest below). LOG_LEVEL (injected, default info) sets the threshold. Never log secrets, tokens,

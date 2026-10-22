@@ -1,10 +1,12 @@
 // __APP_NAME__: an Annex web tool (Express).
 import express from "express";
-import { annexRequest, currentUser, gateway, GatewayError, log, mountBrowserErrors } from "./annex_runtime.js";
+import { annexRequest, csrfGuard, currentUser, gateway, GatewayError, log, mountBrowserErrors } from "./annex_runtime.js";
 
 const app = express();
 // First: a request id on every log line and in the X-Request-Id response header, plus one access line per request.
 app.use(annexRequest);
+// Refuses state-changing requests from other sites (the contract's "Cross-site requests"); keep it on.
+app.use(csrfGuard);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 app.get("/healthz", (req, res) => res.json({ ok: true }));

@@ -8,10 +8,11 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 
-from annex_runtime import browser_errors_js, current_user, log, report_browser_error, request_context
+from annex_runtime import CsrfMiddleware, browser_errors_js, current_user, log, report_browser_error, request_context
 from store import REPORTS, connect
 
 app = FastAPI(title="monthly-report")
+app.add_middleware(CsrfMiddleware)  # refuses state-changing requests from other sites (contract: Cross-site requests)
 
 @app.middleware("http")
 async def request_log(request: Request, call_next):
