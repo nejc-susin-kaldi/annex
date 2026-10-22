@@ -89,7 +89,7 @@ Never run an SMTP client or hold a Slack token. Declare `notify:` in `annex.yaml
 - Errors are JSON `{"error": "..."}` and say what to fix; the helpers raise `NotifyError` with that message and `.status`.
 
 ## Webhooks
-Outside services (Trello, Stripe, GitHub, Slack, anything with a shared secret) can call your tool while the tool itself stays behind login. Declare the hooks in `annex.yaml` (block above); each needs a secret listed under `secrets:`, whose value a human sets with `annex secret set <app> TRELLO_SECRET=...`.
+Outside services (Trello, Stripe, GitHub, Slack, anything with a shared secret) can call your tool while the tool itself stays behind login. Declare the hooks in `annex.yaml` (block above); each needs a secret listed under `secrets:`, whose value a human sets with `annex secret set <app> TRELLO_SECRET` (it asks for the value; `--from-file PATH` also works).
 - **The public URL** is `$ANNEX_HOOKS_URL/<name>`, i.e. `https://hooks.<domain>/h/<app>/<name>`: register that with the provider. It is the only address on Annex that needs no login, and it accepts only the hooks you declare.
 - **What Annex does:** it checks the provider's signature on the raw body (`trello`: HMAC-SHA1 of body plus this URL; `stripe`, `slack`: HMAC-SHA256 with a 5-minute timestamp window; `github`: HMAC-SHA256; `shared-secret`: the header `X-Annex-Hook-Secret`), rejects and logs anything else, stores the event, answers the provider at once, and forwards it to your `path` with `POST`. Slack's URL verification challenge is answered by Annex.
 - **What your endpoint must do:** call `hook_event(headers)` first (`hookEvent(req)` in node). It raises `HookError` with status 401 unless the request carries your `ANNEX_HOOK_TOKEN`, so nobody can reach the endpoint around Annex. It returns `.hook`, `.event_id` and `.attempt`. Then answer **2xx quickly** (do slow work afterwards), and **dedupe by `event_id`**: delivery is at least once, and a retry or replay carries the same id.
@@ -203,7 +203,7 @@ All data is synthetic. Adding a view is a reviewed change by the platform team, 
 | `annex releases <app>` | an app's releases, and which can be rolled back to |
 | `annex rollback <app> [--to rN]` | switch back to an earlier release (default: the one before), with that release's manifest |
 | `annex rollback <app> --with-data` | **human only**: also restore the database and `/data` from that release's time; writes since are lost |
-| `annex secret set <app> KEY=VALUE` | **human only**: store a secret on the server |
+| `annex secret set <app> KEY` | **human only**: store a secret on the server |
 | `annex remove <app> [--keep-data]` | **human only**: remove an app |
 | `annex users list\|add\|set\|remove\|reset` | **human only**: Annex's own user accounts (an app's `owner` must be one of them) |
 | `annex contract` | print this contract |

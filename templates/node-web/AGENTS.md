@@ -11,7 +11,7 @@ This folder is an **Annex app**: a small internal tool that runs behind the clie
 - **No login code.** The user is already signed in. Read them with `currentUser(req)` from `annex_runtime.js` (`.login`, `.name`, `.email`, `.groups`).
 - **No database credentials and no direct product database access.** Product data comes only from `await gateway("<view>", {filters})`, for views listed under `data.views`. Your own data goes in Postgres via `DATABASE_URL` (set `storage.postgres: true`, add `pg` to dependencies), or in files under `/data` (set `storage.files: true`).
 - **No Docker labels, ports or compose files.** Annex generates them.
-- **No secrets in code, files or the image.** Declare the name under `secrets:` and ask a human to run `annex secret set <app> KEY=VALUE`.
+- **No secrets in code, files or the image.** Declare the name under `secrets:` and ask a human to run `annex secret set <app> KEY`.
 - **Don't change the Dockerfile's base image, `USER 10001` or `HEALTHCHECK`.** The app runs on a read-only filesystem; write only to `/tmp` and `/data`.
 
 ## Logging
