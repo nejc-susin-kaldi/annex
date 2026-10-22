@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # M0.1 acceptance checks, run from the Mac through the SSH tunnel:
 #   health of every container, login for all demo users, access rules,
-#   identity-header spoofing, Metabase, network isolation of product-db, and the demo client's
+#   identity-header spoofing, Metabase, network isolation of product-db, app isolation (D88: own networks, egress,
+#   networks-sync after a recreate), and the demo client's
 #   database behind the gateway (D77; skipped when it isn't running).
 # Needs the extras profile running (scripts/extras.sh on) for the Metabase and
 # Dozzle checks; they are skipped otherwise.
@@ -105,11 +106,72 @@ probe() { # probe NETWORK HOST -> exit status of pg_isready
 }
 pdb_ip=$(vm "docker inspect annex-product-db-1 --format '{{(index .NetworkSettings.Networks \"annex-product\").IPAddress}}'")
 expect "control: product network reaches product-db" 0 "$(probe annex-product product-db)"
-for net in annex-edge annex-appdata; do
-  expect "app network $net cannot resolve product-db" 2 "$(probe "$net" product-db)"
-  expect "app network $net cannot reach product-db by IP" 2 "$(probe "$net" "$pdb_ip")"
+for net in annex-edge annex-appdata; do  # platform networks (no app is on them since D88)
+  expect "network $net cannot resolve product-db" 2 "$(probe "$net" product-db)"
+  expect "network $net cannot reach product-db by IP" 2 "$(probe "$net" "$pdb_ip")"
 done
 expect "control: appdata network reaches appdata-db" 0 "$(probe annex-appdata appdata-db)"
+
+echo "App isolation: every app on its own network (D88)"
+A=annex-selftest; B=annex-selftest-other; E=annex-selftest-egress
+for x in $A $B $E; do on_exit "selftest_remove $x"; done
+selftest_build "$ROOT/.build/iso-a" --drop notify,webhooks                                  # Postgres and views
+selftest_build "$ROOT/.build/iso-b" --name $B --drop notify,webhooks --no-postgres          # views only
+selftest_build "$ROOT/.build/iso-e" --name $E --drop notify,webhooks --no-postgres --no-views --egress one.one.one.one
+for d in iso-a iso-b iso-e; do
+  out=$(selftest_deploy "$ROOT/.build/$d") && ok "deploy $(sed -n 's/^name: //p' "$ROOT/.build/$d/annex.yaml")" \
+    || bad "deploy $d" "$(tail -3 <<<"$out")"
+done
+reach() { # reach CONTAINER HOST PORT -> ok, or the error's type (gaierror: the name doesn't resolve)
+  vm "docker exec $1 python -c \"
+import socket, sys
+try:
+    socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=3).close(); print('ok')
+except OSError as e:
+    print(type(e).__name__)
+\" $2 $3"
+}
+members() { vm "docker network inspect $1 -f '{{range .Containers}}{{.Name}} {{end}}'" | tr ' ' '\n' | grep . | sort | xargs; }
+nets_of() { vm "docker inspect $1 -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}} {{end}}'" | tr ' ' '\n' | grep . | sort | xargs; }
+B_IP=$(vm "docker inspect annex-app-$B --format '{{(index .NetworkSettings.Networks \"annex-app-$B\").IPAddress}}'")
+expect "$A can't resolve the other app's container name" gaierror "$(reach annex-app-$A annex-app-$B 8080)"
+expect "  ...or its service name" gaierror "$(reach annex-app-$A $B 8080)"
+has_re "  ...or connect to its address ($B_IP)" "^(OSError|TimeoutError|ConnectionRefusedError|timeout)" "$(reach annex-app-$A "${B_IP:-10.213.255.254}" 8080)"
+expect "  ...and the other way round" gaierror "$(reach annex-app-$B annex-app-$A 8080)"
+expect "control: $A reaches the gateway" ok "$(reach annex-app-$A gateway 3000)"
+expect "control: $A reaches appdata-db" ok "$(reach annex-app-$A appdata-db 5432)"
+expect "control: $A reaches ops /healthz" 200 "$(vm "docker exec annex-app-$A python -c 'import urllib.request; print(urllib.request.urlopen(\"http://ops:8000/healthz\", timeout=5).status)'" 2>&1)"
+expect "control: $B (no Postgres) can't resolve appdata-db" gaierror "$(reach annex-app-$B appdata-db 5432)"
+expect "$A's container is on its own network only" "annex-app-$A" "$(nets_of annex-app-$A)"
+expect "$E's container is on its own network and its egress network" "annex-app-$E annex-egress-$E" "$(nets_of annex-app-$E)"
+for x in $A $B; do
+  expect "annex-app-$x is internal" true "$(vm "docker network inspect annex-app-$x -f '{{.Internal}}'")"
+  has_re "  ...with an explicit subnet from ANNEX_APP_SUBNETS" '^10\.213\.[0-9]+\.0/24$' "$(vm "docker network inspect annex-app-$x -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'")"
+done
+expect "annex-app-$A holds the app, Traefik, ops, the gateway and appdata-db" \
+  "annex-app-$A annex-appdata-db-1 annex-gateway-1 annex-ops-1 annex-traefik-1" "$(members annex-app-$A)"
+expect "annex-app-$B holds the app, Traefik, ops and the gateway" "annex-app-$B annex-gateway-1 annex-ops-1 annex-traefik-1" "$(members annex-app-$B)"
+expect "annex-app-$E holds the app, Traefik and ops" "annex-app-$E annex-ops-1 annex-traefik-1" "$(members annex-app-$E)"
+expect "annex-egress-$E is not internal" false "$(vm "docker network inspect annex-egress-$E -f '{{.Internal}}'")"
+expect "  ...and holds only $E (no platform container)" "annex-app-$E" "$(members annex-egress-$E)"
+expect "no app is on annex-edge" "" "$(members annex-edge | tr ' ' '\n' | grep '^annex-app-' | xargs)"
+expect "no app is on annex-appdata" "" "$(members annex-appdata | tr ' ' '\n' | grep '^annex-app-' | xargs)"
+hasnt "egress: [] can't reach the internet (1.1.1.1:443)" ok "$(reach annex-app-$A 1.1.1.1 443)"
+expect "an app that declares egress can (1.1.1.1:443)" ok "$(reach annex-app-$E 1.1.1.1 443)"
+hasnt "  ...but still not another app" ok "$(reach annex-app-$E "${B_IP:-10.213.255.254}" 8080)"
+expect "the routed page still answers through the front door" 200 \
+  "$(code -b "$TMP/sam.jar" "https://${PATTERN//\{name\}/$A}$(setting ANNEX_PORT_SUFFIX)/healthz")"
+vm "cd $DATA/platform && docker compose up -d --force-recreate --wait gateway >/dev/null 2>&1"
+expect "after a recreate the gateway has left the app networks" "" "$(members annex-app-$A | tr ' ' '\n' | grep gateway || true)"
+sync=$(vm "python3 $DATA/platform/vm/annex_vm.py networks-sync")
+has "networks-sync reconnects it" '"connected": ["gateway"]' "$sync"
+expect "  ...and $A reaches the gateway again" ok "$(reach annex-app-$A gateway 3000)"
+has "  ...and reports no test app on a shared network" '"still_shared": {' "$sync"
+hasnt "  ...($A)" "\"$A\": [" "$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["still_shared"]))' <<<"$sync")"
+expect "networks-sync is idempotent (nothing to connect the second time)" "[]" \
+  "$(vm "python3 $DATA/platform/vm/annex_vm.py networks-sync $A --web --postgres --views" | python3 -c 'import json,sys; print(json.load(sys.stdin)["connected"])')"
+selftest_remove $E
+expect "removing an app removes its networks" "" "$(vm "docker network ls -q --filter name=^annex-app-$E\$ --filter name=^annex-egress-$E\$")"
 
 echo "Demo client database (Goat Arcade, D77)"
 pdb() { vm "docker exec -i annex-product-db-1 psql -XAt -U postgres -d product" 2>&1; }
