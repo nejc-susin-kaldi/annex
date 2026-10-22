@@ -1,0 +1,128 @@
+# CI (D104): unit tests on every push; the local stack (D99) with the smoke, apps and rollback suites on pull requests.
+# No secrets: the stack generates its own on the runner, which is thrown away afterwards.
+# What this proves and what it doesn't: docs/operations.md "CI". Run the same commands by hand: same section.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# a newer push to the same branch or PR replaces the run in progress
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: astral-sh/setup-uv@v6.0.1
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: "24"   # the node-web template's image is node:24 (templates/node-web/Dockerfile)
+      # the same commands as scripts/test-all.sh (runtime, contract, unit, vm-unit, cli-unit, runtime-unit) and the
+      # node half of scripts/test-smoke.sh. python3 here is the runner's system one, as on the VM; PyYAML as python3-yaml.
+      - name: PyYAML for the system python3
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq python3-yaml
+      - name: runtime copies match runtime/
+        run: scripts/sync-runtime.sh --check
+      - name: contract summaries match contract.md
+        run: scripts/sync-contract.sh --check
+      - name: annex-ops (pytest, Python 3.13)
+        run: uv run --quiet --python 3.13 --with-requirements ops/requirements.txt --with pytest pytest ops/tests -q
+      - name: annex_vm (vm/tests)
+        run: python3 -m unittest discover -s vm/tests -q
+      - name: CLI (cli/tests)
+        run: env PYTHONPATH=cli/src python3 -m unittest discover -s cli/tests -q
+      - name: runtime, Python
+        run: python3 -m unittest discover -s runtime/tests -q
+      - name: runtime, Node
+        run: node --test runtime/tests/*.test.mjs
+
+  platform:
+    name: platform (local stack)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest   # amd64, Docker and Compose present: closer to the VM than a Mac
+    timeout-minutes: 20
+    env:
+      ANNEX_ENV: local       # per command in the docs; here for every step of the job
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: astral-sh/setup-uv@v6.0.1
+
+      # mkcert from Ubuntu's archive (signed packages: no checksum of ours to keep in step with a release). The CA is
+      # never installed into a trust store: bootstrap.sh only issues the wildcard certificate (mkcert creates its CA
+      # under `mkcert -CAROOT` on first use), and the suites pass that CA to curl (--cacert, scripts/testlib.sh).
+      - name: Tools the scripts check for (bootstrap.sh)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mkcert python3-yaml jq rsync openssl
+          mkcert -version
+          docker version --format '{{.Server.Version}} {{.Server.Arch}}'
+          docker compose version
+
+      # D99: ANNEX_DATA_DIR under $HOME, and no Docker Desktop context: an empty ANNEX_DOCKER_CONTEXT leaves Docker's
+      # own default (the runner's /var/run/docker.sock; lib.sh and remote.py check that it is a local socket).
+      - name: .env.local from the example
+        run: |
+          sed -e "s|^ANNEX_DOCKER_CONTEXT=.*|ANNEX_DOCKER_CONTEXT=|" \
+              -e "s|^ANNEX_DATA_DIR=.*|ANNEX_DATA_DIR=$HOME/annex|" .env.local.example > .env.local
+          grep -E '^(ANNEX_TARGET|ANNEX_DOCKER_CONTEXT|ANNEX_DATA_DIR|ANNEX_BIND_HTTPS)=' .env.local
+          mkdir -p .build/ci
+
+      # Every suite writes to a file, never through a pipe (a suite can hold one open); the tail shows on failure and
+      # the whole file is an artifact.
+      - name: Bootstrap
+        run: scripts/bootstrap.sh > .build/ci/bootstrap.log 2>&1 || { tail -n 60 .build/ci/bootstrap.log; exit 1; }
+
+      - name: Push (build and start the platform)
+        run: scripts/push.sh > .build/ci/push.log 2>&1 || { tail -n 80 .build/ci/push.log; exit 1; }
+
+      # A fresh stack has no archive, and the smoke suite's "newest backup is under 26 h" check reads one (the VM has
+      # had nightly ones for days). Take one the way the nightly job does; the suite itself stays as it is.
+      - name: First backup (for the smoke suite's backup check)
+        run: scripts/backup.sh > .build/ci/backup.log 2>&1 || { tail -n 40 .build/ci/backup.log; exit 1; }
+
+      - name: Smoke
+        run: scripts/test-smoke.sh > .build/ci/smoke.log 2>&1 || { tail -n 80 .build/ci/smoke.log; exit 1; }
+
+      - name: Apps
+        run: scripts/test-apps.sh > .build/ci/apps.log 2>&1 || { tail -n 80 .build/ci/apps.log; exit 1; }
+
+      - name: Rollback
+        run: scripts/test-rollback.sh > .build/ci/rollback.log 2>&1 || { tail -n 80 .build/ci/rollback.log; exit 1; }
+
+      - name: Collect container logs and state
+        if: always()
+        run: |
+          mkdir -p .build/ci/containers
+          docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' > .build/ci/containers/ps.txt 2>&1 || true
+          for c in $(docker ps -a --filter label=com.kaldi.annex=true --format '{{.Names}}'); do
+            docker logs --tail 300 "$c" > ".build/ci/containers/$c.log" 2>&1 || true
+          done
+          for d in "$HOME"/annex/deploy/*/; do
+            [ -d "$d" ] || continue
+            app=$(basename "$d")
+            for f in run.log run.log.1 build.log releases.jsonl; do
+              if [ -f "$d$f" ]; then cp "$d$f" ".build/ci/containers/deploy-$app-$f" || true; fi
+            done
+          done
+          df -h "$HOME" > .build/ci/containers/df.txt 2>&1 || true
+          docker stats --no-stream > .build/ci/containers/stats.txt 2>&1 || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: platform-logs
+          path: |
+            .build/ci/
+            .build/test-rollback/
+          if-no-files-found: warn
+          retention-days: 7
