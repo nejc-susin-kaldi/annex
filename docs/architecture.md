@@ -78,6 +78,8 @@ All Annex networks carry `com.kaldi.annex=true` and are `internal` (no route out
 
 ## The deploy sequence
 
+> **Since D101 (control-plane V1)** steps 2–9 run in one process on the VM (`vm/annex_deploy.py`, called once as `annex_vm.py deploy <app>`), which holds an flock on `deploy/<app>/.lock.guard` for its whole run: no `.lock/` directory, token or 30-minute rule, `current.json` instead of `owner.json`, progress in `run.log`, and Ctrl-C detaches. The rewrite of this section is control-plane V4; `docs/operations.md` "Releases and rollback" is current.
+
 `annex deploy <folder>` (`cli/src/annex_cli/ops.py`, `deploy`/`_deploy`, with `vm/annex_vm.py` on the VM) after D92. Every VM-side step is an `ssh annex` command; the CLI never needs Docker locally.
 
 1. **Validate** (Mac). `annex.yaml` by `manifest.py` (name, `owner` login, description, env, egress hostnames, secrets declared); the requested views against the live gateway allowlist (`annex_vm.py views`).
