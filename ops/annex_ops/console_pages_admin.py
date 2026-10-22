@@ -81,6 +81,22 @@ def ops_threads(ops: dict | None) -> Raw:
     return v.section("annex-ops", Raw(html), note + ". A thread silent for three times its period, or one that ended, turns the state red and ops' /healthz to 503.")
 
 
+def db_connections(rows: list[dict] | None) -> Raw:
+    """Connections per database on appdata-db against max_connections (D84): each app may hold at most 5, ops 4, the console
+    and the receiver 2. The total turns amber at 70 % and red at 90 %."""
+    if rows is None:
+        return Raw("")
+    if not rows:
+        return v.section("Database connections", Raw('<p class="muted">No connection counts yet.</p>'))
+    total, limit = sum(r["connections"] for r in rows), rows[0]["max"]
+    pct = 100 * total / limit if limit else 0
+    state = "bad" if pct >= 90 else "warn" if pct >= 70 else "ok"
+    table = [[r["database"], str(r["connections"])] for r in rows]
+    return v.section("Database connections", Raw(f'<p>{v.state(state, f"{total} of {limit} connections in use")}</p>'
+                                                 + str(v.table(["Database", "Connections"], table, "none"))),
+                     "Counts include the idle connections each app's pool keeps. An app may hold at most 5 (the contract).")
+
+
 def platform_page(who: v.Who, p: dict, now: float | None = None) -> str:
     """p: front_door, incidents, host (latest sample or None), series, tuning (thresholds), links [(name, url, what)],
     ops (annex-ops's /healthz, optional)."""
@@ -90,7 +106,7 @@ def platform_page(who: v.Who, p: dict, now: float | None = None) -> str:
     rows = [[v.link("/status", "front door"), v.state(p["front_door"]), ""]]
     rows += [[i["subject"].removeprefix("platform:"), v.state("down"), v.raw(i["what"], " since ", v.rel_time(i["opened_at"]))] for i in p["incidents"]]
     body = ["<h1>Platform</h1>", str(v.section("Health", v.table(["Part", "State", "Detail"], rows, "nothing to show"))),
-            str(ops_threads(p.get("ops")))]
+            str(ops_threads(p.get("ops"))), str(db_connections(p.get("connections")))]
     if h is None:
         host_html = '<p class="muted">No host samples yet. annex-ops stores one every 5 minutes.</p>'
     else:
