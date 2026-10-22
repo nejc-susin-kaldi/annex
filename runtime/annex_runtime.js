@@ -5,7 +5,11 @@ import { readFileSync } from "node:fs";
 // Helpers for the Annex app contract: identity, logging, the data gateway, email, Slack and incoming webhooks.
 // Keep this file as is.
 
-/** The signed-in user, from the headers Annex's front door sets (and strips from clients). */
+/**
+ * The signed-in user, from the headers Annex's front door sets (and strips from clients). Trustworthy only on the
+ * front-door path, which is the only way a request reaches the app: apps can't reach each other (each is on its own
+ * network), so never forward these headers to another service or accept them from one you call.
+ */
 export function currentUser(req) {
   const login = req.get("remote-user") || "";
   return {

@@ -16,6 +16,16 @@ for arg in "$@"; do
   esac
 done
 
+# Per-app networks (D88): the platform containers an app needs join its network with `docker network connect`, at
+# runtime. That survives a restart but not a recreate, and Compose recreates a container whenever its config changes,
+# so every app's network is synced again after each step below that may recreate one. (Compose compares only the
+# networks a service declares, so the extra connections never make it recreate anything by themselves.) A failed
+# sync doesn't stop the push: it says which app, and `annex_vm.py networks-sync` can be run again by hand.
+networks_sync() {
+  vm "set -o pipefail; python3 $DATA/platform/vm/annex_vm.py networks-sync | jq -c '{synced: [.apps[] | .app + (if (.connected | length) > 0 then \" +\" + (.connected | join(\",\")) else \"\" end)], errors, still_shared, orphan_networks}'" \
+    || echo "push: networks-sync reported a problem (above): those apps may be unreachable. Fix it, then run on the VM: python3 $DATA/platform/vm/annex_vm.py networks-sync" >&2
+}
+
 render
 # the VM's stamp first: a checkout that doesn't contain what is deployed must not overwrite it
 vm_version=$(mktemp "$ROOT/.build/vm-version.XXXXXX")
@@ -31,6 +41,7 @@ rsync -rlpt --delete "$ROOT/.build/platform/" "$SSH_HOST:$DATA/platform/"
 # `up --wait` would time out on the first push. The password stays on the VM.
 log "Applying annex-ops database (db/appdata/annex_ops.sql)"
 vm "cd $DATA/platform && docker compose up -d --wait appdata-db >/dev/null"
+networks_sync  # a recreated appdata-db is back on the networks of the apps with Postgres before the long start below
 vm "cd $DATA/platform && . $DATA/secrets/master.env 2>/dev/null && [ -n \"\${APPDATA_DB_OPS_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_METABASE_USAGE_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_HOOKS_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_CONSOLE_PASSWORD:-}\" ]" \
   || { echo "push: APPDATA_DB_OPS_PASSWORD, APPDATA_DB_METABASE_USAGE_PASSWORD, APPDATA_DB_HOOKS_PASSWORD or APPDATA_DB_CONSOLE_PASSWORD is missing in $DATA/secrets/master.env: run scripts/bootstrap.sh first" >&2; exit 1; }
 # the passwords reach psql through its environment (`-e NAME` copies it from this shell), never through an argument list (D80)
@@ -40,6 +51,8 @@ vm "cd $DATA/platform && set -a && . $DATA/secrets/master.env && set +a && docke
 
 log "Starting platform ${profile[*]:-(core)}"
 vm "cd $DATA/platform && docker compose ${profile[*]:-} up -d --build --wait --wait-timeout 420 --remove-orphans"
+log "Connecting the platform to every app's network (D88)"
+networks_sync
 
 # every app's releases.jsonl into annex_ops.releases (idempotent; the CLI records new ones as they happen)
 vm "python3 $DATA/platform/vm/annex_vm.py release-backfill >/dev/null"

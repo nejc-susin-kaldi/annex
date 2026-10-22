@@ -7,7 +7,7 @@
 #   5. every number on an app's page is the one `annex status`, `annex usage`, `annex releases` and `annex logs` give;
 #   6. nothing an app logs can inject markup into a page; the pages are read-only and carry security headers;
 #   7. the Homepage tiles point at the console.
-# Deploys annex-selftest (owner sam, with Postgres) and annex-selftest-other (owner kaldi-admin, edge network only); removes both.
+# Deploys annex-selftest (owner sam, with Postgres) and annex-selftest-other (owner kaldi-admin, no Postgres); removes both.
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/testlib.sh"
 use_tunnel
@@ -36,7 +36,7 @@ vm "printf '%s' '{\"errors_scan_s\": 4, \"errors_settle_s\": 4}' > $TUNING && ch
 sleep 6
 A=annex-selftest; B=annex-selftest-other
 selftest_build "$WORK/b" --name $B --owner kaldi-admin --no-postgres --drop notify,webhooks
-selftest_deploy "$WORK/b" >/dev/null && ok "$B deployed (owner kaldi-admin, no Postgres: on the edge network only)" || bad "$B deployed" "failed"
+selftest_deploy "$WORK/b" >/dev/null && ok "$B deployed (owner kaldi-admin, no Postgres: appdata-db is not on its network)" || bad "$B deployed" "failed"
 selftest_build "$WORK/a"
 selftest_deploy "$WORK/a" >/dev/null && ok "$A deployed (owner sam, with Postgres)" || bad "$A deployed" "failed"
 EVIL='<script>alert(1)</script>'
@@ -94,7 +94,12 @@ expect "with no session, the headers alone get the login redirect" 302 "$(code -
 echo "3. No app can reach the console"
 nets() { vm "docker inspect $1 -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}} {{end}}'" | tr ' ' '\n' | grep . | sort | tr '\n' ' '; }
 expect "the console is on platform and its own network only" "annex-console annex-platform " "$(nets annex-console-1)"
-expect "appdata-db is on appdata and the console network only" "annex-appdata annex-console " "$(nets annex-appdata-db-1)"
+# appdata-db also joins the own network of each app with Postgres (D88); those are checked apart
+expect "appdata-db is on appdata and the console network, besides app networks" "annex-appdata annex-console " \
+  "$(nets annex-appdata-db-1 | tr ' ' '\n' | grep . | grep -v '^annex-app-' | tr '\n' ' ')"
+has "  ...it is on the network of $A (Postgres)" "annex-app-$A " "$(nets annex-appdata-db-1)"
+hasnt "  ...and not on the network of $B (no Postgres)" "annex-app-$B " "$(nets annex-appdata-db-1)"
+expect "the console is on no app's network" "" "$(nets annex-console-1 | tr ' ' '\n' | grep '^annex-app-' || true)"
 expect "the console network is internal" True "$(vm "docker network inspect annex-console -f '{{.Internal}}'" | sed 's/true/True/')"
 expect "only the console and appdata-db are on it" "annex-appdata-db-1 annex-console-1" "$(vm "docker network inspect annex-console -f '{{range .Containers}}{{.Name}} {{end}}'" | tr ' ' '\n' | grep . | sort | tr '\n' ' ' | sed 's/ $//')"
 CIPS=$(vm "docker inspect annex-console-1 -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}'")
@@ -110,7 +115,7 @@ for target in ['console'] + sys.argv[1:]:
 }
 for a in annex-selftest annex-selftest-other; do
   out=$(probe annex-app-$a)
-  hasnt "from $a (on edge$( [ "$a" = annex-selftest ] && echo ' and appdata, with Postgres')) the console can't be reached" "REACHED" "$out"
+  hasnt "from $a (on its own network$( [ "$a" = annex-selftest ] && echo ', with appdata-db on it')) the console can't be reached" "REACHED" "$out"
   has "  ...not even by name" "no console" "$out"
 done
 

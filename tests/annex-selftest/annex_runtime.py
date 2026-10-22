@@ -31,7 +31,9 @@ class User:
 
 
 def current_user(headers) -> User:
-    """The signed-in user, from the headers Annex's front door sets (and strips from clients)."""
+    """The signed-in user, from the headers Annex's front door sets (and strips from clients). Trustworthy only on the
+    front-door path, which is the only way a request reaches the app: apps can't reach each other (each is on its own
+    network), so never forward these headers to another service or accept them from one you call."""
     login = headers.get("remote-user", "")
     return User(
         login=login,

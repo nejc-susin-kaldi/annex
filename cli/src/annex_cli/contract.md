@@ -42,7 +42,7 @@ schedule:                     # job and web+job only
 env:                          # non-secret config only
   REPORT_TITLE: Monthly positions
 secrets: [SMTP_PASSWORD]      # names only; a human sets values with `annex secret set`
-egress: []                    # hostnames the app calls; declared, not enforced in v0
+egress: []                    # hostnames the app calls on the internet; [] = no internet access at all
 resources:
   memory: 512m                # optional; default 256m, 128m-512m
 ```
@@ -59,7 +59,7 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `mail`, `ops`, `s
   - `Remote-Email`
   - `Remote-Groups`: comma-separated, e.g. `builders` or `admins,builders`
 
-  Annex strips client-sent copies of these headers, so they can be trusted.
+  Annex strips client-sent copies of these headers, so they can be trusted **on requests that come through the front door**, which is the only way a person's request reaches the app. They are trustworthy only there: never call another app directly (apps can't reach each other; each app is on its own network), and never accept these headers from a service your app calls.
 - **Product data only through the gateway**, never directly from a database. Call `GET $ANNEX_GATEWAY_URL/<view>` with `Authorization: Bearer $ANNEX_GATEWAY_TOKEN`. The gateway is PostgREST, so filters work as query parameters, e.g. `/client_summary?client_name=ilike.*novak*&order=aum_eur.desc&limit=20`. Requesting a view you didn't declare returns 401/403. Every call is logged with your app's identity.
 - **Email and Slack only through Annex.** Never run an SMTP client or hold a Slack token: declare `notify:` in `annex.yaml` and use the template helpers (`send_email`, `post_slack`). Recipients are logins or company addresses; no attachments. Details: `annex contract notify`.
 - **Incoming webhooks** (Trello, Stripe, GitHub, Slack, a shared secret) reach a tool that stays behind login: `annex contract webhooks`.
@@ -73,6 +73,7 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `mail`, `ops`, `s
 - **Usage** is counted for you from the front door's access log; the app does nothing. What counts: signed-in page requests to the app. Not counted: health checks, static files (`.js`, `.css`, images, fonts), anonymous requests, and anything a person did not request. Owners see totals on the app's discovery tile ("Users 7d" with a trend, status) and with `annex usage [app]`; Kaldi and the client see all apps in the "Annex usage" Metabase dashboard and a weekly email digest, which flags tools that are rising (graduation candidates) and ones nobody uses (dormant). Logins are never shown there: per-person counts exist only for admins (`annex usage <app> --by-user`), and raw request records, which never contain query strings, are deleted after 30 days.
 - **Secrets** arrive as environment variables at runtime. Never put them in code, the repo or the image.
 - **Never publish ports.** Only Annex's front door does.
+- **Network:** the app reaches only what it declared: the gateway (`data.views`), its database (`storage.postgres`), Annex's own services (`ANNEX_OPS_URL`), and the internet only if `egress:` lists hosts. With `egress: []` (the default) every outbound connection to the internet fails. A non-empty list opens the internet to the app, not just those hosts, so list exactly the hosts it calls (e.g. `egress: [api.trello.com]`): reviewers read it. No app can reach another app; to share data, go through the gateway or an export.
 - **Logging:** one JSON object per line on stdout through the template's `log` helper (`log.info("report written", rows=12)`), with the right level (`debug`, `info`, `warn`, `error`), and never secrets, tokens or personal data beyond the login. `annex logs <app>` searches 14 days of them, also after a rollback; errors are grouped and the owner is emailed once per new kind. Details: `annex contract logging`.
 - **Health gate.** Every deploy is a numbered release (`r1`, `r2`, …). A web app's new release must return 200 on its `healthcheck` within 60 s (a job-only app must keep running). If it doesn't, Annex switches back to the previous release automatically, and the deploy fails with the new release's last log lines. Your database and `/data` are left as they are, and so are any changes the failed release made to them.
 - **Jobs** run inside the app's container with the same environment (`docker exec`). In `type: job`, the container idles (`sleep infinity`) between runs. Trigger a job by hand with `annex run <app> <job>`. A job's exit code and output are its result.

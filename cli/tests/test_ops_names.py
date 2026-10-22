@@ -35,6 +35,9 @@ CALLS = {
     "_maintenance": lambda a: ops._maintenance(mock.Mock(), a, 5),
     "container": lambda a: ops.container(a),
     "project": lambda a: ops.project(a),
+    "app_network": lambda a: ops.app_network(a),
+    "egress_network": lambda a: ops.egress_network(a),
+    "migrate_networks": lambda a: ops.migrate_networks(a),
 }
 
 

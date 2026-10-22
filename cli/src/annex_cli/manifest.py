@@ -33,6 +33,9 @@ MEMORY_MIN_MB, MEMORY_MAX_MB = 128, 512
 MEMORY_RE = re.compile(r"^(\d+)\s*[mM]$")
 DESCRIPTION_MAX = 200
 LOGIN_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
+# an egress entry: a hostname, optionally with a leading "*." (D88: documentation of what the app calls; the
+# network grants any host once the list isn't empty)
+EGRESS_HOST_RE = re.compile(r"^(\*\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$")
 SLACK_CHANNEL_RE = re.compile(r"^#[a-z0-9][a-z0-9_-]{0,79}$")  # same rule in vm/annex_vm.py and annex-ops
 
 
@@ -244,9 +247,17 @@ def load(folder: Path) -> Manifest:
             p.append(f"secrets: {s} is set by Annex; pick another name")
 
     egress = raw.get("egress") or []
+    egress_help = ("List the hostnames the app calls on the internet, e.g. egress: [api.trello.com], or egress: [] "
+                   "for none. With [] the app has no internet access at all; any non-empty list gives it access to "
+                   "any host (the list isn't filtered per hostname, but it is what reviewers read)")
     if not isinstance(egress, list):
-        p.append("egress: must be a list of hostnames (declared, not enforced in v0)")
+        p.append(f"egress: must be a list. {egress_help}")
         egress = []
+    else:
+        bad_hosts = [e for e in egress if not isinstance(e, str) or not EGRESS_HOST_RE.fullmatch(e.lower())]
+        if bad_hosts:
+            p.append(f"egress: {', '.join(map(repr, bad_hosts))} is not a hostname (no scheme, path or port). {egress_help}")
+            egress = []
 
     notify = raw.get("notify") or {}
     notify_email, notify_slack = False, []
@@ -355,7 +366,7 @@ def load(folder: Path) -> Manifest:
     return Manifest(name=name, owner=owner.strip(), description=description.strip(), type=typ,
                     port=port, healthcheck=healthcheck, postgres=bool(storage.get("postgres")),
                     files=bool(storage.get("files")), views=list(views), schedule=schedule,
-                    env=env, secrets=list(secrets), egress=[str(e) for e in egress], memory_mb=memory_mb,
+                    env=env, secrets=list(secrets), egress=[str(e).lower() for e in egress], memory_mb=memory_mb,
                     notify_email=notify_email, notify_slack=notify_slack,
                     alerts_to=alerts_to, webhooks=webhooks)
 
