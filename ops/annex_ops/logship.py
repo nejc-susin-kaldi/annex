@@ -220,9 +220,13 @@ def parse_gateway_line(raw: str) -> Parsed | None:
 def make_row(ns: int, stream: str, raw: str, parsed: Parsed, container: str, app: str | None, release: int | None,
              hash_key: str) -> logstore.Row:
     ts = datetime.fromtimestamp(ns // 10**9, timezone.utc).replace(microsecond=(ns % 10**9) // 1000)
-    h = md5(f"{hash_key}\0{stream}\0{ns}\0{raw}".encode("utf-8", "replace")).hexdigest()
     return logstore.Row(ts, ns % 1000, parsed.app or app, container, release, stream, parsed.level, parsed.request_id,
-                        parsed.msg, parsed.fields, h)
+                        parsed.msg, parsed.fields, line_hash(hash_key, stream, ns, raw))
+
+
+def line_hash(hash_key: str, stream: str, ns: int, raw: str) -> str:
+    """The row's identity (the `h` column): from the raw line alone, so it is known before the line is parsed (B6)."""
+    return md5(f"{hash_key}\0{stream}\0{ns}\0{raw}".encode("utf-8", "replace")).hexdigest()
 
 
 def usable(ns: int, now_ns: int, retention_days: int) -> bool:
@@ -339,20 +343,24 @@ class ContainerHandler:
         s = config.log_settings()
         if not usable(ns, time.time_ns(), s.log_retention_days):
             return
+        # Order (B6): replays out, then the rate cap, and only then the parse (the expensive part: JSON, regexes). The
+        # cap needs nothing but `ns`, so a flood costs a hash and a counter per line, not a parse.
+        if not self.recent.add(line_hash(self.name, stream, ns, raw)):
+            return
+        self.cap.limit = s.log_rate_per_s
+        ok, report = self.cap.admit(ns)
+        if report:
+            self.sink.add(dropped_row(*report, self.cap.limit, self.spec.container or self.name, self.app,
+                                      self.releases.get(self.app) if self.release is None and self.releases and self.app else self.release,
+                                      self.name))
+        if not ok:
+            return
         parsed = self.spec.parse(raw)
         if parsed is None:
             return
         app = parsed.app or self.app
         release = self.release if self.release is not None else (self.releases.get(app) if self.releases and app else None)
-        row = make_row(ns, stream, raw, parsed, self.spec.container or self.name, app, release, self.name)
-        if not self.recent.add(row.h):
-            return
-        self.cap.limit = s.log_rate_per_s
-        ok, report = self.cap.admit(ns)
-        if report:
-            self.sink.add(dropped_row(*report, self.cap.limit, self.spec.container or self.name, app, release, self.name))
-        if ok:
-            self.sink.add(row)
+        self.sink.add(make_row(ns, stream, raw, parsed, self.spec.container or self.name, app, release, self.name))
 
     def flush_drops(self) -> None:
         report = self.cap.pending(int(time.time()))
@@ -409,20 +417,20 @@ class JobOutput:
         if not usable(ns, time.time_ns(), s.log_retention_days):
             return
         app, job, kind = self.current
-        parsed = parse_app_line(text)
-        if parsed is None:
+        stream = "stderr" if kind == "StdErr" else "stdout"
+        if not self.recent.add(line_hash("ofelia", stream, ns, raw)):
             return
-        row = make_row(ns, "stderr" if kind == "StdErr" else "stdout", raw, parsed, f"job:{job}", app,
-                       self.releases.get(app), "ofelia")
-        if not self.recent.add(row.h):
-            return
-        cap = self.caps.setdefault(app, RateCap(s.log_rate_per_s))
+        cap = self.caps.setdefault(app, RateCap(s.log_rate_per_s))   # before the parse, as in ContainerHandler (B6)
         cap.limit = s.log_rate_per_s
         ok, report = cap.admit(ns)
         if report:
             self.sink.add(dropped_row(*report, cap.limit, f"job:{job}", app, self.releases.get(app), "ofelia"))
-        if ok:
-            self.sink.add(row)
+        if not ok:
+            return
+        parsed = parse_app_line(text)
+        if parsed is None:
+            return
+        self.sink.add(make_row(ns, stream, raw, parsed, f"job:{job}", app, self.releases.get(app), "ofelia"))
 
 
 # --- following containers ---------------------------------------------------------------------------
@@ -611,6 +619,8 @@ def drain(container: str, timeout: float = 5.0) -> dict:
         for ns, stream, line in docker_api.stream_logs_ns(cid, since, follow=False, timeout=max(1.0, timeout)):
             handler(ns, stream, line)
             lines += 1
+            if lines % logstore.BATCH == 0:
+                sink.flush()  # this sink has no thread of its own: add() only queues, so insert as we go
             if time.monotonic() > deadline:
                 timed_out = True
                 break

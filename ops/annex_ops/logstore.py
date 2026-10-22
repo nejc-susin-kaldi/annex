@@ -24,6 +24,7 @@ BATCH = 500            # ... or as soon as this many are waiting
 MAX_BUFFER = 20000     # the database is down: keep this many lines in memory, then drop the oldest ...
 MAX_BUFFER_BYTES = 20 * 2**20  # ... or this many bytes (row_bytes), whichever comes first (D86; LogSettings sets both)
 ROW_OVERHEAD = 600     # what a Row costs in Python beyond its text: the object, its dict, the datetime, five strings
+FLUSH_WAIT_S = 5.0     # flush() waits this long for the sink thread before it says "not stored" (B6)
 PARTITIONS_AHEAD = 2   # the keeper makes today's partition and this many days more
 LEVEL_RANK = {"debug": 0, "info": 1, "warn": 2, "error": 3}
 PARTITION = re.compile(r"^logs_(\d{4})(\d\d)(\d\d)$")
@@ -162,10 +163,13 @@ def insert_rows(rows: list[Row], known: set[date]) -> int:
 
 
 class Sink:
-    """Buffers rows and inserts them in batches. Thread-safe. `flush()` returns True once everything added so far
-    is in the database: followers call it before they save a cursor, so a cursor never gets ahead of the rows.
-    While the database is down the buffer is bounded by rows and by bytes (D86): the oldest rows go first and are
-    counted in `lost`."""
+    """Buffers rows and inserts them in batches. Thread-safe. While the sink thread runs (`start()`, B6) `add()` only
+    enqueues and that thread does every insert, so a slow INSERT never stalls a follower. `flush(timeout)` returns
+    True once everything added before the call is in the database (or was dropped by the budget, D86): followers
+    call it before they save a cursor, so a cursor never gets ahead of the rows. It waits on the sink thread and
+    gives up at the timeout, or as soon as an insert fails: False means "not stored, don't move the cursor".
+    A sink without a thread (`ctl logs-drain`) inserts inline in `flush()` instead. While the database is down the
+    buffer is bounded by rows and by bytes (D86): the oldest rows go first and are counted in `lost`."""
 
     def __init__(self, max_rows: int | None = None, max_bytes: int | None = None) -> None:
         if max_rows is None or max_bytes is None:
@@ -178,7 +182,13 @@ class Sink:
         self.sizes: list[int] = []  # row_bytes of each row in buf
         self.bytes = 0
         self.lock = threading.Lock()
-        self.flush_lock = threading.Lock()
+        self.cond = threading.Condition(self.lock)  # waiters in flush(); notified after every insert attempt
+        self.flush_lock = threading.Lock()          # one insert at a time, whoever runs it
+        self.wake = threading.Event()               # a full batch, or a flush() waiting: don't sleep out FLUSH_S
+        self.threaded = False
+        self.added = 0       # rows ever added (a sequence number: the last row has this number)
+        self.stored = 0      # every row up to this number is in the database or was dropped by the budget
+        self.failures = 0    # insert attempts that failed, so a waiting flush() can stop waiting
         self.known: set[date] = set()
         self.lost = 0
         self.last_error = 0.0
@@ -196,37 +206,57 @@ class Sink:
             self.bytes = total
 
     def add(self, row: Row) -> None:
+        """Enqueue only: never touches the database and never waits for it (a sink without a thread keeps the rows for flush())."""
         size = row_bytes(row)
         with self.lock:
             self.buf.append(row)
             self.sizes.append(size)
             self.bytes += size
+            self.added += 1
             if len(self.buf) > self.max_rows or self.bytes > self.max_bytes:
                 self._trim()
             full = len(self.buf) >= BATCH
         if full:
-            self.flush()
+            self.wake.set()
 
-    def flush(self) -> bool:
+    def _insert_pending(self) -> None:
+        """One insert attempt of everything buffered (the sink thread's job, or flush() on a sink without a thread)."""
         with self.flush_lock:
             with self.lock:
-                rows, sizes = self.buf, self.sizes
+                rows, sizes, upto = self.buf, self.sizes, self.added
                 self.buf, self.sizes, self.bytes = [], [], 0
-            if not rows:
-                return True
             try:
-                insert_rows(rows, self.known)
-                return True
+                if rows:
+                    insert_rows(rows, self.known)
             except Exception as e:  # noqa: BLE001: keep the rows for the next try
-                with self.lock:
+                with self.cond:
                     self.buf = rows + self.buf  # the oldest are dropped and counted, as add() does
                     self.sizes = sizes + self.sizes
                     self.bytes = sum(self.sizes)
                     self._trim()
+                    self.failures += 1
+                    self.cond.notify_all()
                 if time.monotonic() - self.last_error > 60:  # the shipper's own errors must not flood the log it ships
                     self.last_error = time.monotonic()
                     log(f"insert failed ({type(e).__name__}); {len(rows)} line(s) wait for the next try\n" + traceback.format_exc(limit=2))
-                return False
+                return
+            with self.cond:
+                self.stored = max(self.stored, upto)  # nothing numbered up to `upto` is waiting any more
+                self.cond.notify_all()
+
+    def flush(self, timeout: float = FLUSH_WAIT_S) -> bool:
+        """True once every row added before this call is stored. Waits for the sink thread, at most `timeout`
+        seconds, and returns False sooner if an insert fails meanwhile (the rows stay buffered for the next try)."""
+        with self.lock:
+            target, failures = self.added, self.failures
+        if not self.threaded:
+            self._insert_pending()
+        else:
+            self.wake.set()
+            with self.cond:
+                self.cond.wait_for(lambda: self.stored >= target or self.failures > failures, timeout)
+        with self.lock:
+            return self.stored >= target
 
     def status(self) -> dict:
         """Rows and bytes waiting for the database, their limits, and rows dropped since ops started because the buffer was full (/healthz)."""
@@ -237,14 +267,16 @@ class Sink:
     def run(self) -> None:
         threads.register("log-sink", 30)
         while True:
-            time.sleep(FLUSH_S)
+            self.wake.wait(FLUSH_S)
+            self.wake.clear()
             threads.beat("log-sink")
             try:
-                self.flush()
+                self._insert_pending()
             except Exception:  # noqa: BLE001
                 pass
 
     def start(self) -> None:
+        self.threaded = True
         threading.Thread(target=self.run, daemon=True, name="log-sink").start()
 
 
