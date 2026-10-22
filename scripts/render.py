@@ -141,6 +141,9 @@ def main() -> None:
         shutil.copy2(ROOT / name, OUT / name)
     for d in ("config", "db", "vm"):
         shutil.copytree(ROOT / d, OUT / d)
+    # the deploy runs on the VM (vm/annex_deploy.py, D101) with the CLI's own manifest and log-convention modules
+    for src, dest in (("manifest.py", "annex_manifest.py"), ("logcheck.py", "annex_logcheck.py")):
+        shutil.copy2(ROOT / "cli" / "src" / "annex_cli" / src, OUT / "vm" / dest)
     # annex-ops is the first platform image built from source on the VM
     shutil.copytree(ROOT / "ops", OUT / "ops",
                     ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "tests"))

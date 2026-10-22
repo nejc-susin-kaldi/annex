@@ -1,10 +1,11 @@
-"""An image may not carry labels that route, schedule, list or back up (D83): the verdict is a pure function."""
+"""An image may not carry labels that route, schedule, list or back up (D83): the verdict is a pure function, on the
+VM since D101 (vm/annex_deploy.py). Stdlib unittest: python3 -m unittest discover -s vm/tests"""
+import sys
 import unittest
+from pathlib import Path
 
-try:
-    from annex_cli import ops
-except ImportError as e:  # the CLI's dependencies (PyYAML) aren't in this Python
-    raise unittest.SkipTest(f"annex_cli not importable here: {e}")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import annex_deploy as ops  # noqa: E402
 
 OURS = {"com.kaldi.annex": "true", "com.kaldi.annex.app": "demo"}
 
