@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Render, sync the platform bundle to the VM and (re)start it with the VM's Compose.
+# Render, sync the platform bundle to the VM (or the local stack: ANNEX_ENV=local, D99) and (re)start it with its Compose.
 # Usage: scripts/push.sh [--extras] [--force]
 #   --extras  also starts Metabase and Dozzle
 #   --force   push although the VM's last pushed commit is not an ancestor of this checkout
@@ -31,11 +31,11 @@ render
 vm_version=$(mktemp "$ROOT/.build/vm-version.XXXXXX")
 trap 'rm -f "$vm_version"' EXIT
 vm "if [ -f $DATA/platform/VERSION ]; then cat $DATA/platform/VERSION; fi" > "$vm_version" \
-  || { echo "push: could not read $DATA/platform/VERSION on $SSH_HOST" >&2; exit 1; }
+  || { echo "push: could not read $DATA/platform/VERSION on $WHERE" >&2; exit 1; }
 vm_arg=$vm_version; [ -s "$vm_version" ] || vm_arg=-
-python3 "$ROOT/scripts/pushcheck.py" check "$ROOT/.build/platform/VERSION" "$vm_arg" ${force[@]+"${force[@]}"}
-log "Syncing platform to $SSH_HOST:$DATA/platform"
-rsync -rlpt --delete "$ROOT/.build/platform/" "$SSH_HOST:$DATA/platform/"
+python3 "$ROOT/scripts/pushcheck.py" check "$BUILD/platform/VERSION" "$vm_arg" ${force[@]+"${force[@]}"}
+log "Syncing platform to $WHERE: $DATA/platform"
+rsync -rlpt --delete "$BUILD/platform/" "$(dest "$DATA/platform/")"
 
 # annex-ops's database goes in before the full start: its healthcheck needs the database, so
 # `up --wait` would time out on the first push. The password stays on the VM.
@@ -77,6 +77,11 @@ if vm "cd $DATA/platform && docker compose ps --status running --services | grep
   vm "ANNEX_DATA_DIR=$DATA bash $DATA/platform/vm/metabase-setup.sh"
 fi
 
-vm "docker image prune -f >/dev/null; docker builder prune -f --max-used-space 1500mb >/dev/null"
+if [ "$TARGET" = local ]; then
+  # this machine's Docker holds the user's own images and build cache too: only Annex's dangling images go (D99)
+  vm "docker image prune -f --filter label=com.kaldi.annex=true >/dev/null"
+else
+  vm "docker image prune -f >/dev/null; docker builder prune -f --max-used-space 1500mb >/dev/null"
+fi
 vm "cd $DATA/platform && docker compose ps --format 'table {{.Service}}\t{{.Status}}'"
 log "Home: $(setting_local ANNEX_URL_HOME)"

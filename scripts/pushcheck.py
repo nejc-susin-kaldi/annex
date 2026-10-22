@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The push stamp: what scripts/push.sh compares before it overwrites the platform on the VM.
 
-`.build/platform/VERSION` (written by render.py) holds `commit=`, `dirty=` and `env_sha256=`.
+`.build/<env>/platform/VERSION` (written by render.py; <env> is vm or local, D99) holds `commit=`, `dirty=` and `env_sha256=`.
 push.sh passes the VM's copy of that file (or `-`, on a first push) to `check`, which refuses
 when the VM's commit is not an ancestor of the local HEAD, so an older checkout can't quietly
 roll the platform back. The decision is a pure function (`decide`); the git calls are in

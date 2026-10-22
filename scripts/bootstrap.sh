@@ -1,20 +1,31 @@
 #!/usr/bin/env bash
-# One-time (idempotent) VM preparation: directory layout, secrets and demo users
-# generated on the VM, and in local TLS mode the mkcert wildcard certificate.
+# One-time (idempotent) preparation of the VM, or of the local stack with ANNEX_ENV=local (D99): directory layout,
+# secrets and demo users generated there, and in local TLS mode the mkcert wildcard certificate.
 # Re-running never replaces existing secrets.
 source "$(dirname "$0")/lib.sh"
 
 render
-log "Preparing $DATA on $SSH_HOST"
-vm "test -d $DATA && test -w $DATA" || { echo "$DATA missing or not writable on $SSH_HOST" >&2; exit 1; }
+log "Preparing $DATA on $WHERE"
+if [ "$TARGET" = local ]; then
+  # the VM's /srv/annex is made by a human (a system change); the local data dir is ours, outside the repo (D99)
+  mkdir -p "$DATA"
+  missing=
+  for c in docker jq rsync openssl mkcert; do command -v "$c" >/dev/null || missing="$missing $c"; done
+  [ -z "$missing" ] || { echo "local stack: missing on this machine:$missing" >&2; exit 1; }
+  python3 -c 'import yaml' 2>/dev/null \
+    || { echo "local stack: python3 ($(command -v python3)) has no PyYAML, which annex_vm.py users-* needs (as python3-yaml on the VM). Install it for that python3: python3 -m pip install --user pyyaml==6.0.3" >&2; exit 1; }
+  docker info >/dev/null 2>&1 \
+    || { echo "local stack: Docker (context ${DOCKER_CONTEXT:-default}) isn't answering. Start Docker Desktop, then run this again." >&2; exit 1; }
+fi
+vm "test -d $DATA && test -w $DATA" || { echo "$DATA missing or not writable on $WHERE" >&2; exit 1; }
 vm "mkdir -p $DATA/platform/vm"
-scp -q "$ROOT/vm/bootstrap-secrets.sh" "$SSH_HOST:$DATA/platform/vm/bootstrap-secrets.sh"
+put "$ROOT/vm/bootstrap-secrets.sh" "$DATA/platform/vm/"
 vm "ANNEX_DATA_DIR=$DATA bash $DATA/platform/vm/bootstrap-secrets.sh $(compose_image authelia/authelia)"
 
-if [ "$(setting_local ANNEX_TLS_MODE)" = local ]; then   # before the first push the VM has no .env: the local render
+if [ "$(setting_local ANNEX_TLS_MODE)" = local ]; then   # before the first push there is no deployed .env: the local render
   names=$(setting_local ANNEX_CERT_NAMES)
   if vm "test -s $DATA/certs/wildcard.pem && test -s $DATA/certs/names && [ \"\$(cat $DATA/certs/names)\" = '$names' ]"; then
-    log "Certificate for $names already on the VM"
+    log "Certificate for $names already in $DATA/certs"
   else
     log "Issuing mkcert certificate for $names"
     tmp=$(mktemp -d)
@@ -22,8 +33,8 @@ if [ "$(setting_local ANNEX_TLS_MODE)" = local ]; then   # before the first push
     # shellcheck disable=SC2086
     (cd "$tmp" && mkcert -cert-file wildcard.pem -key-file wildcard-key.pem $names)
     echo "$names" > "$tmp/names"
-    scp -q "$tmp/wildcard.pem" "$tmp/wildcard-key.pem" "$tmp/names" "$SSH_HOST:$DATA/certs/"
+    put "$tmp/wildcard.pem" "$tmp/wildcard-key.pem" "$tmp/names" "$DATA/certs/"
     vm "chmod 600 $DATA/certs/wildcard-key.pem"
   fi
 fi
-log "Bootstrap done. Next: scripts/push.sh"
+if [ "$ANNEX_ENV" = vm ]; then log "Bootstrap done. Next: scripts/push.sh"; else log "Bootstrap done. Next: ANNEX_ENV=$ANNEX_ENV scripts/push.sh"; fi

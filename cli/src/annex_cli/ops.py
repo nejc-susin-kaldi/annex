@@ -803,7 +803,7 @@ def _ops_ctl(r: Remote, *args: str) -> dict | list:
         except (IndexError, json.JSONDecodeError, KeyError, TypeError):
             pass
         raise AnnexError(f"annex-ops isn't answering ({detail or 'is the container running?'}). "
-                         f"Check it with: ssh {r.host} docker logs {OPS_CONTAINER}") from None
+                         f"Check it with: {r.hint('docker logs ' + OPS_CONTAINER)}") from None
 
 
 def usage(app: str | None = None, by_user: bool = False) -> dict | list:

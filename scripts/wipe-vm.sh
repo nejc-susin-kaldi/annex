@@ -3,6 +3,9 @@
 # database (democlient, D77), the build cache, and everything under /srv/annex (secrets included).
 # bootstrap.sh + push.sh bring it back with new secrets and passwords.
 source "$(dirname "$0")/lib.sh"
+# The VM is dedicated to Annex, so this prunes every image and the build cache. On a Mac's Docker that would take the
+# user's own images too: the local stack has its own, narrower wipe (docs/setup.md "Local stack", D99).
+[ "$TARGET" = ssh ] || { echo "wipe-vm.sh is for the VM only; wipe the local stack as docs/setup.md \"Local stack\" says" >&2; exit 2; }
 
 echo "This deletes ALL Annex containers, networks, volumes, images and everything under $SSH_HOST:$DATA."
 if [ "${1:-}" != --yes ]; then

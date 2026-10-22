@@ -4,6 +4,12 @@
 # Usage: scripts/tunnel.sh up|down|status   (no argument: status)
 source "$(dirname "$0")/lib.sh"
 PORT=${ANNEX_PUBLIC_PORT:-8443}
+if [ "$TARGET" = local ]; then   # the local stack (D99) publishes Traefik on loopback itself
+  case "${1:-status}" in
+    up|down|status) echo "local mode: no tunnel, Traefik is on ${ANNEX_BIND_HTTPS:-127.0.0.1:$PORT}"; exit 0 ;;
+    *) echo "usage: $0 up|down|status" >&2; exit 2 ;;
+  esac
+fi
 TARGET=443
 [ "${ANNEX_TLS_MODE:-local}" = upstream ] && TARGET=80
 mkdir -p "$ROOT/.build"

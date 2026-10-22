@@ -1,8 +1,8 @@
-# Added to COMPOSE_FILE when ANNEX_TLS_MODE=local: Traefik terminates HTTPS
+# Added to COMPOSE_FILE when ANNEX_TLS_MODE=local: Traefik terminates HTTPS on ANNEX_BIND_HTTPS (443 on the VM)
 # with the mkcert wildcard certificate in ${ANNEX_DATA_DIR}/certs.
 services:
   traefik:
     ports:
-      - "443:443"
+      - "${ANNEX_BIND_HTTPS}:443"
     volumes:
       - ${ANNEX_DATA_DIR}/certs:/certs:ro

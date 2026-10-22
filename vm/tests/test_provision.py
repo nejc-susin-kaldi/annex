@@ -115,6 +115,33 @@ class Provision(Base):
         (sdir / "secrets.env").write_text("API='k'\n")
         return self.call(vm.cmd_provision, {**self.ARGS, **over})
 
+    def chowns(self):
+        return [a for a in self.fake.commands("chown") if "-R" in a]
+
+    def test_files_chowned_when_owner_differs(self):
+        # a test runs as the Mac or VM user, never uid 10001: the first provision chowns /data
+        self.assertTrue(self.provision(files=True)["ok"])
+        self.assertTrue((self.d / "apps" / "x-y" / "data").is_dir())
+        self.assertEqual(len(self.chowns()), 1)
+        self.assertIn(f"{vm.APP_UID}:{vm.APP_UID}", self.chowns()[0])
+
+    def test_files_not_chowned_when_owned_already(self):
+        with unittest.mock.patch.object(vm, "owner", return_value=vm.APP_UID):
+            self.assertTrue(self.provision(files=True)["ok"])
+        self.assertEqual(self.chowns(), [])
+
+    def test_files_owner_unreadable_chowns_each_time(self):
+        # Docker Desktop bind mount (D99): the Mac side can't see the chown, or the owner can't be read: chown again,
+        # every deploy, and never fail on it
+        with unittest.mock.patch.object(vm, "owner", return_value=None):
+            self.assertTrue(self.provision(files=True)["ok"])
+            self.assertTrue(self.provision(files=True)["ok"])
+        self.assertEqual(len(self.chowns()), 2)
+
+    def test_owner_of_a_missing_path_is_none(self):
+        self.assertIsNone(vm.owner(self.d / "nope"))
+        self.assertIsInstance(vm.owner(self.d), int)
+
     def test_sql_for_a_full_app(self):
         res = self.provision()
         self.assertTrue(res["ok"])

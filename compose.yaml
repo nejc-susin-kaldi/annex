@@ -1,4 +1,4 @@
-# Annex platform. Runs on the VM from /srv/annex/platform (synced by scripts/push.sh).
+# Annex platform. Runs on the VM from /srv/annex/platform, or locally from ${ANNEX_DATA_DIR}/platform (D99), synced by scripts/push.sh.
 # Settings come from the generated .env next to this file; secrets from
 # ${ANNEX_DATA_DIR}/secrets. Metabase and Dozzle are in the "extras" profile.
 name: annex
@@ -61,7 +61,7 @@ services:
     image: traefik:v3.7.14
     command: ["traefik", "--configFile=/etc/traefik/traefik.yml"]
     ports:
-      - "80:80"
+      - "${ANNEX_BIND_HTTP}:80"
     environment:
       <<: *tz
       ANNEX_CONFIG_HASH: ${ANNEX_CONFIG_HASH_TRAEFIK}

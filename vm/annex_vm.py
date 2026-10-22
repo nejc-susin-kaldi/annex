@@ -155,6 +155,17 @@ def helper_image() -> str:
     return r.stdout.strip()
 
 
+def owner(path: Path) -> int | None:
+    """The uid that owns a path as this process sees it, or None when it can't be read. On the VM that is the real
+    owner. On the local stack (D99) the data dir is a Docker Desktop bind mount and this process runs on the Mac, which
+    sees the Mac user whatever a container chowned it to: callers then chown each time (cheap, and idempotent), and
+    an owner that can't be read is treated the same way, never as a failure."""
+    try:
+        return path.stat().st_uid
+    except OSError:
+        return None
+
+
 def as_root(cmd: list[str], mount: Path) -> None:
     run(["docker", "run", "--rm", "--network", "none", "--entrypoint", cmd[0],
                     "-v", f"{mount}:{mount}", helper_image(), *cmd[1:]], check=True, capture_output=True)
@@ -919,7 +930,7 @@ def cmd_provision(a: argparse.Namespace) -> None:
     if a.files:
         data = DATA / "apps" / app / "data"
         data.mkdir(parents=True, exist_ok=True)
-        if data.stat().st_uid != APP_UID:
+        if owner(data) != APP_UID:
             as_root(["chown", "-R", f"{APP_UID}:{APP_UID}", str(data)], data)
     write_kv(sdir / "runtime.env", env)
     (DATA / "deploy" / app).mkdir(parents=True, exist_ok=True)
