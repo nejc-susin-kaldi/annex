@@ -12,7 +12,8 @@ lines, everything else is one `key: value` line, so a variant is a few text edit
   --job-only         type: job: no web part, no webhooks (the app idles; its jobs run through the scheduler)
   --broken-health    the health check path is /nope, which answers 404: the deploy fails its health gate
   --no-postgres      storage.postgres: false
-  --env K=V          set or add an `env:` entry (SELFTEST_LOG=plain, SELFTEST_MARKER=..., SELFTEST_BAD_MIGRATION=1, ...)
+  --evil-label       the Dockerfile adds LABEL traefik.http.routers.evil.rule=...: the deploy must refuse the image (D83)
+  --env K=V         set or add an `env:` entry (SELFTEST_LOG=plain, SELFTEST_MARKER=..., SELFTEST_BAD_MIGRATION=1, ...)
   --secret NAME      declare one more secret
   --no-views         no gateway views (data.views: [])
   --views a,b        these gateway views instead of the fixture's (e.g. the demo client's: leaderboard,machine_floor)
@@ -81,6 +82,10 @@ def build(a: argparse.Namespace) -> None:
         k, _, v = kv.partition("=")
         y = set_env(y, k, v)
     (out / "annex.yaml").write_text(y)
+    if a.evil_label:
+        df = out / "Dockerfile"
+        label = "LABEL traefik.http.routers.evil.rule=Host(`evil.example`)\n"
+        df.write_text(df.read_text().replace("USER 10001\n", "USER 10001\n" + label, 1))
 
 
 def main() -> None:
@@ -93,6 +98,7 @@ def main() -> None:
     b.add_argument("--drop")
     b.add_argument("--job-only", action="store_true")
     b.add_argument("--broken-health", action="store_true")
+    b.add_argument("--evil-label", action="store_true")
     b.add_argument("--no-postgres", action="store_true")
     b.add_argument("--no-views", action="store_true")
     b.add_argument("--views")
