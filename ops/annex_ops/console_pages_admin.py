@@ -97,6 +97,22 @@ def db_connections(rows: list[dict] | None) -> Raw:
                      "Counts include the idle connections each app's pool keeps. An app may hold at most 5 (the contract).")
 
 
+def alert_messages(m: dict | None) -> Raw:
+    """The alert messages that weren't delivered (annex_ops.outbox, D90): given up after three attempts, or refused (an
+    address outside the allowed domains). Green when there are none; the number still waiting for a retry beside it."""
+    if m is None:
+        return Raw("")
+    waiting = f", {m['waiting']} waiting for a retry" if m["waiting"] else ""
+    if not m["failed"]:
+        return v.section("Alert messages", Raw(f'<p>{v.state("ok", "every alert message of the last 7 days was delivered")}'
+                                               f'<span class="muted">{e(waiting)}</span></p>'))
+    rows = [[v.rel_time(r["ts"]), r["kind"], r["subject"], str(r["attempts"]), r["error"] or ""] for r in m["failed"]]
+    return v.section("Alert messages", Raw(f'<p>{v.state("bad", f"{len(rows)} not delivered in the last 7 days")}'
+                                           f'<span class="muted">{e(waiting)}</span></p>'
+                                           + str(v.table(["When", "Message", "Subject", "Attempts", "Why"], rows))),
+                     "Each message is tried three times (10 s, then 60 s apart). The send log (annex audit) has every attempt.")
+
+
 def platform_page(who: v.Who, p: dict, now: float | None = None) -> str:
     """p: front_door, incidents, host (latest sample or None), series, tuning (thresholds), links [(name, url, what)],
     ops (annex-ops's /healthz, optional)."""
@@ -106,7 +122,7 @@ def platform_page(who: v.Who, p: dict, now: float | None = None) -> str:
     rows = [[v.link("/status", "front door"), v.state(p["front_door"]), ""]]
     rows += [[i["subject"].removeprefix("platform:"), v.state("down"), v.raw(i["what"], " since ", v.rel_time(i["opened_at"]))] for i in p["incidents"]]
     body = ["<h1>Platform</h1>", str(v.section("Health", v.table(["Part", "State", "Detail"], rows, "nothing to show"))),
-            str(ops_threads(p.get("ops"))), str(db_connections(p.get("connections")))]
+            str(alert_messages(p.get("messages"))), str(ops_threads(p.get("ops"))), str(db_connections(p.get("connections")))]
     if h is None:
         host_html = '<p class="muted">No host samples yet. annex-ops stores one every 5 minutes.</p>'
     else:

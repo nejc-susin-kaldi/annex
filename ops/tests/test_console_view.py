@@ -329,3 +329,16 @@ def test_the_platform_page_shows_connections_per_database_and_turns_red_near_the
     assert 'st warn' in str(pg.db_connections([{"database": "a", "connections": 45, "max": 60}]))
     assert "Database connections" not in pg.platform_page(ADMIN, {**p, "connections": None}, NOW.timestamp())
     assert "No connection counts yet" in pg.platform_page(ADMIN, {**p, "connections": []}, NOW.timestamp())
+
+
+def test_the_platform_page_lists_alert_messages_that_were_not_delivered():
+    t = {"disk_alert_pct": 85, "disk_clear_pct": 80, "mem_alert_mb": 256, "mem_clear_mb": 400, "backup_max_age_s": 93600}
+    p = {"front_door": "up", "incidents": [], "host": None, "series": {"disk": [], "mem": []}, "tuning": t, "links": []}
+    failed = [{"ts": NOW - timedelta(hours=2), "kind": "open", "subject": "app:probe", "attempts": 3,
+               "error": "gave up after 3 attempts; email sam@annex.example: the mail server didn't accept the message"}]
+    page = pg.platform_page(ADMIN, {**p, "messages": {"waiting": 1, "failed": failed}}, NOW.timestamp())
+    assert "1 not delivered in the last 7 days" in page and "app:probe" in page and "gave up after 3 attempts" in page
+    assert "1 waiting for a retry" in page and "st bad" in str(pg.alert_messages({"waiting": 0, "failed": failed}))
+    ok = pg.platform_page(ADMIN, {**p, "messages": {"waiting": 0, "failed": []}}, NOW.timestamp())
+    assert "every alert message of the last 7 days was delivered" in ok and "waiting" not in ok
+    assert "Alert messages" not in pg.platform_page(ADMIN, {**p, "messages": None}, NOW.timestamp())
