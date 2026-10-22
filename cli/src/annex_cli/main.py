@@ -400,7 +400,8 @@ def main(argv: list[str] | None = None) -> None:
             emit(res) if emit else print(
                 f"{a.app} rolled back from r{res['rolled_back_from']} to r{res['rolled_back_to']} "
                 f"(now live as r{res['release']}, {res['image']})"
-                + (", data restored" if res["with_data"] else "") + (f" at {res['url']}" if res["url"] else ""))
+                + (", data restored" if res["with_data"] else "") + (f" at {res['url']}" if res["url"] else "")
+                + "".join(f"\nwarning: {w}" for w in res.get("warnings", [])))
         elif a.cmd == "run":
             res = ops.run_job(a.app, a.job)
             emit(res) if emit else print(f"{res['output']}--\n{a.app}/{a.job} exited {res['exit_code']} in {res['seconds']} s")

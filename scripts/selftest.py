@@ -13,7 +13,8 @@ lines, everything else is one `key: value` line, so a variant is a few text edit
   --broken-health    the health check path is /nope, which answers 404: the deploy fails its health gate
   --no-postgres      storage.postgres: false
   --evil-label       the Dockerfile adds LABEL traefik.http.routers.evil.rule=...: the deploy must refuse the image (D83)
-  --env K=V         set or add an `env:` entry (SELFTEST_LOG=plain, SELFTEST_MARKER=..., SELFTEST_BAD_MIGRATION=1, ...)
+  --env K=V         set or add an `env:` entry (SELFTEST_LOG=plain, SELFTEST_MARKER=..., SELFTEST_BAD_MIGRATION=1,
+                     SELFTEST_SLOW_HEALTH=N: /healthz answers 503 for N s after start, ...)
   --secret NAME      declare one more secret
   --no-views         no gateway views (data.views: [])
   --views a,b        these gateway views instead of the fixture's (e.g. the demo client's: leaderboard,machine_floor)

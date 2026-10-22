@@ -358,9 +358,10 @@ def _git(folder: Path) -> dict | None:
 
 
 # --- releases --------------------------------------------------------------
-# Each deploy or rollback appends one line to /srv/annex/apps/<app>/releases.jsonl:
-# release number, image, manifest, who/when/where from, data snapshot and result
-# ("live", or "failed" when it didn't pass the health gate).
+# Each deploy or rollback has one line in /srv/annex/apps/<app>/releases.jsonl: release number, image, manifest,
+# who/when/where from, data snapshot and result: "pending" while it runs (written by annex_vm.py deploy-begin, which
+# also takes the app's deploy lock), then "live", or "failed" when it didn't pass the health gate or broke off
+# (rewritten by deploy-end, or by deploy-reconcile when the deploy died; C1, D92).
 def _releases(r: Remote, app: str) -> list[dict]:
     res = r.run(f"cat {r.path('apps', _name(app), 'releases.jsonl')}", check=False)
     if res.returncode != 0:
@@ -368,13 +369,47 @@ def _releases(r: Remote, app: str) -> list[dict]:
     return [json.loads(line) for line in res.stdout.decode().splitlines() if line.strip()]
 
 
-def _append_release(r: Remote, app: str, rel: dict) -> None:
-    line = json.dumps(rel, default=str) + "\n"
-    r.run(f"mkdir -p {r.path('apps', _name(app))} && cat >> {r.path('apps', app, 'releases.jsonl')}", input=line)
-    try:  # the database copy (annex_ops.releases) is for the console and the audit trail; the file stays the record
-        r.vm("release-record", app, input=line)
-    except (AnnexError, subprocess.SubprocessError, OSError):
-        pass  # annex-ops' database is down: the next scripts/push.sh (release-backfill) catches up
+class _Lock:
+    """One deploy or rollback's hold on its app (C1, D92): annex_vm.py deploy-begin takes the app's lock, settles a
+    release an earlier run left pending, numbers this release and records it as pending; step() says where it is (for
+    whoever finds the lock held, and for reconcile); end() rewrites the pending line with the outcome (the VM also
+    copies it to annex_ops.releases) and releases the lock. Used as a context manager: leaving it without end(), by
+    an exception or Ctrl-C, records the release as failed at the step it reached."""
+
+    def __init__(self, r: Remote, app: str, line: dict, record: dict | None, progress: Progress = _quiet):
+        self.r, self.app, self.ended, self.at = r, _name(app), False, "begin"
+        stale = os.environ.get("ANNEX_DEPLOY_LOCK_STALE")  # seconds; operations.md: only when the holder is dead
+        res = r.vm("deploy-begin", app, "--actor", _who(), *(["--stale-after", str(int(stale))] if stale else []),
+                   input=json.dumps({"line": line, "record": record}, default=str))
+        self.n, self.image, self.token = res["release"], res["image"], res["token"]
+        self.line = {**line, "release": self.n, "image": self.image}
+        self.notes = [x for x in [res.get("took_over")] if x] + [x["message"] for x in res.get("reconciled", [])]
+        self.notes += res.get("warnings", [])
+        for note in self.notes:
+            progress(note)
+
+    def step(self, name: str) -> None:
+        self.at = self.r.step = name
+        self.r.vm("deploy-step", self.app, self.token, name)
+
+    def end(self, rel: dict, timeout: int = 900) -> dict:
+        res = self.r.vm("deploy-end", self.app, self.token, str(self.n), rel["result"],
+                        input=json.dumps({**self.line, **rel}, default=str), timeout=timeout)
+        self.ended, self.r.step = True, None
+        return res
+
+    def __enter__(self) -> _Lock:
+        return self
+
+    def __exit__(self, kind, exc, tb) -> bool:
+        if not self.ended:
+            why = (str(exc).strip().splitlines() or [kind.__name__])[0] if exc else "ended without an outcome"
+            try:  # best effort: if the VM can't be reached, the next deploy reconciles the pending line
+                self.end({"result": "failed", "error": f"broke off at {self.at}: {why}"[:300],
+                          "interrupted_at": self.at}, timeout=60)
+            except (AnnexError, subprocess.SubprocessError, OSError):
+                pass
+        return False
 
 
 def _live(releases: list[dict]) -> dict | None:
@@ -487,11 +522,12 @@ def _drain(r: Remote, app: str, progress: Progress = _quiet) -> None:
                  f"the deploy carries on. Check: ssh {r.host} docker logs {OPS_CONTAINER}")
 
 
-def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Progress
-              ) -> tuple[tuple[str, str] | None, dict]:
+def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Progress,
+              step: Callable[[str], None] = _quiet) -> tuple[tuple[str, str] | None, dict]:
     """Provision what manifest `m` asks for, switch the app to `image` and run the health gate.
-    Returns (gate failure or None, provision result)."""
+    Returns (gate failure or None, provision result). `step` hears provision, switch and gate (the deploy lock)."""
     d = r.path("deploy", _name(m.name))
+    step("provision")
     progress("Provisioning storage, data access and secrets")
     prov = r.vm("provision", *_provision_args(m.name, postgres=m.postgres, files=m.files, views=m.views,
                                               secrets=m.secrets, notify_email=m.notify_email,
@@ -502,8 +538,10 @@ def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Pro
     compose = yaml.safe_dump(compose_for(m, r, image, release), sort_keys=False)
     r.run(f"mkdir -p {d} && cat > {d}/compose.yaml", input=compose)
     _drain(r, m.name, progress)  # the container Compose is about to replace (a failed release's, on a rollback)
+    step("switch")
     progress(f"Starting r{release} ({image})")
     r.run(f"cd {d} && docker compose up -d --remove-orphans 2>&1")
+    step("gate")
     failed = _gate(r, m, progress)
     if failed or not m.is_web:
         return failed, prov
@@ -530,19 +568,35 @@ def _reload_scheduler(r: Remote, progress: Progress, *schedules: object) -> None
 
 def _write_record(r: Remote, m: mf.Manifest, image: str, release: int) -> dict:
     """deploy.json: what's running now (read by status, run, secret set, remove and restore)."""
-    record = {"name": m.name, "owner": m.owner, "type": m.type, "release": release, "image": image,
+    record = _record_for(r, m, image, release)
+    r.run(f"cat > {r.path('deploy', _name(m.name), 'deploy.json')}", input=json.dumps(record, indent=2))
+    return record
+
+
+def _record_for(r: Remote, m: mf.Manifest, image: str | None, release: int | None) -> dict:
+    """deploy.json's content. deploy-begin gets it without image and release and keeps it with the pending line, so
+    that a deploy that died after its gate can still be recorded as live (deploy-reconcile writes it then)."""
+    return {"name": m.name, "owner": m.owner, "type": m.type, "release": release, "image": image,
               "url": r.url_for(m.name) if m.is_web else None, "deployed_at": _now(), "postgres": m.postgres,
               "files": m.files, "views": m.views, "secrets": m.secrets, "schedule": [j.__dict__ for j in m.schedule],
               "memory_mb": m.memory_mb, "notify_email": m.notify_email, "notify_slack": m.notify_slack,
               "alerts_to": m.alerts_to, "webhooks": [w.__dict__ for w in m.webhooks], "port": m.port,
               "egress": m.egress}  # networks-sync (push.sh) reads type, postgres, views and egress from here
-    r.run(f"cat > {r.path('deploy', _name(m.name), 'deploy.json')}", input=json.dumps(record, indent=2))
-    return record
 
 
-def _cleanup(r: Remote, app: str) -> None:
-    """Keep the images of the last KEEP_RELEASES live releases and as many snapshots; trim build cache."""
-    keep: list[str] = []
+def _cleanup(r: Remote, app: str, current: str, progress: Progress = _quiet) -> None:
+    """Keep the images of the last KEEP_RELEASES live releases and as many snapshots; trim build cache. Runs under the
+    deploy lock (another deploy's fresh image must not be removed), before end(): the release going live is still
+    pending in the file, so its image (`current`) is named. Best effort: the release is live whatever happens here."""
+    try:
+        _prune(r, app, current)
+    except (AnnexError, subprocess.SubprocessError, OSError) as e:
+        progress(f"Warning: cleaning up old images and snapshots failed ({(str(e).splitlines() or [''])[0]}); "
+                 "the next deploy tries again")
+
+
+def _prune(r: Remote, app: str, current: str) -> None:
+    keep: list[str] = [current]
     for x in reversed(_releases(r, app)):
         if x["result"] == "live" and x["image"] not in keep:
             keep.append(x["image"])
@@ -574,54 +628,64 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
             f"data.views: {', '.join(bad)} not in the gateway allowlist. Available views: {', '.join(allow)}. "
             "New views are added by the platform team in db/product/api_views.sql"])
 
+    # The lock covers everything from here: the source upload and the build too, which share deploy/<app>/src and the
+    # image tag r<n> with any other deploy of the app (D92).
+    line = {"manifest": m.to_dict(), "deployed_at": _now(), "deployed_by": _who(), "via": via,
+            "source": str(folder).replace(str(Path.home()), "~", 1), "git": _git(folder), "snapshot": None,
+            "contract_version": contract_version(), "runtime": runtime_versions(folder)}
+    with _Lock(r, m.name, line, _record_for(r, m, None, None), progress) as lock:
+        return _deploy(r, m, folder, lock, progress)
+
+
+def _deploy(r: Remote, m: mf.Manifest, folder: Path, lock: _Lock, progress: Progress) -> dict:
+    n, image = lock.n, lock.image
     previous = _record(r, m.name)
-    releases = _releases(r, m.name)
-    live = _live(releases)
-    n = max((x["release"] for x in releases), default=0) + 1
-    image = f"annex-app/{m.name}:r{n}"
+    live = _live(_releases(r, m.name))  # read under the lock, after deploy-begin reconciled
     d = r.path("deploy", _name(m.name))
+    lock.step("upload")
     progress("Uploading source")
     r.run(f"set -e; mkdir -p {d}; rm -rf {d}/src.new; mkdir {d}/src.new; tar -xzf - -C {d}/src.new; "
           f"rm -rf {d}/src; mv {d}/src.new {d}/src", input=_tar(folder))
 
+    lock.step("build")
     progress(f"Building r{n} on the VM")
     _build(r, m, image)
 
-    snapshot = None
+    rel: dict = {"snapshot": None}
     if live:
+        lock.step("snapshot")
         progress(f"Snapshotting data before the switch (r{live['release']} is live)")
         snapshot = r.vm("snapshot", m.name, "--release", str(n), "--from-release", str(live["release"]))["snapshot"]
-    rel = {"release": n, "image": image, "manifest": m.to_dict(), "deployed_at": _now(), "deployed_by": _who(),
-           "via": via, "source": str(folder).replace(str(Path.home()), "~", 1), "git": _git(folder),
-           "snapshot": snapshot and snapshot["name"],
-           "contract_version": contract_version(), "runtime": runtime_versions(folder)}
+        rel["snapshot"] = snapshot and snapshot["name"]
 
-    failed, prov = _activate(r, m, image, n, progress)
+    failed, prov = _activate(r, m, image, n, progress, lock.step)
     if failed:
         rel.update(result="failed", error=failed[0])
         if not live:
-            _append_release(r, m.name, rel)
+            lock.end(rel)
             raise _gate_error(m.name, n, failed, f"There's no earlier release to roll back to, so r{n} is left as "
                               f"is. Fix the app and deploy again; see its logs with: annex logs {m.name}")
         progress(f"r{n} failed the health gate; rolling back to r{live['release']}")
         prev = mf.Manifest.from_dict(live["manifest"])
-        back, _ = _activate(r, prev, live["image"], live["release"], progress)
+        # a failed gate re-provisions the previous release's manifest (grants, secrets, networks), as before C1
+        back, _ = _activate(r, prev, live["image"], live["release"], progress, lambda s: lock.step(f"back-{s}"))
         _reload_scheduler(r, progress, m.schedule, prev.schedule)
         _write_record(r, prev, live["image"], live["release"])
-        _append_release(r, m.name, {**rel, "rolled_back_to": live["release"]})
         r.run(f"docker rmi {image} >/dev/null 2>&1", check=False)
+        lock.end({**rel, "rolled_back_to": live["release"]})
         if back:
             raise _gate_error(m.name, n, failed, f"Rolling back to r{live['release']} failed too ({back[0]}), "
                               f"so {m.name} is down. Check: annex logs {m.name}")
         raise _gate_error(m.name, n, failed, f"Annex rolled back to r{live['release']}, which is live again. "
                           "Fix the app and deploy again.")
 
+    lock.step("finish")
     _reload_scheduler(r, progress, m.schedule, previous and previous.get("schedule"))
     record = _write_record(r, m, image, n)
-    _append_release(r, m.name, {**rel, "result": "live"})
-    _cleanup(r, m.name)
+    _cleanup(r, m.name, image, progress)
+    lock.end({**rel, "result": "live"})
     progress("Done")
-    warnings = _warnings(r, m, folder)
+    warnings = list(lock.notes) + _warnings(r, m, folder)
     if m.is_web:  # job-only apps are checked on their first run (a later step)
         lines = r.out(f"docker logs --tail 50 {container(m.name)} 2>&1", check=False).splitlines()
         warnings += [w for w in [logcheck.warning(lines)] if w]
@@ -767,6 +831,10 @@ def releases(app: str) -> list[dict]:
         if x.get("rollback"):
             rb = x["rollback"]
             note = f"rollback from r{rb['from']} to r{rb['to']}" + (" with data" if rb["with_data"] else "")
+        if x["result"] == "pending":
+            note = "in progress, or its deploy died (the next deploy or rollback reconciles it)"
+        elif x.get("interrupted_at") and x["result"] == "live":
+            note = f"interrupted at {x['interrupted_at']}, recorded live by reconcile (it was healthy)"
         git = x.get("git") or {}
         out.append({
             "release": x["release"], "current": current, "result": x["result"],
@@ -797,14 +865,9 @@ def _maintenance(r: Remote, app: str, minutes: int | None) -> None:
     r.run(f"docker exec {OPS_CONTAINER} python -m annex_ops.ctl maintenance app:{_name(app)} {' '.join(args)} --json", check=False)
 
 
-def _rollback(app: str, to: int | None = None, with_data: bool = False, progress: Progress = _quiet,
-              via: str = "cli") -> dict:
-    """Switch an app back to an earlier release (default: the one before the current), re-applying that
-    release's manifest. with_data also restores the database and /data snapshot from that release's time,
-    losing writes since (human only)."""
-    _name(app)
-    r = Remote()
-    rels = _releases(r, app)
+def _rollback_target(r: Remote, app: str, rels: list[dict], to: int | None, with_data: bool) -> tuple[dict, dict]:
+    """(the live release, the one to switch to), or AnnexError saying why not. The live release itself is a target
+    only when the app's container isn't running its image (a deploy died after its switch; reconcile says so, D92)."""
     live = _live(rels)
     if not live:
         raise AnnexError(f"{app} has no releases to roll back to. See: annex releases {app}")
@@ -817,6 +880,8 @@ def _rollback(app: str, to: int | None = None, with_data: bool = False, progress
             raise AnnexError(f"{app} has no earlier release to roll back to (r{live['release']} is live; "
                              f"possible targets: {listing}). See: annex releases {app}")
         target = earlier[-1]
+    elif to == live["release"] and live["image"] in images and _running_image(r, app) != live["image"]:
+        target = live  # put the live release back in place of a container a dead deploy left
     else:
         target = next((x for x in targets if x["release"] == to), None)
         if not target:
@@ -827,12 +892,43 @@ def _rollback(app: str, to: int | None = None, with_data: bool = False, progress
         raise AnnexError(f"There's no data snapshot from while r{t} was live (snapshots are taken before each "
                          f"deploy, and the last {KEEP_RELEASES} are kept). Roll back without --with-data, or restore a "
                          f"nightly backup with scripts/restore.sh {app}")
+    return live, target
 
-    n = max(x["release"] for x in rels) + 1
+
+def _running_image(r: Remote, app: str) -> str:
+    return r.out(f"docker inspect -f '{{{{.Config.Image}}}}' {container(app)} 2>/dev/null", check=False).strip()
+
+
+def _rollback(app: str, to: int | None = None, with_data: bool = False, progress: Progress = _quiet,
+              via: str = "cli") -> dict:
+    """Switch an app back to an earlier release (default: the one before the current), re-applying that
+    release's manifest. with_data also restores the database and /data snapshot from that release's time,
+    losing writes since (human only)."""
+    _name(app)
+    r = Remote()
+    live, target = _rollback_target(r, app, _releases(r, app), to, with_data)  # refuse a bad target before locking
+    tm = mf.Manifest.from_dict(target["manifest"])
+    line = {"image": target["image"], "manifest": target["manifest"], "deployed_at": _now(), "deployed_by": _who(),
+            "via": via, "source": target.get("source"), "git": target.get("git"), "snapshot": None,
+            "rollback": {"from": live["release"], "to": target["release"], "with_data": with_data}}
+    with _Lock(r, app, line, _record_for(r, tm, None, None), progress) as lock:
+        now_live = _live(_releases(r, app))
+        if not now_live or now_live["release"] != live["release"]:
+            raise AnnexError(f"{app} changed while this rollback was starting (another deploy finished: "
+                             f"r{now_live and now_live['release']} is live now). See annex releases {app} and run it again")
+        return _rollback_locked(r, app, live, target, with_data, lock, progress)
+
+
+def _rollback_locked(r: Remote, app: str, live: dict, target: dict, with_data: bool, lock: _Lock,
+                     progress: Progress) -> dict:
+    n, t = lock.n, target["release"]
+    lock.step("snapshot")
     progress(f"Snapshotting data before the switch (r{live['release']} is live)")
     snapshot = r.vm("snapshot", app, "--release", str(n), "--from-release", str(live["release"]))["snapshot"]
+    rel: dict = {"snapshot": snapshot and snapshot["name"]}
     restored = None
     if with_data:
+        lock.step("restore")
         progress(f"Restoring the database and /data from while r{t} was live")
         try:
             restored = r.vm("restore-snapshot", app, "--from-release", str(t))
@@ -841,33 +937,31 @@ def _rollback(app: str, to: int | None = None, with_data: bool = False, progress
             raise
     tm = mf.Manifest.from_dict(target["manifest"])
     cm = mf.Manifest.from_dict(live["manifest"])
-    rel = {"release": n, "image": target["image"], "manifest": target["manifest"], "deployed_at": _now(),
-           "deployed_by": _who(), "via": via, "source": target.get("source"), "git": target.get("git"),
-           "snapshot": snapshot and snapshot["name"],
-           "rollback": {"from": live["release"], "to": t, "with_data": with_data}}
 
-    failed, _ = _activate(r, tm, target["image"], n, progress)
+    failed, _ = _activate(r, tm, target["image"], n, progress, lock.step)
     if failed:
         progress(f"r{t} failed the health gate; switching back to r{live['release']}")
         if with_data and snapshot:
+            lock.step("back-restore")
             r.vm("restore-snapshot", app, "--from-release", str(live["release"]))
-        back, _ = _activate(r, cm, live["image"], live["release"], progress)
+        back, _ = _activate(r, cm, live["image"], live["release"], progress, lambda s: lock.step(f"back-{s}"))
         _reload_scheduler(r, progress, tm.schedule, cm.schedule)
         _write_record(r, cm, live["image"], live["release"])
-        _append_release(r, app, {**rel, "result": "failed", "error": failed[0], "rolled_back_to": live["release"]})
+        lock.end({**rel, "result": "failed", "error": failed[0], "rolled_back_to": live["release"]})
         outcome = (f"Switching back to r{live['release']} failed too ({back[0]}), so {app} is down."
                    if back else f"Annex switched back to r{live['release']}"
                    + (" and its data" if with_data else "") + ", which is live again.")
         raise _gate_error(app, n, failed, outcome)
 
+    lock.step("finish")
     _reload_scheduler(r, progress, tm.schedule, cm.schedule)
     record = _write_record(r, tm, target["image"], n)
-    _append_release(r, app, {**rel, "result": "live"})
-    _cleanup(r, app)
+    _cleanup(r, app, target["image"], progress)
+    lock.end({**rel, "result": "live"})
     progress("Done")
     return {"app": app, "release": n, "rolled_back_from": live["release"], "rolled_back_to": t,
             "image": target["image"], "with_data": with_data, "restored": restored, "url": record["url"],
-            "snapshot": rel["snapshot"]}
+            "snapshot": rel["snapshot"], "warnings": list(lock.notes)}
 
 
 # --- inspect ---------------------------------------------------------------
