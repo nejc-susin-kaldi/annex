@@ -67,7 +67,6 @@ def docker_endpoint(context: str) -> str:
 
 
 class Remote:
-    step: str | None = None  # what a deploy or rollback is doing, for the timeout message (set by ops._Lock)
     local = False            # the local stack (D99) instead of the VM
     python = "python3"       # the interpreter of annex_vm.py (on the local stack it resolves through the prefix's PATH)
     env_name = "vm"
@@ -137,12 +136,10 @@ class Remote:
         return r
 
     def timeout_message(self, timeout: int) -> str:
-        step = f" at the {self.step} step" if self.step else ""
         hung = "the command" if self.local else "the SSH connection or the command"
-        return (f"{self.where[0].upper()}{self.where[1:]} didn't answer within {timeout} s{step}: {hung} hung. "
-                "If a deploy or rollback was running, Annex has tried to record it as failed and release its lock; "
-                "if the VM was unreachable, the lock expires after 30 minutes and the next deploy of the app takes it "
-                "over and reconciles the release it left (see annex releases <app>)")
+        return (f"{self.where[0].upper()}{self.where[1:]} didn't answer within {timeout} s: {hung} hung. "
+                "Deploys and the other container-replacing commands don't use this limit (they run on the VM and "
+                "finish there, D101); this was a read or a short call")
 
     def path(self, *parts: str) -> str:
         """A path under the data directory, quoted for use in a script."""
@@ -160,10 +157,10 @@ class Remote:
         on the local stack the CLI's own interpreter, first on the prefix's PATH (it has PyYAML, D99)."""
         return " ".join([self.python, shlex.quote(f"{self.data}/platform/vm/annex_vm.py"), *map(shlex.quote, args)])
 
-    def vm(self, *args: str, input: str | None = None, timeout: int = 900) -> dict:
+    def vm(self, *args: str, input: str | None = None) -> dict:
         """Call vm/annex_vm.py on the VM; it always answers with one JSON object."""
         cmd = self.vm_command(*args)
-        r = self.run(cmd, input=input, check=False, timeout=timeout)
+        r = self.run(cmd, input=input, check=False)
         try:
             res = json.loads(r.stdout.decode().strip().splitlines()[-1])
         except (IndexError, json.JSONDecodeError):

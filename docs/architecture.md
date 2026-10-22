@@ -1,8 +1,8 @@
 # Architecture
 
-The system as it is after the hardening steps (D79-D96), on one page. `docs/brief.md` is the historical brief (its diagram is the M0 one); `docs/decisions.md` has the reasons and the history, with a status index at its top. Where this page and a decision disagree, the code wins, then this page, then the older decision (check the index for what was revised).
+The system as it is after the hardening and control-plane steps (D79-D103), on one page. `docs/brief.md` is the historical brief (its diagram is the M0 one); `docs/decisions.md` has the reasons and the history, with a status index at its top. Where this page and a decision disagree, the code wins, then this page, then the older decision (check the index for what was revised).
 
-One client's server: a single VM (x86_64, 4 GiB RAM) running Docker Compose. The platform is one Compose project (`annex`, from `/srv/annex/platform`); every app is its own project (`annex-app-<name>`). Builders deploy from their own machine with the `annex` CLI or the MCP server, which run commands on the VM over SSH (D1). Nothing on the VM talks to the internet except where listed under "Networks".
+One client's server: a single VM (x86_64, 4 GiB RAM) running Docker Compose. The platform is one Compose project (`annex`, from `/srv/annex/platform`); every app is its own project (`annex-app-<name>`). Builders deploy from their own machine with the `annex` CLI or the MCP server, which call `vm/annex_vm.py` on the VM over SSH (D1); a deploy is one such call and runs on the VM (D101). The same compose files, scripts, CLI and `annex_vm.py` also run a **local stack** on the Mac's Docker Desktop (`ANNEX_ENV=local`, D99), a development lane and not a second environment ("Two places the platform runs"). Nothing on the VM talks to the internet except where listed under "Networks".
 
 ```
  Mac: annex CLI / MCP ──ssh (via dronky)──▶ VM: annex_vm.py, docker, compose
@@ -67,10 +67,10 @@ All Annex networks carry `com.kaldi.annex=true` and are `internal` (no route out
 
 | Path | Content |
 |---|---|
-| `platform/` | synced repo bundle (compose, config, db, vm, ops); `.env` (settings), `VERSION` (commit, dirty flag, `.env` hash: `push.sh` refuses a checkout that lacks it, D85) |
+| `platform/` | synced repo bundle (compose, config, db, vm, ops); `.env` (settings), `VERSION` (commit, dirty flag, `.env` hash, contract version: `push.sh` refuses a checkout that lacks it, D85; a deploy compares the CLI's contract version with it, D103); its `vm/` has the generated `annex_manifest.py` and `annex_logcheck.py` (D103) |
 | `secrets/` | `master.env`, per-service env files, `authelia/`, `hooks/<app>.json`, `apps/<app>/` (db password, gateway token, ops token, `secrets.env`, `runtime.env`); never in the repo |
 | `state/` | Postgres data directories, Authelia and Mailpit state, `directory/users.json`, `ops/` (test mode, tuning) |
-| `deploy/<app>/` | `src/` (uploaded source), `compose.yaml` (generated), `deploy.json` (what is live: type, postgres, views, egress, ...), `.lock/` (+ `owner.json`) while a deploy or rollback runs, `.lock.guard` |
+| `deploy/<app>/` | `src/` (uploaded source), `compose.yaml` (generated, JSON), `deploy.json` (what is live: type, postgres, views, egress, jobs; `run-job` reads its commands here), `.lock.guard` (an empty file the running operation holds an flock on; **never unlinked**, not even by `remove`, D102), `current.json` (the operation that holds the lock or held it last: pid, actor, kind, release, step, result; D101), `run.log` (that deploy's progress lines, one JSON object each; the run before is `run.log.1`), `run.err` (the worker's stderr), `build.log` (the last `docker build` output) |
 | `apps/<app>/` | `data/` (mounted at `/data`), `releases.jsonl` (the release history; only the VM writes it, D92) |
 | `snapshots/<app>/pre-r<N>/` | database dump and `/data` archive before release N; the last 3 |
 | `dumps/`, `backups/` | nightly `pg_dump` output with a `MARKER`; backup archives (mode 700; they contain `secrets/`, D87) |
@@ -78,21 +78,45 @@ All Annex networks carry `com.kaldi.annex=true` and are `internal` (no route out
 
 ## The deploy sequence
 
-> **Since D101 (control-plane V1)** steps 2–9 run in one process on the VM (`vm/annex_deploy.py`, called once as `annex_vm.py deploy <app>`), which holds an flock on `deploy/<app>/.lock.guard` for its whole run: no `.lock/` directory, token or 30-minute rule, `current.json` instead of `owner.json`, progress in `run.log`, and Ctrl-C detaches. The rewrite of this section is control-plane V4; `docs/operations.md` "Releases and rollback" is current.
+`annex deploy <folder>` is a thin client in front of one process on the VM (D101). The CLI (`cli/src/annex_cli/ops.py`, `deploy`) does only what is quick or only it can know; `vm/annex_deploy.py` (stdlib, called by `vm/annex_vm.py deploy <app>`, using `annex_vm.py`'s own functions for provision, snapshots and networks) does the rest. `annex rollback` has the same shape: `annex_vm.py rollback <app> [--to N] [--with-data]`, and the VM picks the target under the lock.
 
-`annex deploy <folder>` (`cli/src/annex_cli/ops.py`, `deploy`/`_deploy`, with `vm/annex_vm.py` on the VM) after D92. Every VM-side step is an `ssh annex` command; the CLI never needs Docker locally.
+**On the builder's machine (one call).**
+1. **Validate.** `annex.yaml` by `manifest.py` (name, `owner` login, env, egress hostnames, secrets declared) and the requested views against the live gateway allowlist (`annex_vm.py views`): fast, agent-readable errors before anything is uploaded.
+2. **Meta and tar.** The release line (who, via, source folder, git commit, contract and runtime versions, the manifest), `cli` (the CLI checkout's commit and contract version, D103), and the three limit overrides a test may set; then the folder as a tar.gz (50 MB check).
+3. **One `Remote.call`.** `annex_vm.py deploy <app> --actor <who> --via cli|mcp`, the meta as the first line on stdin and the tar after it. The call reads the VM's JSON lines as they arrive (`progress`, `note`, `heartbeat`, last `ok`), hands progress and notes to the caller, and returns the final `{"ok": true, ...}` object. The CLI adds the two warnings only it can give (the app's runtime copies against `runtime/`, a raised memory limit) and prints.
 
-1. **Validate** (Mac). `annex.yaml` by `manifest.py` (name, `owner` login, description, env, egress hostnames, secrets declared); the requested views against the live gateway allowlist (`annex_vm.py views`).
-2. **Begin** (`deploy-begin`). Takes `deploy/<app>/.lock` (a `mkdir`, with owner, token, step; a lock under 30 minutes old refuses and names its holder; an older one is taken over). **Reconciles** a `pending` line left by a dead deploy against what Docker says (healthy and running the pending image: `live`; otherwise `failed`, nothing switched or removed). Numbers the release and appends `{"release": n, "result": "pending", ...}` to `releases.jsonl`. From here an exception or Ctrl-C ends the release as `failed` and releases the lock.
-3. **Upload.** The folder is tarred and unpacked into `deploy/<app>/src` (via `src.new`).
-4. **Build** on the VM. Refused with under 3 GB free on `/srv/annex`; `docker build` (labels `com.kaldi.annex` and `.app`) as image `annex-app/<app>:r<n>`; refused (and the image removed) above 2048 MB, when it runs as root, or when it carries platform labels (`traefik.`, `ofelia.`, `homepage.`, `docker-volume-backup.`, `com.kaldi.annex*` beyond the two the build adds; D83, D95).
-5. **Snapshot** (if a release is live). `annex_vm.py snapshot`: the app's database and `/data` (under 200 MB) into `snapshots/`.
-6. **Provision and networks.** `annex_vm.py provision`: DB role and database, gateway role with grants on exactly the requested views and a fresh JWT with `exp`, ops token, `/data` directory, secrets, webhook files and notify grants (D80, D96). Then `networks-sync` creates the app's network(s) and connects the platform containers it uses. The generated `compose.yaml` is written (own network only, `pids_limit`, label overrides), and ops' stored-log follower drains the old container.
-7. **Switch.** `docker compose up -d --remove-orphans` in `deploy/<app>`.
-8. **Gate.** Web app: the health path returns 200 from inside the Traefik container within 60 s, then the route answers with a login redirect and Docker health settles. Job-only app: the container is running. If the gate fails, the previous release's manifest is re-provisioned (grants, secrets, networks) and switched back (`back-provision`, `back-switch`, `back-gate`), the release is recorded `failed` with `rolled_back_to`, and the deploy errors.
-9. **Cleanup and end.** Ofelia is restarted if a schedule changed, `deploy.json` is written, older images and snapshots beyond the last 3 are pruned (a failure is a warning in the result, not silence), and `deploy-end` rewrites the pending line as `live` and copies it with an audit row to `annex_ops.releases` (never a pending line), then releases the lock.
+**On the VM (one process).**
+1. **Lock.** A non-blocking `flock` on `deploy/<app>/.lock.guard`, held by the process for its whole run, so it ends exactly when the process does. A second deploy, rollback, `secret set`, `remove` or `migrate-networks` of the same app is refused, naming the holder from `current.json` (actor, release, step, age, pid). Different apps don't wait for each other.
+2. **Settle.** A `pending` line in `releases.jsonl` whose lock was **not held** (its process was killed, or the VM rebooted) is reconciled at once by D92's rules: healthy and running the pending image: `live`; otherwise `failed`, nothing switched or removed. The step it stopped at comes from the previous `current.json`. A pre-D101 `.lock/` directory is removed with a note.
+3. **Versions.** `check_versions` compares the CLI's contract version with the platform's (`VERSION`): a newer CLI is refused ("push the platform first"), an older one gets a note (D103).
+4. **Number.** The release number is taken and `{"release": n, "result": "pending", ...}` appended to `releases.jsonl`. From here every failure ends the release as `failed`.
+5. **Upload.** The tar on stdin is unpacked into `deploy/<app>/src` (via `src.new`, `filter="data"`); a truncated upload is a failed release "broke off at upload". `annex.yaml` is validated again with the same `annex_manifest.py` and must equal the manifest the CLI sent (D103).
+6. **Detach.** The process forks. The worker calls `setsid()`, ignores SIGHUP and SIGPIPE, points stdin at `/dev/null` and stdout/stderr at `run.err`, writes its pid into `current.json` and every protocol line into `run.log`. The parent follows `run.log` to the caller (a heartbeat every 30 s of silence) and stops at the final line. **Ctrl-C, a closed terminal or a dropped SSH session do not stop the deploy**: the CLI says "the connection to the VM dropped at <step>; the deploy continues on the VM" and exits; the worker finishes. SIGTERM (`kill <pid>`) is the one way to stop it: the release is recorded `failed` at the step it reached.
+7. **Build.** Refused with under 3 GB free on `/srv/annex`; `docker build` (output in `build.log`; labels `com.kaldi.annex` and `.app`) as image `annex-app/<app>:r<n>`; refused (and the image removed) above 2048 MB, when it runs as root, or when it carries platform labels (`traefik.`, `ofelia.`, `homepage.`, `docker-volume-backup.`, `com.kaldi.annex*` beyond the two the build adds; D83, D95).
+8. **Snapshot** (if a release is live): the app's database and `/data` (under 200 MB) into `snapshots/`.
+9. **Provision and networks.** DB role and database, gateway role with grants on exactly the requested views and a fresh JWT with `exp`, ops token, `/data`, secrets, webhook files and notify grants (D80, D96); `networks-sync` creates the app's network(s) and connects the platform containers it uses; the generated `compose.yaml` is written (own network only, `pids_limit`, label overrides); ops' stored-log follower drains the old container (D64).
+10. **Switch.** `docker compose up -d --remove-orphans` in `deploy/<app>`.
+11. **Gate.** Web app: the health path returns 200 from inside the Traefik container within 60 s, then the route answers with a login redirect and Docker health settles. Job-only app: the container is running. If the gate fails, the previous release's manifest is re-provisioned (grants, secrets, networks) and switched back, the release is recorded `failed` with `rolled_back_to`, and the deploy errors with the new container's log tail.
+12. **Finish.** Ofelia is restarted if a schedule changed, `deploy.json` is written, older images and snapshots beyond the last 3 are pruned (a failure is a warning in the result), the pending line is rewritten as `live` and copied with an audit row to `annex_ops.releases` (never a pending line), the final `{"ok": true, ...}` line is written and the lock is released.
 
-`annex rollback` is the same machinery pointed at an older image and takes the same lock; `annex secret set` (when it recreates the container), `annex remove` (drain, compose down, deprovision: role, database, networks) and `annex migrate-networks` (human only; moves an app deployed before D88 onto its own network without its source) are each one process on the VM that takes the same lock, so none of them can interleave with a deploy or with each other (D102).
+A VM reboot or `kill -9` mid-deploy leaves the pending line and a **free** lock (the kernel released it): the next deploy or rollback reconciles it at step 2, or `annex_vm.py deploy-reconcile <app>` does, without deploying. `restart: unless-stopped` brings back whatever Compose last started. While a deploy runs, `annex status <app>` (its `deploy` line), `annex_vm.py deploy-state <app>` and `deploy/<app>/run.log` show where it is; the outcome is in `annex releases <app>` (`docs/operations.md`, "Releases and rollback").
+
+**The other container-replacing operations** (D102, `vm/annex_apps.py`, also called by `annex_vm.py`). `annex secret set` (with `--recreate`: store, provision from `deploy.json`, drain, switch), `annex remove` (drain, compose down, remove the image, deprovision: role, database, networks; the folder goes, `.lock.guard` stays) and `annex migrate-networks` (human only; moves an app deployed before D88 onto its own network without its source) are each one process that takes the **same flock** while it replaces or removes the container, so none of them can interleave with a deploy or with each other. They take seconds, so they don't fork and have no `run.log`; they ignore SIGHUP and SIGPIPE, so a dropped session never leaves an app half-removed. `annex run <app> <job>` takes **no lock**: `annex_vm.py run-job` reads the job's command from `deploy.json` (what the last deploy declared, whatever CLI asks) and runs `docker exec`; a deploy that replaces the container ends the job.
+
+## Two places the platform runs
+
+The deploy, the scripts and the CLI don't know which machine they are on: `Remote` (`cli/src/annex_cli/remote.py`) and `vm()` in `scripts/lib.sh` put one prefix in front of every command, and everything after it is the same.
+
+| | VM lane (the default) | Local lane (`ANNEX_ENV=local`, D99) |
+|---|---|---|
+| Settings file | `.env` | `.env.local` (else the committed `.env.local.example`) |
+| Where commands run | `ssh annex bash -c ...` (via dronky) | `bash -c ...` on the Mac, Docker context `desktop-linux` only |
+| Data directory | `/srv/annex` | `~/.annex/local` |
+| Render | `.build/vm/platform` | `.build/local/platform` |
+| Front door | Traefik on :80/:443 (the Mac's browser through the tunnel on :8443) | Traefik on `127.0.0.1:9080`/`:9443`, hostnames `*.annex-local.home.arpa` |
+| Images | amd64 | arm64 (D98) |
+
+The lane is chosen per command and never a default. The local stack is a development tool: no backups worth keeping, no Slack, arm64 builds. Nothing proven only locally counts as proven for the VM.
 
 ## annex-ops threads
 
