@@ -15,7 +15,6 @@ import shutil
 import socket
 import subprocess
 import tarfile
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
