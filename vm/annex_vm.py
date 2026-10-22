@@ -1505,6 +1505,15 @@ def platform_setting(name: str) -> str:
     return read_kv(DATA / "platform" / ".env").get(name, "")
 
 
+def loopback_target(bind: str | None, default_port: str) -> str:
+    """host:port where Traefik answers on this machine, from an ANNEX_BIND_* setting: "443" on the VM,
+    "127.0.0.1:9443" on the local stack (D99); empty means the default port."""
+    bind = (bind or "").strip()
+    if not bind:
+        return f"127.0.0.1:{default_port}"
+    return bind if ":" in bind else f"127.0.0.1:{bind}"
+
+
 def send_reset_email(login: str) -> None:
     """Ask Authelia to email the user its reset link (also used as the invitation). Authelia only accepts the
     request on its exact public URL (port included), so it goes through Traefik with that Host."""
@@ -1513,7 +1522,8 @@ def send_reset_email(login: str) -> None:
     if not m:
         raise Fail(f"ANNEX_URL_AUTH is {auth!r}; run scripts/push.sh")
     scheme, host, port = m.group(1), m.group(2), m.group(3) or ("443" if m.group(1) == "https" else "80")
-    target = "127.0.0.1:443" if platform_setting("ANNEX_TLS_MODE") == "local" else "127.0.0.1:80"
+    target = loopback_target(platform_setting("ANNEX_BIND_HTTPS" if platform_setting("ANNEX_TLS_MODE") == "local" else "ANNEX_BIND_HTTP"),
+                             "443" if platform_setting("ANNEX_TLS_MODE") == "local" else "80")
     r = run(["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "20",
                         "--connect-to", f"{host}:{port}:{target}", "-H", "Content-Type: application/json",
                         "-d", json.dumps({"username": login}), f"{auth}/api/reset-password/identity/start"],

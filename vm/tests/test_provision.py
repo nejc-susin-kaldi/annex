@@ -401,3 +401,11 @@ class DeployEnd(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoopbackTarget(unittest.TestCase):
+    def test_vm_and_local_binds(self):
+        self.assertEqual(vm.loopback_target("443", "443"), "127.0.0.1:443")
+        self.assertEqual(vm.loopback_target("127.0.0.1:9443", "443"), "127.0.0.1:9443")
+        self.assertEqual(vm.loopback_target("", "80"), "127.0.0.1:80")
+        self.assertEqual(vm.loopback_target(None, "443"), "127.0.0.1:443")
