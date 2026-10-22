@@ -641,3 +641,45 @@ def test_restore_loads_saved_timers_on_the_new_clock_and_drops_unreadable_rows(m
     clock.mono = 25.0
     m.step(None)
     assert [(r[0], r[1]) for r in m.outbox.rows] == [("open", "platform:traefik")]
+
+
+# --- reconcile closes incidents of apps removed while ops wasn't listening (D90) ---------------------------------------
+def restored(subject, signal, cid="old"):
+    return {"subject": subject, "opened_at": 0, "last_notified_at": 0, "reminders": 0,
+            "signals": {signal: {"since": 0, "detail": "x", "cid": cid}}}
+
+
+def test_reconcile_quietly_closes_incidents_of_an_app_that_is_gone():
+    e = engine()
+    run(e, [(0, Restore([restored(APP, "unhealthy"), restored("job:probe/check", "job-failed", None)])),
+            (1, Seen(cid="t1", name="annex-traefik-1", subject="platform:traefik", running=True))])
+    out = run(e, [(2, ReconcileDone({"t1"}))])
+    resolves = [a for a in out if a.kind == "resolve"]
+    assert {a.subject for a in resolves} == {APP, "job:probe/check"} and all(a.quiet for a in resolves)
+    assert e.open == {} and e.signals == {}
+    assert run(e, [(100, "tick")]) == []
+
+
+def test_reconcile_keeps_the_incident_of_an_app_whose_container_was_recreated_meanwhile():
+    e = engine()
+    run(e, [(0, Restore([restored(APP, "unhealthy", "old")]))])
+    # ops was down across a redeploy: the pass sees the new container, still unhealthy
+    out = run(e, [(1, Seen(running=True, health="unhealthy", **dict(C, cid="new"))), (2, ReconcileDone({"new"}))])
+    assert not any(a.kind == "resolve" for a in out) and APP in e.open
+
+
+def test_reconcile_keeps_the_incident_of_a_stopped_app_and_platform_subjects():
+    e = engine()
+    run(e, [(0, Restore([restored(APP, "stopped", "c1"), restored("platform:disk", "disk", None),
+                         restored(FRONT_DOOR, "down", None)]))])
+    out = run(e, [(1, Seen(running=False, **C)), (2, ReconcileDone({"c1"}))])
+    assert out == [] and set(e.open) == {APP, "platform:disk", FRONT_DOOR}
+
+
+def test_a_saved_container_of_a_removed_app_is_forgotten_and_its_incident_closed():
+    e = engine()
+    run(e, [(0, Stop(**C)), (61, "tick")])
+    e2, _ = restart(e, 0, 0)
+    run(e2, [(5, Restore([restored(APP, "stopped", "c1")]))])
+    out = run(e2, [(6, ReconcileDone(set()))])
+    assert [a.subject for a in out if a.kind == "resolve" and a.quiet] == [APP] and e2.ctrs == {}
