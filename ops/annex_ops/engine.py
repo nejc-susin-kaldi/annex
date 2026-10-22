@@ -45,6 +45,11 @@ class Tuning:
     check_timeout_s: float = 5
     check_fail_threshold: int = 2      # failures in a row before an app counts as down ...
     check_ok_threshold: int = 2        # ... and successes in a row before it counts as up again
+    # the engine's input queue (D86): log-derived requests are dropped (and counted) past queue_soft waiting inputs;
+    # everything else (Docker events, verdicts, samples) waits for room up to queue_max, so a flood of requests
+    # can never take the place of a container's death
+    queue_soft: int = 5000
+    queue_max: int = 10000
 
 
 # --- inputs ------------------------------------------------------------------
