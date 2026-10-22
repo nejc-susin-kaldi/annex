@@ -12,6 +12,7 @@ Stdlib only, so it runs with any Python 3.9+.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
 import shutil
 import subprocess
@@ -65,6 +66,14 @@ def derive(env: dict[str, str]) -> dict[str, str]:
         die("ANNEX_PUBLIC_PORT must be a number or empty")
     port_suffix = f":{port}" if port and port != "443" else ""
 
+    app_subnets = env.get("ANNEX_APP_SUBNETS") or "10.213.0.0/16"
+    try:
+        subnets = ipaddress.ip_network(app_subnets, strict=True)
+    except ValueError:
+        die(f"ANNEX_APP_SUBNETS={app_subnets} is not a network like 10.213.0.0/16")
+    if subnets.version != 4 or subnets.prefixlen > 24:
+        die("ANNEX_APP_SUBNETS must be an IPv4 network of /24 or larger, e.g. 10.213.0.0/16")
+
     prefix, _, suffix = pattern.partition("{name}")
     out = {
         "COMPOSE_PROJECT_NAME": "annex",
@@ -84,6 +93,8 @@ def derive(env: dict[str, str]) -> dict[str, str]:
         "ANNEX_EMAIL_ALLOW": env.get("ANNEX_EMAIL_ALLOW", ""),
         "ANNEX_EMAIL_FROM": env.get("ANNEX_EMAIL_FROM", "noreply@annex.example"),
         "ANNEX_ALERT_SLACK_CHANNEL": env.get("ANNEX_ALERT_SLACK_CHANNEL", "#annex-alerts"),
+        # per-app networks (D88): read by vm/annex_vm.py networks-sync from the platform .env
+        "ANNEX_APP_SUBNETS": app_subnets,
         # what annex-ops (inside the VM) requests to check the front door: no port suffix
         "ANNEX_FRONTDOOR_URL": ("https" if mode == "local" else "http") + "://" + pattern.replace("{name}", "home") + "/",
     }

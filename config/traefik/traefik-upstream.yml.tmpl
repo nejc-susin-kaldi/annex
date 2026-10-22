@@ -34,6 +34,8 @@ providers:
   docker:
     endpoint: tcp://socket-ro:2375
     exposedByDefault: false
+    # the default for platform routes (gateway, hooks). Each app's container says
+    # traefik.docker.network: annex-app-<name>, its own network, which Traefik joins at deploy (D88)
     network: annex-edge
     constraints: Label(`com.kaldi.annex`, `true`)
   file:

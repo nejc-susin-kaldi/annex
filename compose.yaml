@@ -68,7 +68,8 @@ services:
     volumes:
       - ./config/traefik:/etc/traefik:ro
     networks:
-      # annex-ops (on edge) checks the front door by its real hostnames, which resolve to Traefik here
+      # annex-ops (on edge) checks the front door by its real hostnames, which resolve to Traefik here.
+      # Traefik also joins each web app's own network at runtime (annex_vm.py networks-sync, D88), not here.
       edge: {aliases: ["${ANNEX_HOST_HOME}", "${ANNEX_HOST_AUTH}"]}
       platform: {}
       socket-ro: {}
@@ -173,6 +174,8 @@ services:
       PGRST_ADMIN_SERVER_PORT: "3001"
       PGRST_LOG_LEVEL: info
       PGRST_OPENAPI_MODE: follow-privileges
+    # edge: Traefik's route for admins; product: its database. Apps with views reach it on their own networks, where
+    # it joins at runtime as `gateway` (networks-sync, D88)
     networks: [edge, product]
     depends_on:
       product-db: {condition: service_healthy}
@@ -210,7 +213,8 @@ services:
       - ./db/appdata/init:/docker-entrypoint-initdb.d:ro
       - ./db/appdata/hooks:/annex:ro
       - ${ANNEX_DATA_DIR}/dumps:/dumps
-    # appdata: apps with Postgres, ops and the receiver; console: the console's read-only role (D69), nobody else
+    # appdata: ops, the receiver and Metabase; console: the console's read-only role (D69), nobody else.
+    # It also joins the network of each app with Postgres at runtime, as `appdata-db` (networks-sync, D88).
     networks: [appdata, console]
     shm_size: 128m
     mem_limit: 640m  # max_connections=60 (D84): 128 MB shared buffers + 60 backends at up to ~6 MB + headroom
@@ -227,7 +231,7 @@ services:
 
   # --- Outbound: email and Slack for apps (annex-ops) ---------------------
   # Apps call http://ops:8000 with a per-app token; ops holds the SMTP and Slack side so apps never do.
-  # No Traefik route: ops is reached only from the edge network.
+  # No Traefik route. ops joins every app's own network at runtime as `ops` (networks-sync, D88): apps reach it there.
   ops:
     <<: *base
     image: annex-ops:local
@@ -264,7 +268,8 @@ services:
       - ${ANNEX_DATA_DIR}/state/ops:/annex/state:ro
       # each app's hooks file (delivery needs its token, port and paths; the directory, not a file: D7)
       - ${ANNEX_DATA_DIR}/secrets/hooks:/annex/hooks:ro
-    # edge: apps reach it, and it reaches Slack; platform: Mailpit's SMTP and Homepage's tiles; appdata: its database;
+    # edge: it reaches Slack (apps reach it on their own networks, D88); platform: Mailpit's SMTP and Homepage's tiles;
+    # appdata: its database;
     # socket-ro: Docker events and logs, read-only
     networks: [edge, platform, appdata, socket-ro]
     user: "10001:10001"
@@ -506,7 +511,13 @@ services:
       traefik.http.services.logs.loadbalancer.server.port: "8080"
 
 networks:
-  # traefik, apps and the gateway; the only network with outbound access
+  # Per-app networks (D88) are not declared here: every app has its own internal network, annex-app-<name>, made by
+  # vm/annex_vm.py networks-sync with a /24 from ANNEX_APP_SUBNETS, and holding only the app and the platform
+  # containers it needs (traefik, ops, gateway, appdata-db), connected at runtime. An app with `egress:` also gets
+  # annex-egress-<name> (not internal, that app only). No app is on any network below. Runtime connections survive
+  # restarts, not recreates: push.sh syncs after every start; after a manual `up` that recreates one of those four,
+  # run `python3 /srv/annex/platform/vm/annex_vm.py networks-sync` (docs/operations.md).
+  # traefik, the gateway, ops and the webhook receiver; the only network here with outbound access. No apps (D88)
   edge:
     name: annex-edge
     labels: {com.kaldi.annex: "true"}
@@ -525,7 +536,7 @@ networks:
     name: annex-clientlink
     internal: true
     labels: {com.kaldi.annex: "true"}
-  # appdata-db, apps, metabase
+  # appdata-db, ops, the receiver, metabase; no apps (D88)
   appdata:
     name: annex-appdata
     internal: true

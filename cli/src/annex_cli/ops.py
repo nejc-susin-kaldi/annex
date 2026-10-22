@@ -72,6 +72,25 @@ def project(app: str) -> str:
     return f"annex-app-{_name(app)}"
 
 
+# Per-app networks (D88): an app is on its own internal network and nothing else apps are on; the platform
+# containers it needs join that network at runtime (annex_vm.py networks-sync), not through this compose file.
+def app_network(app: str) -> str:
+    return f"annex-app-{_name(app)}"
+
+
+def egress_network(app: str) -> str:
+    """Only for an app that declares egress: a non-internal network with only that app on it."""
+    return f"annex-egress-{_name(app)}"
+
+
+def _compose_networks(app: str, egress: bool) -> tuple[list[str], dict]:
+    """(the service's networks, the file's top-level networks): both external, created by networks-sync."""
+    nets = {"app": {"external": True, "name": app_network(app)}}
+    if egress:
+        nets["egress"] = {"external": True, "name": egress_network(app)}
+    return list(nets), nets
+
+
 # --- contract and init -----------------------------------------------------
 # The contract is one file (for people: docs/app-contract.md), served to agents in parts: the core every app needs,
 # and topics fetched only when an app uses them, so a simple dashboard doesn't load the webhook rules (D74).
@@ -184,7 +203,6 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
         "homepage.description": f"{m.description} · owner: {m.owner}" if m.description else f"owner: {m.owner}",
         "homepage.icon": "mdi-toolbox-outline",
     }
-    networks = ["edge"]
     svc: dict = {
         # built by _build before the switch; a rollback reuses an older image
         "image": image,
@@ -206,6 +224,8 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
         env["PORT"] = str(m.port)
         labels.update({
             "traefik.enable": "true",
+            # Traefik reaches the app on its own network; the provider default (annex-edge) is for gateway and hooks
+            "traefik.docker.network": app_network(m.name),
             f"traefik.http.routers.app-{m.name}.rule": f"Host(`{r.host_for(m.name)}`)",
             f"traefik.http.services.app-{m.name}.loadbalancer.server.port": str(m.port),
             "homepage.href": url,
@@ -218,8 +238,6 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
         # job-only apps idle between runs; jobs are executed inside this container
         svc["command"] = ["sleep", "infinity"]
         labels.update(_tile_labels(m, [("Last run", "last_run", None), ("Status", "status", None)]))
-    if m.postgres:
-        networks.append("appdata")
     if m.files:
         env["DATA_DIR"] = "/data"
         svc["volumes"] = [f"{data_dir}/apps/{m.name}/data:/data"]
@@ -237,12 +255,46 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
             labels[f"{key}.command"] = shlex.join(j.command)
             labels[f"{key}.no-overlap"] = "true"
             labels[f"{key}.user"] = str(APP_UID)  # Ofelia's job-exec defaults to root
-    svc["networks"] = networks
+    svc["networks"], networks = _compose_networks(m.name, bool(m.egress))
     return {
         "name": project(m.name),
         "services": {m.name: svc},
-        "networks": {n: {"external": True, "name": f"annex-{n}"} for n in networks},
+        "networks": networks,
     }
+
+
+def _network_args(app: str, *, web: bool, postgres: bool, views: bool, egress: bool) -> list[str]:
+    """Arguments for `annex_vm.py networks-sync`: which platform containers join the app's network."""
+    return ["networks-sync", app, *(["--web"] if web else []), *(["--postgres"] if postgres else []),
+            *(["--views"] if views else []), *(["--egress"] if egress else [])]
+
+
+def rewire_compose(doc: dict, app: str, egress: bool) -> tuple[dict, dict]:
+    """An app's compose file from before D88 (on annex-edge, and annex-appdata with Postgres) moved onto its own
+    network, for an app whose source isn't at hand (migrate_networks). Returns (new document, what the app uses:
+    the flags for networks-sync), read from the file itself: routed = web, on appdata = Postgres, a gateway URL = views."""
+    doc = json.loads(json.dumps(doc))  # a deep copy; the file is plain YAML data
+    services = doc.get("services") or {}
+    if len(services) != 1:
+        raise AnnexError(f"{app}'s compose file has {len(services)} services; an Annex app has exactly one")
+    svc = next(iter(services.values()))
+    labels = svc.get("labels") or {}
+    if not isinstance(labels, dict):  # Annex always writes a mapping; a list means someone edited the file
+        raise AnnexError(f"{app}'s compose file has its labels as a list; it wasn't written by Annex. Redeploy it from its source")
+    env = svc.get("environment") or {}
+    old = svc.get("networks") or []
+    old = list(old) if isinstance(old, (list, dict)) else []
+    old_names = {(doc.get("networks") or {}).get(k, {}).get("name", k) for k in old}
+    uses = {"web": str(labels.get("traefik.enable", "")).lower() == "true",
+            "postgres": bool(old_names & {"annex-appdata"}),
+            "views": "ANNEX_GATEWAY_URL" in (env if isinstance(env, dict) else {}),
+            "egress": egress}
+    if uses["web"]:
+        labels["traefik.docker.network"] = app_network(app)
+        svc["labels"] = labels
+    svc["networks"], doc["networks"] = _compose_networks(app, egress)
+    return doc, uses
+
 
 
 def _record(r: Remote, app: str) -> dict | None:
@@ -408,6 +460,8 @@ def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Pro
                                               secrets=m.secrets, notify_email=m.notify_email,
                                               notify_slack=m.notify_slack, port=m.port,
                                               webhooks=[w.__dict__ for w in m.webhooks]))
+    # before the switch: the app's network and the platform containers on it must exist when the container starts (D88)
+    r.vm(*_network_args(m.name, web=m.is_web, postgres=m.postgres, views=bool(m.views), egress=bool(m.egress)))
     compose = yaml.safe_dump(compose_for(m, r, image, release), sort_keys=False)
     r.run(f"mkdir -p {d} && cat > {d}/compose.yaml", input=compose)
     _drain(r, m.name, progress)  # the container Compose is about to replace (a failed release's, on a rollback)
@@ -443,7 +497,8 @@ def _write_record(r: Remote, m: mf.Manifest, image: str, release: int) -> dict:
               "url": r.url_for(m.name) if m.is_web else None, "deployed_at": _now(), "postgres": m.postgres,
               "files": m.files, "views": m.views, "secrets": m.secrets, "schedule": [j.__dict__ for j in m.schedule],
               "memory_mb": m.memory_mb, "notify_email": m.notify_email, "notify_slack": m.notify_slack,
-              "alerts_to": m.alerts_to, "webhooks": [w.__dict__ for w in m.webhooks], "port": m.port}
+              "alerts_to": m.alerts_to, "webhooks": [w.__dict__ for w in m.webhooks], "port": m.port,
+              "egress": m.egress}  # networks-sync (push.sh) reads type, postgres, views and egress from here
     r.run(f"cat > {r.path('deploy', _name(m.name), 'deploy.json')}", input=json.dumps(record, indent=2))
     return record
 
@@ -960,6 +1015,35 @@ def remove(app: str, keep_data: bool = False) -> dict:
     if record and record.get("schedule"):
         r.run(f"docker restart {OFELIA} >/dev/null")
     return res
+
+
+def migrate_networks(app: str, egress: bool = False, progress: Progress = _quiet) -> dict:
+    """Move an app deployed before per-app networks (D88) onto its own network without its source (human only):
+    rewrite the networks of its compose file on the VM (the old file is kept as compose.yaml.pre-d88), record egress
+    in deploy.json, connect the platform containers it uses and recreate the container. An app whose source is at hand
+    should be redeployed instead. egress=True keeps internet access (the old shared network had it)."""
+    _name(app)
+    r = Remote()
+    d = r.path("deploy", app)
+    res = r.run(f"cat {d}/compose.yaml", check=False)
+    if res.returncode != 0:
+        raise AnnexError(f"{app} has no compose file on the VM ({r.data}/deploy/{app}/compose.yaml). See: annex list")
+    doc, uses = rewire_compose(yaml.safe_load(res.stdout.decode()) or {}, app, egress)
+    record = _record(r, app)
+    progress(f"Connecting the platform to {app_network(app)}")
+    sync = r.vm(*_network_args(app, **uses))
+    if record is not None:
+        record["egress"] = ["*"] if egress else []  # "*": hosts unknown (migrated); networks-sync only asks "any?"
+        r.run(f"cat > {d}/deploy.json", input=json.dumps(record, indent=2))
+    r.run(f"[ -f {d}/compose.yaml.pre-d88 ] || cp {d}/compose.yaml {d}/compose.yaml.pre-d88")
+    r.run(f"cat > {d}/compose.yaml", input=yaml.safe_dump(doc, sort_keys=False))
+    _drain(r, app, progress)
+    progress(f"Recreating {container(app)} on its own network")
+    r.run(f"cd {d} && docker compose up -d --remove-orphans 2>&1")
+    nets = r.out(f"docker inspect -f '{{{{range $k, $v := .NetworkSettings.Networks}}}}{{{{$k}}}} {{{{end}}}}' {container(app)}",
+                 check=False).split()
+    return {"app": app, "uses": uses, "networks": sorted(nets), "platform": sync.get("platform", []),
+            "backup": f"{r.data}/deploy/{app}/compose.yaml.pre-d88"}
 
 
 def users(action: str, login: str | None = None, **opts) -> dict:

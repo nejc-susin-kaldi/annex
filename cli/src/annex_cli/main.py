@@ -194,6 +194,11 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("app")
     s.add_argument("--keep-data", action="store_true", help="keep its database, files and secrets")
     s.add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    s = sub.add_parser("migrate-networks", help="move an app deployed before per-app networks (D88) onto its own "
+                                                "network, from its compose file on the VM (human only; redeploy instead if you have the source)")
+    s.add_argument("app")
+    s.add_argument("--egress", action="store_true", help="keep internet access (before D88 every app had it)")
+    s.add_argument("--yes", action="store_true", help="don't ask for confirmation")
     s = sub.add_parser("users", help="Annex's own user accounts: list, add, set, remove, reset (human only)")
     us = s.add_subparsers(dest="users_cmd", required=True)
     us.add_parser("list", help="every account, with groups and whether it's disabled")
@@ -409,6 +414,13 @@ def main(argv: list[str] | None = None) -> None:
                                          + (f"\nwarning: {res['warning']}" if res.get("warning") else ""))
         elif a.cmd == "users":
             _users(a, emit)
+        elif a.cmd == "migrate-networks":
+            if not a.yes and input(f"Recreate {a.app}'s container on its own network"
+                                   f"{' with' if a.egress else ' without'} internet access? Type the app name to confirm: ") != a.app:
+                sys.exit("Aborted.")
+            res = ops.migrate_networks(a.app, a.egress, progress)
+            emit(res) if emit else print(f"{a.app} is on {', '.join(res['networks']) or 'no network (check annex status)'}; "
+                                         f"platform on its network: {', '.join(res['platform'])}; old compose file kept at {res['backup']}")
         elif a.cmd == "remove":
             if not a.yes:
                 what = "container and image" if a.keep_data else "container, image, database, files and secrets"
