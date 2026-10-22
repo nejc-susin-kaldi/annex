@@ -154,8 +154,11 @@ expect "annex-app-$B holds the app, Traefik, ops and the gateway" "annex-app-$B 
 expect "annex-app-$E holds the app, Traefik and ops" "annex-app-$E annex-ops-1 annex-traefik-1" "$(members annex-app-$E)"
 expect "annex-egress-$E is not internal" false "$(vm "docker network inspect annex-egress-$E -f '{{.Internal}}'")"
 expect "  ...and holds only $E (no platform container)" "annex-app-$E" "$(members annex-egress-$E)"
-expect "no app is on annex-edge" "" "$(members annex-edge | tr ' ' '\n' | grep '^annex-app-' | xargs)"
-expect "no app is on annex-appdata" "" "$(members annex-appdata | tr ' ' '\n' | grep '^annex-app-' | xargs)"
+# vibe-leads predates D88 and has no source in the repo: Nejc left it on the shared networks until the Goat Arcade
+# demo removes it (docs/plans/goat-arcade-demo.md). Any other app there is a failure.
+LEGACY_SHARED='^annex-app-vibe-leads$'
+expect "no app is on annex-edge (vibe-leads excepted)" "" "$(members annex-edge | tr ' ' '\n' | grep '^annex-app-' | grep -Ev "$LEGACY_SHARED" | xargs)"
+expect "no app is on annex-appdata (vibe-leads excepted)" "" "$(members annex-appdata | tr ' ' '\n' | grep '^annex-app-' | grep -Ev "$LEGACY_SHARED" | xargs)"
 hasnt "egress: [] can't reach the internet (1.1.1.1:443)" ok "$(reach annex-app-$A 1.1.1.1 443)"
 expect "an app that declares egress can (1.1.1.1:443)" ok "$(reach annex-app-$E 1.1.1.1 443)"
 hasnt "  ...but still not another app" ok "$(reach annex-app-$E "${B_IP:-10.213.255.254}" 8080)"
