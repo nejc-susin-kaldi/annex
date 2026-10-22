@@ -20,7 +20,6 @@ CALLS = {
     "remove": lambda a: ops.remove(a),
     "releases": lambda a: ops.releases(a),
     "rollback": lambda a: ops.rollback(a),
-    "_rollback": lambda a: ops._rollback(a),
     "usage": lambda a: ops.usage(a),
     "errors": lambda a: ops.errors(a),
     "audit": lambda a: ops.audit(a),
@@ -29,11 +28,8 @@ CALLS = {
     "hooks_replay": lambda a: ops.hooks_replay(a, failed=True),
     "_record": lambda a: ops._record(mock.Mock(), a),
     "_releases": lambda a: ops._releases(mock.Mock(), a),
-    "_Lock": lambda a: ops._Lock(mock.Mock(), a, {}, None),
-    "_running_image": lambda a: ops._running_image(mock.Mock(), a),
     "_images": lambda a: ops._images(mock.Mock(), a),
     "_containers": lambda a: ops._containers(mock.Mock(), a),
-    "_maintenance": lambda a: ops._maintenance(mock.Mock(), a, 5),
     "container": lambda a: ops.container(a),
     "project": lambda a: ops.project(a),
     "app_network": lambda a: ops.app_network(a),
@@ -48,6 +44,7 @@ class AppNames(unittest.TestCase):
         with mock.patch.object(Remote, "__init__", side_effect=boom), \
                 mock.patch.object(Remote, "run", side_effect=boom), \
                 mock.patch.object(Remote, "vm", side_effect=boom), \
+                mock.patch.object(Remote, "call", side_effect=boom), \
                 mock.patch.object(Remote, "stream", side_effect=boom):
             for fn, call in CALLS.items():
                 for name in BAD:

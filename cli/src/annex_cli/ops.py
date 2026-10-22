@@ -29,17 +29,8 @@ from .remote import REPO, AnnexError, Remote
 TEMPLATES = REPO / "templates"
 RUNTIME = REPO / "runtime"  # the one source of annex_runtime.py/.js; scripts/sync-runtime.sh copies it
 CONTRACT = Path(__file__).with_name("contract.md")
-APP_UID = 10001
-TRAEFIK = "annex-traefik-1"
 OFELIA = "annex-ofelia-1"
-GATEWAY_URL = "http://gateway:3000"
-OPS_URL = "http://ops:8000"
 OPS_CONTAINER = "annex-ops-1"
-HEALTH_TIMEOUT = int(os.environ.get("ANNEX_HEALTH_TIMEOUT", "60"))
-BUILD_MIN_FREE_GB = 3  # D95: a build is refused with less than this free on the data disk
-IMAGE_MAX_MB = 2048  # D95: a built image above this is refused and removed
-APP_PIDS_LIMIT = 256  # D95: processes an app container may have (a fork bomb stays inside it)
-KEEP_RELEASES = 3  # images and data snapshots kept per app
 SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", ".DS_Store", ".pytest_cache", ".mypy_cache"}
 
 Progress = Callable[[str], None]
@@ -212,99 +203,6 @@ def _tar(folder: Path) -> bytes:
     return buf.getvalue()
 
 
-def _tile_labels(m: mf.Manifest, fields: list[tuple[str, str, str | None]]) -> dict[str, str]:
-    """Homepage's customapi widget on the app's discovery tile: annex-ops answers /tiles/<app> with totals and
-    status (never logins), and Homepage calls it from its own server. (label, field, extra field shown beside it)"""
-    labels = {"homepage.widget.type": "customapi", "homepage.widget.url": f"http://ops:8000/tiles/{m.name}",
-              "homepage.widget.refreshInterval": "60000"}
-    for i, (label, field, extra) in enumerate(fields):
-        labels[f"homepage.widget.mappings[{i}].label"] = label
-        labels[f"homepage.widget.mappings[{i}].field"] = field
-        if extra:
-            labels[f"homepage.widget.mappings[{i}].additionalField.field"] = extra
-            labels[f"homepage.widget.mappings[{i}].additionalField.color"] = "adaptive"
-    return labels
-
-
-def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
-    data_dir = r.data
-    url = r.url_for(m.name)
-    # LOG_LEVEL has a default that env: may override (the Logging section of the contract)
-    env = {"ANNEX_APP_NAME": m.name, "ANNEX_BASE_URL": url, "LOG_LEVEL": "info", **m.env}
-    labels = {
-        "com.kaldi.annex": "true",
-        "com.kaldi.annex.app": m.name,
-        "com.kaldi.annex.owner": m.owner,
-        "com.kaldi.annex.type": m.type,
-        "com.kaldi.annex.release": str(release),
-        "com.kaldi.annex.memory": f"{m.memory_mb}m",
-        "com.kaldi.annex.alerts-to": ",".join(m.alerts_to),
-        "homepage.group": "Tools",
-        "homepage.name": m.name,
-        "homepage.description": f"{m.description} · owner: {m.owner}" if m.description else f"owner: {m.owner}",
-        "homepage.icon": "mdi-toolbox-outline",
-    }
-    svc: dict = {
-        # built by _build before the switch; a rollback reuses an older image
-        "image": image,
-        "pull_policy": "never",
-        "container_name": container(m.name),
-        "restart": "unless-stopped",
-        "user": f"{APP_UID}:{APP_UID}",
-        "read_only": True,
-        "tmpfs": ["/tmp:size=64m,mode=1777"],
-        "cap_drop": ["ALL"],
-        "security_opt": ["no-new-privileges:true"],
-        "mem_limit": f"{m.memory_mb}m",
-        "cpus": 0.5,
-        "pids_limit": APP_PIDS_LIMIT,
-        "env_file": [f"{data_dir}/secrets/apps/{m.name}/runtime.env"],
-        "environment": env,
-        "labels": labels,
-    }
-    if m.is_web:
-        env["PORT"] = str(m.port)
-        labels.update({
-            "traefik.enable": "true",
-            # Traefik reaches the app on its own network; the provider default (annex-edge) is for gateway and hooks
-            "traefik.docker.network": app_network(m.name),
-            f"traefik.http.routers.app-{m.name}.rule": f"Host(`{r.host_for(m.name)}`)",
-            f"traefik.http.services.app-{m.name}.loadbalancer.server.port": str(m.port),
-            "homepage.href": url,
-            # annex-ops excludes the health path from usage counts
-            "com.kaldi.annex.healthcheck": m.healthcheck,
-        })
-        labels.update(_tile_labels(m, [("Users 7d", "users_7d", "trend"), ("Status", "status", None)]))
-    else:
-        labels["traefik.enable"] = "false"  # an image label can't turn routing on (D83)
-        # job-only apps idle between runs; jobs are executed inside this container
-        svc["command"] = ["sleep", "infinity"]
-        labels.update(_tile_labels(m, [("Last run", "last_run", None), ("Status", "status", None)]))
-    if m.files:
-        env["DATA_DIR"] = "/data"
-        svc["volumes"] = [f"{data_dir}/apps/{m.name}/data:/data"]
-    if m.views:
-        env["ANNEX_GATEWAY_URL"] = GATEWAY_URL
-    if m.notify_email or m.notify_slack:
-        env["ANNEX_OPS_URL"] = OPS_URL  # the token is in the env file
-    if m.webhooks:
-        env["ANNEX_HOOKS_URL"] = f"{r.settings.get('ANNEX_URL_HOOKS', '')}/h/{m.name}"  # the token is in the env file
-    labels["ofelia.enabled"] = "true" if m.schedule else "false"  # an image label can't turn the scheduler on (D83)
-    if m.schedule:
-        for j in m.schedule:
-            key = f"ofelia.job-exec.{m.name}-{j.name}"
-            labels[f"{key}.schedule"] = mf.ofelia_schedule(j.cron)
-            labels[f"{key}.command"] = shlex.join(j.command)
-            labels[f"{key}.no-overlap"] = "true"
-            labels[f"{key}.user"] = str(APP_UID)  # Ofelia's job-exec defaults to root
-    svc["networks"], networks = _compose_networks(m.name, bool(m.egress))
-    return {
-        "name": project(m.name),
-        "services": {m.name: svc},
-        "networks": networks,
-    }
-
-
 def _network_args(app: str, *, web: bool, postgres: bool, views: bool, egress: bool) -> list[str]:
     """Arguments for `annex_vm.py networks-sync`: which platform containers join the app's network."""
     return ["networks-sync", app, *(["--web"] if web else []), *(["--postgres"] if postgres else []),
@@ -338,7 +236,6 @@ def rewire_compose(doc: dict, app: str, egress: bool) -> tuple[dict, dict]:
     return doc, uses
 
 
-
 def _record(r: Remote, app: str) -> dict | None:
     res = r.run(f"cat {r.path('deploy', _name(app), 'deploy.json')}", check=False)
     return json.loads(res.stdout) if res.returncode == 0 else None
@@ -366,57 +263,14 @@ def _git(folder: Path) -> dict | None:
 
 # --- releases --------------------------------------------------------------
 # Each deploy or rollback has one line in /srv/annex/apps/<app>/releases.jsonl: release number, image, manifest,
-# who/when/where from, data snapshot and result: "pending" while it runs (written by annex_vm.py deploy-begin, which
-# also takes the app's deploy lock), then "live", or "failed" when it didn't pass the health gate or broke off
-# (rewritten by deploy-end, or by deploy-reconcile when the deploy died; C1, D92).
+# who/when/where from, data snapshot and result: "pending" while it runs, then "live", or "failed" when it didn't pass
+# the health gate or broke off. Only the VM writes it: the deploy process that holds the app's lock, or the next one
+# (or deploy-reconcile) when that process died (C1, D92, D101).
 def _releases(r: Remote, app: str) -> list[dict]:
     res = r.run(f"cat {r.path('apps', _name(app), 'releases.jsonl')}", check=False)
     if res.returncode != 0:
         return []
     return [json.loads(line) for line in res.stdout.decode().splitlines() if line.strip()]
-
-
-class _Lock:
-    """One deploy or rollback's hold on its app (C1, D92): annex_vm.py deploy-begin takes the app's lock, settles a
-    release an earlier run left pending, numbers this release and records it as pending; step() says where it is (for
-    whoever finds the lock held, and for reconcile); end() rewrites the pending line with the outcome (the VM also
-    copies it to annex_ops.releases) and releases the lock. Used as a context manager: leaving it without end(), by
-    an exception or Ctrl-C, records the release as failed at the step it reached."""
-
-    def __init__(self, r: Remote, app: str, line: dict, record: dict | None, progress: Progress = _quiet):
-        self.r, self.app, self.ended, self.at = r, _name(app), False, "begin"
-        stale = os.environ.get("ANNEX_DEPLOY_LOCK_STALE")  # seconds; operations.md: only when the holder is dead
-        res = r.vm("deploy-begin", app, "--actor", _who(), *(["--stale-after", str(int(stale))] if stale else []),
-                   input=json.dumps({"line": line, "record": record}, default=str))
-        self.n, self.image, self.token = res["release"], res["image"], res["token"]
-        self.line = {**line, "release": self.n, "image": self.image}
-        self.notes = [x for x in [res.get("took_over")] if x] + [x["message"] for x in res.get("reconciled", [])]
-        self.notes += res.get("warnings", [])
-        for note in self.notes:
-            progress(note)
-
-    def step(self, name: str) -> None:
-        self.at = self.r.step = name
-        self.r.vm("deploy-step", self.app, self.token, name)
-
-    def end(self, rel: dict, timeout: int = 900) -> dict:
-        res = self.r.vm("deploy-end", self.app, self.token, str(self.n), rel["result"],
-                        input=json.dumps({**self.line, **rel}, default=str), timeout=timeout)
-        self.ended, self.r.step = True, None
-        return res
-
-    def __enter__(self) -> _Lock:
-        return self
-
-    def __exit__(self, kind, exc, tb) -> bool:
-        if not self.ended:
-            why = (str(exc).strip().splitlines() or [kind.__name__])[0] if exc else "ended without an outcome"
-            try:  # best effort: if the VM can't be reached, the next deploy reconciles the pending line
-                self.end({"result": "failed", "error": f"broke off at {self.at}: {why}"[:300],
-                          "interrupted_at": self.at}, timeout=60)
-            except (AnnexError, subprocess.SubprocessError, OSError):
-                pass
-        return False
 
 
 def _live(releases: list[dict]) -> dict | None:
@@ -427,111 +281,6 @@ def _live(releases: list[dict]) -> dict | None:
 
 def _images(r: Remote, app: str) -> set[str]:
     return set(r.out(f"docker image ls --format '{{{{.Repository}}}}:{{{{.Tag}}}}' annex-app/{_name(app)}").split())
-
-
-# Label prefixes only Annex may set: Traefik routes, Ofelia jobs, Homepage tiles, backup hooks, Annex's own markers (D83).
-PLATFORM_LABEL_PREFIXES = ("traefik.", "ofelia.", "homepage.", "docker-volume-backup.", "com.kaldi.annex")
-
-
-def platform_label_offenders(labels: dict | None, app: str) -> list[str]:
-    """The keys of an image's labels that a Dockerfile must not set, sorted. `docker build` is given exactly
-    com.kaldi.annex=true and com.kaldi.annex.app=<app>, which land on the image too: those two are fine."""
-    allowed = {"com.kaldi.annex": "true", "com.kaldi.annex.app": app}
-    return sorted(k for k, v in (labels or {}).items()
-                  if k.lower().startswith(PLATFORM_LABEL_PREFIXES) and allowed.get(k) != v)
-
-
-def build_space_verdict(free_bytes: int, min_gb: float) -> str | None:
-    """None if the disk has room for a build, else the refusal (pure, D95)."""
-    if free_bytes >= min_gb * 1024 ** 3:
-        return None
-    return (f"The VM has only {free_bytes / 1024 ** 3:.1f} GB free on its data disk and a build needs at least "
-            f"{min_gb:g} GB, so nothing was built and the running version is unchanged. Tell the Annex owner: "
-            "'docker system df' on the VM shows what takes the space, 'docker image prune -a' and "
-            "'docker builder prune' free it")
-
-
-def image_size_verdict(size_bytes: int, max_mb: float, app: str) -> str | None:
-    """None if the image is small enough, else the refusal (pure, D95)."""
-    if size_bytes <= max_mb * 1024 ** 2:
-        return None
-    return (f"The image of {app} is {size_bytes / 1024 ** 2:.0f} MB, above the limit of {max_mb:g} MB, so it was "
-            "removed and the running version is unchanged. Make it smaller: a slim base image, no build tools or "
-            "caches in the final stage ('pip install --no-cache-dir'), and no data files in the source folder "
-            "(the Dockerfile's COPY takes everything in it)")
-
-
-def _limit(r: Remote, key: str, default: float) -> float:
-    """A build limit: the CLI's environment first (tests), then the platform's .env (the VM owner), then the default."""
-    raw = os.environ.get(key) or r.settings.get(key) or ""
-    if not raw.strip():
-        return default
-    try:
-        value = float(raw)
-    except ValueError:
-        value = -1
-    if value < 0:
-        raise AnnexError(f"{key}={raw!r} is not a number. Set it to a plain number in the platform's .env "
-                         "(scripts/push.sh applies it) or unset it to use the default")
-    return value
-
-
-def _build(r: Remote, m: mf.Manifest, image: str) -> None:
-    free = r.out(f"df -PB1 {shlex.quote(r.data)} | awk 'NR==2 {{print $4}}'", check=False).strip()
-    if free.isdigit():  # a df that can't answer must not block a deploy
-        refusal = build_space_verdict(int(free), _limit(r, "ANNEX_BUILD_MIN_FREE_GB", BUILD_MIN_FREE_GB))
-        if refusal:
-            raise AnnexError(refusal)
-    d = r.path("deploy", _name(m.name))
-    build = r.run(f"docker build --progress=plain --label com.kaldi.annex=true --label com.kaldi.annex.app={m.name} "
-                  f"-t {image} {d}/src 2>&1", check=False)
-    if build.returncode != 0:
-        tail = "\n".join(build.stdout.decode(errors="replace").splitlines()[-40:])
-        raise AnnexError(f"Docker build failed for {m.name}. Fix the Dockerfile or code and deploy again. "
-                         f"The running version is unchanged.\n{tail}")
-    size = r.out(f"docker image inspect -f '{{{{.Size}}}}' {image}", check=False).strip()
-    refusal = size.isdigit() and image_size_verdict(int(size), _limit(r, "ANNEX_IMAGE_MAX_MB", IMAGE_MAX_MB), m.name)
-    if refusal:
-        r.run(f"docker rmi {image} >/dev/null 2>&1", check=False)
-        raise AnnexError(refusal)
-    user = r.out(f"docker image inspect -f '{{{{.Config.User}}}}' {image}").strip()
-    if user in ("", "root", "0", "0:0"):
-        r.run(f"docker rmi {image} >/dev/null 2>&1", check=False)
-        raise AnnexError("The image runs as root. End the Dockerfile with a non-root user, e.g. "
-                         "'RUN useradd -u 10001 app' and 'USER 10001' (the templates already do this)")
-    raw = r.out(f"docker image inspect -f '{{{{json .Config.Labels}}}}' {image}").strip()
-    bad = platform_label_offenders(json.loads(raw or "null"), m.name)
-    if bad:
-        r.run(f"docker rmi {image} >/dev/null 2>&1", check=False)
-        raise AnnexError(f"The image carries labels that are Annex's job: {', '.join(bad)}. Remove the LABEL lines "
-                         "from the Dockerfile. Annex sets the routing, schedule, discovery-page and backup labels "
-                         "itself from annex.yaml; images may not carry traefik.*, ofelia.*, homepage.*, "
-                         "docker-volume-backup.* or com.kaldi.annex* labels")
-
-
-def _gate(r: Remote, m: mf.Manifest, progress: Progress) -> tuple[str, str] | None:
-    """Health gate. None if the new container is healthy, else (reason, last log lines)."""
-    c = container(m.name)
-    if m.is_web:
-        progress(f"Health gate: waiting up to {HEALTH_TIMEOUT} s for {m.healthcheck} to return 200")
-        probe = shlex.quote(f"http://{c}:{m.port}{m.healthcheck}")
-        res = r.run(f"end=$((SECONDS + {HEALTH_TIMEOUT})); while [ $SECONDS -lt $end ]; do "
-                    f"docker exec {TRAEFIK} wget -q -O /dev/null -T 3 {probe} && exit 0; "
-                    f"[ \"$(docker inspect -f '{{{{.State.Status}}}}' {c})\" = running ] || exit 2; "
-                    f"sleep 2; done; exit 1", check=False)
-        if res.returncode == 0:
-            return None
-        reason = ("the container stopped while starting (it crashed; see the log lines)" if res.returncode == 2 else
-                  f"GET {m.healthcheck} on port {m.port} did not return 200 within {HEALTH_TIMEOUT} s. "
-                  f"Make sure the app listens on 0.0.0.0:$PORT and {m.healthcheck} returns 200")
-    else:
-        state = r.out(f"sleep 3; docker inspect -f '{{{{.State.Status}}}}' {c}", check=False).strip() or "missing"
-        if state == "running":
-            return None
-        reason = (f"the container is {state} instead of running (it exits; see the log lines). Job-only apps "
-                  "idle with 'sleep infinity' between runs, so the image needs a 'sleep' binary and no ENTRYPOINT "
-                  "that exits (the python-job template is fine)")
-    return reason, r.out(f"docker logs --tail 40 {c} 2>&1", check=False)
 
 
 def _provision_args(app: str, *, postgres: bool, files: bool, views: list[str], secrets: list[str],
@@ -574,104 +323,13 @@ def _drain(r: Remote, app: str, progress: Progress = _quiet) -> None:
                  f"the deploy carries on. Check: ssh {r.host} docker logs {OPS_CONTAINER}")
 
 
-def _activate(r: Remote, m: mf.Manifest, image: str, release: int, progress: Progress,
-              step: Callable[[str], None] = _quiet) -> tuple[tuple[str, str] | None, dict]:
-    """Provision what manifest `m` asks for, switch the app to `image` and run the health gate.
-    Returns (gate failure or None, provision result). `step` hears provision, switch and gate (the deploy lock)."""
-    d = r.path("deploy", _name(m.name))
-    step("provision")
-    progress("Provisioning storage, data access and secrets")
-    prov = r.vm("provision", *_provision_args(m.name, postgres=m.postgres, files=m.files, views=m.views,
-                                              secrets=m.secrets, notify_email=m.notify_email,
-                                              notify_slack=m.notify_slack, port=m.port,
-                                              webhooks=[w.__dict__ for w in m.webhooks]))
-    # before the switch: the app's network and the platform containers on it must exist when the container starts (D88)
-    r.vm(*_network_args(m.name, web=m.is_web, postgres=m.postgres, views=bool(m.views), egress=bool(m.egress)))
-    compose = yaml.safe_dump(compose_for(m, r, image, release), sort_keys=False)
-    r.run(f"mkdir -p {d} && cat > {d}/compose.yaml", input=compose)
-    _drain(r, m.name, progress)  # the container Compose is about to replace (a failed release's, on a rollback)
-    step("switch")
-    progress(f"Starting r{release} ({image})")
-    r.run(f"cd {d} && docker compose up -d --remove-orphans 2>&1")
-    step("gate")
-    failed = _gate(r, m, progress)
-    if failed or not m.is_web:
-        return failed, prov
-    progress("Waiting for the route and the container healthcheck")
-    host = r.host_for(m.name)
-    if r.settings["ANNEX_TLS_MODE"] == "local":
-        route = f"curl -sk -o /dev/null -w '%{{http_code}}' --resolve {host}:443:127.0.0.1 https://{host}/"
-    else:
-        route = f"curl -s -o /dev/null -w '%{{http_code}}' -H 'Host: {host}' http://127.0.0.1/"
-    # routed = the front door answers with a login redirect instead of 404
-    r.run(f"for i in $(seq 30); do [ \"$({route})\" = 302 ] && break; sleep 1; done; "
-          f"for i in $(seq 45); do h=$(docker inspect -f '{{{{if .State.Health}}}}{{{{.State.Health.Status}}}}"
-          f"{{{{else}}}}none{{{{end}}}}' {container(m.name)}); [ \"$h\" = healthy ] || [ \"$h\" = none ] && break; "
-          f"sleep 2; done", check=False)
-    return None, prov
-
-
-def _reload_scheduler(r: Remote, progress: Progress, *schedules: object) -> None:
-    """Ofelia reads job labels only at startup (D18)."""
-    if any(schedules):
-        progress("Reloading the scheduler")
-        r.run(f"docker restart {OFELIA} >/dev/null")
-
-
-def _write_record(r: Remote, m: mf.Manifest, image: str, release: int) -> dict:
-    """deploy.json: what's running now (read by status, run, secret set, remove and restore)."""
-    record = _record_for(r, m, image, release)
-    r.run(f"cat > {r.path('deploy', _name(m.name), 'deploy.json')}", input=json.dumps(record, indent=2))
-    return record
-
-
-def _record_for(r: Remote, m: mf.Manifest, image: str | None, release: int | None) -> dict:
-    """deploy.json's content. deploy-begin gets it without image and release and keeps it with the pending line, so
-    that a deploy that died after its gate can still be recorded as live (deploy-reconcile writes it then)."""
-    return {"name": m.name, "owner": m.owner, "type": m.type, "release": release, "image": image,
-              "url": r.url_for(m.name) if m.is_web else None, "deployed_at": _now(), "postgres": m.postgres,
-              "files": m.files, "views": m.views, "secrets": m.secrets, "schedule": [j.__dict__ for j in m.schedule],
-              "memory_mb": m.memory_mb, "notify_email": m.notify_email, "notify_slack": m.notify_slack,
-              "alerts_to": m.alerts_to, "webhooks": [w.__dict__ for w in m.webhooks], "port": m.port,
-              "egress": m.egress}  # networks-sync (push.sh) reads type, postgres, views and egress from here
-
-
-def _cleanup(r: Remote, app: str, current: str, progress: Progress = _quiet) -> list[str]:
-    """Keep the images of the last KEEP_RELEASES live releases and as many snapshots; trim build cache. Runs under the
-    deploy lock (another deploy's fresh image must not be removed), before end(): the release going live is still
-    pending in the file, so its image (`current`) is named. Best effort: the release is live whatever happens here.
-    Returns the warning for the deploy result when it fails (D95), so the disk filling up is not silent."""
-    try:
-        _prune(r, app, current)
-    except (AnnexError, subprocess.SubprocessError, OSError) as e:
-        msg = (f"Cleaning up old images and snapshots failed ({(str(e).splitlines() or [''])[0]}); the next deploy "
-               "tries again. If this keeps happening, tell the Annex owner: the disk may fill up")
-        progress("Warning: " + msg)
-        return [msg]
-    return []
-
-
-def _prune(r: Remote, app: str, current: str) -> None:
-    keep: list[str] = [current]
-    for x in reversed(_releases(r, app)):
-        if x["result"] == "live" and x["image"] not in keep:
-            keep.append(x["image"])
-        if len(keep) == KEEP_RELEASES:
-            break
-    pattern = " ".join(f"-e {shlex.quote(i)}" for i in keep)
-    r.run(f"docker image ls --format '{{{{.Repository}}}}:{{{{.Tag}}}}' annex-app/{app} | grep -vx {pattern} "
-          f"| xargs -r docker rmi >/dev/null 2>&1; docker image prune -f >/dev/null; "
-          f"docker builder prune -f --max-used-space 1500mb >/dev/null", check=False)
-    r.vm("prune-snapshots", app, "--keep", str(KEEP_RELEASES))
-
-
-def _gate_error(app: str, release: int, failed: tuple[str, str], outcome: str) -> AnnexError:
-    reason, logs = failed
-    return AnnexError(f"{app} r{release} failed the health gate: {reason}.\n{outcome}\n"
-                      f"Last log lines of r{release}:\n{logs}")
+# Settings a test sets in the CLI's environment for one deploy; the VM honours exactly these (vm/annex_deploy.py).
+DEPLOY_OVERRIDES = ("ANNEX_BUILD_MIN_FREE_GB", "ANNEX_IMAGE_MAX_MB", "ANNEX_HEALTH_TIMEOUT")
 
 
 def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
+    """Validate here (fast, agent-readable errors), then one call: the VM runs the whole deploy (D101) and streams
+    its progress; it carries on if this process or its connection goes away."""
     folder = Path(folder).resolve()
     m = mf.load(folder)
     r = Remote()
@@ -684,78 +342,21 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
             f"data.views: {', '.join(bad)} not in the gateway allowlist. Available views: {', '.join(allow)}. "
             "New views are added by the platform team in db/product/api_views.sql"])
 
-    # The lock covers everything from here: the source upload and the build too, which share deploy/<app>/src and the
-    # image tag r<n> with any other deploy of the app (D92).
     line = {"manifest": m.to_dict(), "deployed_at": _now(), "deployed_by": _who(), "via": via,
             "source": str(folder).replace(str(Path.home()), "~", 1), "git": _git(folder), "snapshot": None,
             "contract_version": contract_version(), "runtime": runtime_versions(folder)}
-    with _Lock(r, m.name, line, _record_for(r, m, None, None), progress) as lock:
-        return _deploy(r, m, folder, lock, progress)
+    overrides = {k: os.environ[k] for k in DEPLOY_OVERRIDES if os.environ.get(k, "").strip()}
+    meta = {"line": line, **({"overrides": overrides} if overrides else {})}
+    body = json.dumps(meta, default=str).encode() + b"\n" + _tar(folder)
+    res = r.call("deploy", m.name, "--actor", _who(), "--via", via, input=body, progress=progress)
+    res.pop("ok", None)
+    res["warnings"] = list(res.get("warnings") or []) + _local_warnings(m, folder)
+    return res
 
 
-def _deploy(r: Remote, m: mf.Manifest, folder: Path, lock: _Lock, progress: Progress) -> dict:
-    n, image = lock.n, lock.image
-    previous = _record(r, m.name)
-    live = _live(_releases(r, m.name))  # read under the lock, after deploy-begin reconciled
-    d = r.path("deploy", _name(m.name))
-    lock.step("upload")
-    progress("Uploading source")
-    r.run(f"set -e; mkdir -p {d}; rm -rf {d}/src.new; mkdir {d}/src.new; tar -xzf - -C {d}/src.new; "
-          f"rm -rf {d}/src; mv {d}/src.new {d}/src", input=_tar(folder))
-
-    lock.step("build")
-    progress(f"Building r{n} on the VM")
-    _build(r, m, image)
-
-    rel: dict = {"snapshot": None}
-    if live:
-        lock.step("snapshot")
-        progress(f"Snapshotting data before the switch (r{live['release']} is live)")
-        snapshot = r.vm("snapshot", m.name, "--release", str(n), "--from-release", str(live["release"]))["snapshot"]
-        rel["snapshot"] = snapshot and snapshot["name"]
-
-    failed, prov = _activate(r, m, image, n, progress, lock.step)
-    if failed:
-        rel.update(result="failed", error=failed[0])
-        if not live:
-            lock.end(rel)
-            raise _gate_error(m.name, n, failed, f"There's no earlier release to roll back to, so r{n} is left as "
-                              f"is. Fix the app and deploy again; see its logs with: annex logs {m.name}")
-        progress(f"r{n} failed the health gate; rolling back to r{live['release']}")
-        prev = mf.Manifest.from_dict(live["manifest"])
-        # a failed gate re-provisions the previous release's manifest (grants, secrets, networks), as before C1
-        back, _ = _activate(r, prev, live["image"], live["release"], progress, lambda s: lock.step(f"back-{s}"))
-        _reload_scheduler(r, progress, m.schedule, prev.schedule)
-        _write_record(r, prev, live["image"], live["release"])
-        r.run(f"docker rmi {image} >/dev/null 2>&1", check=False)
-        lock.end({**rel, "rolled_back_to": live["release"]})
-        if back:
-            raise _gate_error(m.name, n, failed, f"Rolling back to r{live['release']} failed too ({back[0]}), "
-                              f"so {m.name} is down. Check: annex logs {m.name}")
-        raise _gate_error(m.name, n, failed, f"Annex rolled back to r{live['release']}, which is live again. "
-                          "Fix the app and deploy again.")
-
-    lock.step("finish")
-    _reload_scheduler(r, progress, m.schedule, previous and previous.get("schedule"))
-    record = _write_record(r, m, image, n)
-    cleanup_warnings = _cleanup(r, m.name, image, progress)
-    lock.end({**rel, "result": "live"})
-    progress("Done")
-    warnings = list(lock.notes) + cleanup_warnings + _warnings(r, m, folder)
-    if m.is_web:  # job-only apps are checked on their first run (a later step)
-        lines = r.out(f"docker logs --tail 50 {container(m.name)} 2>&1", check=False).splitlines()
-        warnings += [w for w in [logcheck.warning(lines)] if w]
-    return {**record, "warnings": warnings, "webhooks": _webhook_urls(r, m.name, m.webhooks), "previous_release": live and live["release"], "snapshot": rel["snapshot"],
-            "injected_env": sorted({"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", "LOG_LEVEL", *prov["injected"],
-                                    *(["DATA_DIR"] if m.files else []),
-                                    *(["ANNEX_GATEWAY_URL"] if m.views else []),
-                                    *(["ANNEX_OPS_URL"] if m.notify_email or m.notify_slack else []),
-                                    *(["ANNEX_HOOKS_URL"] if m.webhooks else [])}
-                                  - ({"PORT"} if not m.is_web else set()))}
-
-
-def _warnings(r: Remote, m: mf.Manifest, folder: Path | None = None) -> list[str]:
-    """Things a successful deploy should still tell the builder. More are added here by later milestones."""
+def _local_warnings(m: mf.Manifest, folder: Path | None = None) -> list[str]:
+    """What only this side can tell a successful deploy: the app's runtime copies against this checkout's runtime/,
+    and a raised memory limit. The VM adds the rest (reconcile notes, cleanup, alert recipients, Slack, log format)."""
     out = []
     for name in ("annex_runtime.py", "annex_runtime.js"):
         mine, current = (folder / name if folder else None), RUNTIME / name
@@ -767,27 +368,6 @@ def _warnings(r: Remote, m: mf.Manifest, folder: Path | None = None) -> list[str
     if m.memory_mb > mf.MEMORY_DEFAULT_MB:
         out.append(f"{m.name} runs with {m.memory_mb}m of memory instead of the default {mf.MEMORY_DEFAULT_MB}m. "
                    "That's fine if it needs it; the platform team sees raised limits in annex list")
-    try:
-        connected = _ops_ctl(r, "info")["slack_connected"]
-        logins = set(_ops_ctl(r, "users"))
-    except AnnexError:
-        connected, logins = True, None  # ops isn't reachable: can't tell, so don't warn
-    if logins is not None:
-        unknown = [x for x in dict.fromkeys([m.owner if "owner" in m.alerts_to else None,
-                                             *(a for a in m.alerts_to if a != "owner" and not a.startswith("#"))])
-                   if x and x not in logins]
-        if unknown:
-            out.append(f"alerts: {', '.join(unknown)} isn't in the user directory, so they won't be emailed when "
-                       f"{m.name} has a problem; admins are alerted instead. Fix the owner or alerts.to in annex.yaml")
-    channels = [a for a in m.alerts_to if a.startswith("#")]
-    if channels and not connected:
-        out.append(f"alerts.to lists {', '.join(channels)} but Slack isn't connected yet, so those alerts go by email "
-                   "only (docs/setup.md §7)")
-    if m.notify_slack:
-        if not connected:
-            out.append(f"notify.slack is declared ({', '.join(m.notify_slack)}) but Slack isn't connected on this "
-                       "Annex yet, so Slack posts fail with a clear error until the platform team connects it "
-                       "(docs/setup.md §7). Email works either way")
     return out
 
 
@@ -905,119 +485,14 @@ def releases(app: str) -> list[dict]:
 
 def rollback(app: str, to: int | None = None, with_data: bool = False, progress: Progress = _quiet,
              via: str = "cli") -> dict:
-    """Switch an app back to an earlier release (see _rollback). A data restore holds the app's alerts while the
-    container is stopped (annex_vm opens the maintenance window); it ends once the app is back."""
+    """Switch an app back to an earlier release (default: the one before the current), re-applying that release's
+    manifest. with_data also restores the database and /data snapshot from that release's time, losing writes since
+    (human only). One call: the VM resolves the target under the app's lock and runs the switch (D101)."""
     _name(app)
-    try:
-        return _rollback(app, to, with_data, progress, via)
-    finally:
-        if with_data:
-            _maintenance(Remote(), app, None)
-
-
-def _maintenance(r: Remote, app: str, minutes: int | None) -> None:
-    """Hold (or release, with None) alerts for an app. Best effort: a failure must never block the operation."""
-    args = ["--minutes", str(minutes)] if minutes else ["--end"]
-    r.run(f"docker exec {OPS_CONTAINER} python -m annex_ops.ctl maintenance app:{_name(app)} {' '.join(args)} --json", check=False)
-
-
-def _rollback_target(r: Remote, app: str, rels: list[dict], to: int | None, with_data: bool) -> tuple[dict, dict]:
-    """(the live release, the one to switch to), or AnnexError saying why not. The live release itself is a target
-    only when the app's container isn't running its image (a deploy died after its switch; reconcile says so, D92)."""
-    live = _live(rels)
-    if not live:
-        raise AnnexError(f"{app} has no releases to roll back to. See: annex releases {app}")
-    images = _images(r, app)
-    targets = [x for x in rels if x["result"] == "live" and x["release"] != live["release"] and x["image"] in images]
-    listing = ", ".join(f"r{x['release']}" for x in targets) or "none"
-    if to is None:
-        earlier = [x for x in targets if x["release"] < live["release"]]
-        if not earlier:
-            raise AnnexError(f"{app} has no earlier release to roll back to (r{live['release']} is live; "
-                             f"possible targets: {listing}). See: annex releases {app}")
-        target = earlier[-1]
-    elif to == live["release"] and live["image"] in images and _running_image(r, app) != live["image"]:
-        target = live  # put the live release back in place of a container a dead deploy left
-    else:
-        target = next((x for x in targets if x["release"] == to), None)
-        if not target:
-            raise AnnexError(f"Can't roll {app} back to r{to}. Possible targets: {listing} (releases that went live, "
-                             f"aren't current and whose image is kept). See: annex releases {app}")
-    t = target["release"]
-    if with_data and t not in {s["from_release"] for s in r.vm("snapshots", app)["snapshots"]}:
-        raise AnnexError(f"There's no data snapshot from while r{t} was live (snapshots are taken before each "
-                         f"deploy, and the last {KEEP_RELEASES} are kept). Roll back without --with-data, or restore a "
-                         f"nightly backup with scripts/restore.sh {app}")
-    return live, target
-
-
-def _running_image(r: Remote, app: str) -> str:
-    return r.out(f"docker inspect -f '{{{{.Config.Image}}}}' {container(app)} 2>/dev/null", check=False).strip()
-
-
-def _rollback(app: str, to: int | None = None, with_data: bool = False, progress: Progress = _quiet,
-              via: str = "cli") -> dict:
-    """Switch an app back to an earlier release (default: the one before the current), re-applying that
-    release's manifest. with_data also restores the database and /data snapshot from that release's time,
-    losing writes since (human only)."""
-    _name(app)
-    r = Remote()
-    live, target = _rollback_target(r, app, _releases(r, app), to, with_data)  # refuse a bad target before locking
-    tm = mf.Manifest.from_dict(target["manifest"])
-    line = {"image": target["image"], "manifest": target["manifest"], "deployed_at": _now(), "deployed_by": _who(),
-            "via": via, "source": target.get("source"), "git": target.get("git"), "snapshot": None,
-            "rollback": {"from": live["release"], "to": target["release"], "with_data": with_data}}
-    with _Lock(r, app, line, _record_for(r, tm, None, None), progress) as lock:
-        now_live = _live(_releases(r, app))
-        if not now_live or now_live["release"] != live["release"]:
-            raise AnnexError(f"{app} changed while this rollback was starting (another deploy finished: "
-                             f"r{now_live and now_live['release']} is live now). See annex releases {app} and run it again")
-        return _rollback_locked(r, app, live, target, with_data, lock, progress)
-
-
-def _rollback_locked(r: Remote, app: str, live: dict, target: dict, with_data: bool, lock: _Lock,
-                     progress: Progress) -> dict:
-    n, t = lock.n, target["release"]
-    lock.step("snapshot")
-    progress(f"Snapshotting data before the switch (r{live['release']} is live)")
-    snapshot = r.vm("snapshot", app, "--release", str(n), "--from-release", str(live["release"]))["snapshot"]
-    rel: dict = {"snapshot": snapshot and snapshot["name"]}
-    restored = None
-    if with_data:
-        lock.step("restore")
-        progress(f"Restoring the database and /data from while r{t} was live")
-        try:
-            restored = r.vm("restore-snapshot", app, "--from-release", str(t))
-        except AnnexError:
-            r.run(f"docker start {container(app)} >/dev/null 2>&1", check=False)
-            raise
-    tm = mf.Manifest.from_dict(target["manifest"])
-    cm = mf.Manifest.from_dict(live["manifest"])
-
-    failed, _ = _activate(r, tm, target["image"], n, progress, lock.step)
-    if failed:
-        progress(f"r{t} failed the health gate; switching back to r{live['release']}")
-        if with_data and snapshot:
-            lock.step("back-restore")
-            r.vm("restore-snapshot", app, "--from-release", str(live["release"]))
-        back, _ = _activate(r, cm, live["image"], live["release"], progress, lambda s: lock.step(f"back-{s}"))
-        _reload_scheduler(r, progress, tm.schedule, cm.schedule)
-        _write_record(r, cm, live["image"], live["release"])
-        lock.end({**rel, "result": "failed", "error": failed[0], "rolled_back_to": live["release"]})
-        outcome = (f"Switching back to r{live['release']} failed too ({back[0]}), so {app} is down."
-                   if back else f"Annex switched back to r{live['release']}"
-                   + (" and its data" if with_data else "") + ", which is live again.")
-        raise _gate_error(app, n, failed, outcome)
-
-    lock.step("finish")
-    _reload_scheduler(r, progress, tm.schedule, cm.schedule)
-    record = _write_record(r, tm, target["image"], n)
-    cleanup_warnings = _cleanup(r, app, target["image"], progress)
-    lock.end({**rel, "result": "live"})
-    progress("Done")
-    return {"app": app, "release": n, "rolled_back_from": live["release"], "rolled_back_to": t,
-            "image": target["image"], "with_data": with_data, "restored": restored, "url": record["url"],
-            "snapshot": rel["snapshot"], "warnings": list(lock.notes) + cleanup_warnings}
+    meta = {"line": {"deployed_at": _now(), "deployed_by": _who(), "via": via}}
+    return Remote().call("rollback", app, "--actor", _who(), "--via", via,
+                         *(["--to", str(int(to))] if to is not None else []), *(["--with-data"] if with_data else []),
+                         input=json.dumps(meta) + "\n", progress=progress)
 
 
 # --- inspect ---------------------------------------------------------------
@@ -1067,6 +542,9 @@ def status(app: str) -> dict:
         info["alerts_to"] = ", ".join(record.get("alerts_to", ["owner"]))
         if record.get("webhooks"):
             info["webhooks"] = _webhook_urls(r, app, record["webhooks"])
+    deploy_line = _deploy_state(r, app)
+    if deploy_line:
+        info["deploy"] = deploy_line
     try:
         health = _ops_ctl(r, "app-status", app)
     except AnnexError:
@@ -1087,6 +565,27 @@ def status(app: str) -> dict:
         if (w := logcheck.rows_warning(first)):
             info["warnings"] = [w]
     return info
+
+
+def deploy_state_text(state: dict, app: str) -> str | None:
+    """`annex status`'s deploy line from `annex_vm.py deploy-state` (pure): the run going on now, or the last one."""
+    cur = state.get("current") or {}
+    if not cur:
+        return None
+    kind = cur.get("kind") or "deploy"
+    rel = f"r{cur['release']} " if cur.get("release") else ""
+    who = f"by {cur.get('actor') or 'unknown'}, started {cur.get('started') or 'at an unknown time'}"
+    if state.get("running"):
+        return (f"{kind} of {rel}running on the VM at step {cur.get('step') or 'unknown'} ({who}; pid {cur.get('pid')}). "
+                f"Its outcome: annex releases {app}")
+    return f"none running; the last was a {kind} of {rel}({who}): {cur.get('result') or 'ended without a result'}"
+
+
+def _deploy_state(r: Remote, app: str) -> str | None:
+    try:
+        return deploy_state_text(r.vm("deploy-state", app), app)
+    except AnnexError:  # a platform from before D101 has no deploy-state
+        return None
 
 
 def _stored_logs(r: Remote, app: str, tail: int = 100, since: str | None = None, release: int | str | None = None,

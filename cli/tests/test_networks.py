@@ -1,4 +1,4 @@
-"""Per-app networks (D88): the generated compose file, the networks-sync flags, the rewrite of a pre-D88 compose file
+"""Per-app networks (D88): the networks-sync flags, the rewrite of a pre-D88 compose file
 and the egress check in the manifest."""
 import tempfile
 import unittest
@@ -14,48 +14,9 @@ except ImportError as e:  # the CLI's dependencies (PyYAML) aren't in this Pytho
     raise unittest.SkipTest(f"annex_cli not importable here: {e}")
 
 
-class FakeRemote:
-    data = "/srv/annex"
-    settings = {"ANNEX_URL_HOOKS": "https://hooks.annex.home.arpa"}
-
-    def url_for(self, app):
-        return f"https://{app}.annex.home.arpa"
-
-    def host_for(self, app):
-        return f"{app}.annex.home.arpa"
-
-
-def manifest(**kw) -> mf.Manifest:
-    base = dict(name="demo", owner="sam", description="", type="web", port=8080, healthcheck="/healthz", postgres=False,
-                files=False, views=[], schedule=[], env={}, secrets=[], egress=[])
-    return mf.Manifest(**{**base, **kw})
-
-
-class ComposeNetworks(unittest.TestCase):
-    def compose(self, **kw) -> dict:
-        return ops.compose_for(manifest(**kw), FakeRemote(), "annex-app/demo:r1", 1)
-
-    def test_a_web_app_is_on_its_own_network_only(self):
-        c = self.compose(postgres=True, views=["v"])
-        self.assertEqual(c["services"]["demo"]["networks"], ["app"])
-        self.assertEqual(c["networks"], {"app": {"external": True, "name": "annex-app-demo"}})
-        self.assertEqual(c["services"]["demo"]["labels"]["traefik.docker.network"], "annex-app-demo")
-
-    def test_no_shared_network_in_any_variant(self):
-        for kw in ({}, {"postgres": True}, {"views": ["v"]}, {"egress": ["api.trello.com"]},
-                   {"type": "job", "port": None, "healthcheck": None}):
-            names = {n["name"] for n in self.compose(**kw)["networks"].values()}
-            self.assertFalse(names & {"annex-edge", "annex-appdata", "annex-platform", "annex-console"}, kw)
-
-    def test_egress_adds_the_apps_own_egress_network(self):
-        c = self.compose(egress=["api.trello.com"])
-        self.assertEqual(c["services"]["demo"]["networks"], ["app", "egress"])
-        self.assertEqual(c["networks"]["egress"], {"external": True, "name": "annex-egress-demo"})
-
-    def test_a_job_has_no_traefik_network_label(self):
-        labels = self.compose(type="job", port=None, healthcheck=None)["services"]["demo"]["labels"]
-        self.assertNotIn("traefik.docker.network", labels)
-        self.assertEqual(labels["traefik.enable"], "false")
+class NetworkArgs(unittest.TestCase):
+    """The generated compose file's networks are tested with the VM-side deploy (vm/tests/test_deploy_compose.py,
+    D101); migrate-networks still calls networks-sync from here until V2."""
 
     def test_networks_sync_flags(self):
         self.assertEqual(ops._network_args("demo", web=True, postgres=True, views=True, egress=True),
