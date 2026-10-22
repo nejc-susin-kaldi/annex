@@ -18,12 +18,13 @@ from annex_cli import manifest as mf  # noqa: E402
 def build(*args: str) -> Path:
     out = Path(tempfile.mkdtemp()) / "app"
     a = selftest.argparse.Namespace(out=str(out), name="annex-selftest", owner="sam", drop=None, job_only=False, broken_health=False,
-                                    no_postgres=False, no_views=False, evil_label=False, views=None, egress=None, env=None, secret=None)
+                                    no_postgres=False, no_views=False, evil_label=False, big_file=None, views=None, egress=None, env=None, secret=None)
     p = selftest.argparse.ArgumentParser()
     for flag in ("--name", "--owner", "--drop", "--views", "--egress"):
         p.add_argument(flag, default=getattr(a, flag[2:]))
     for flag in ("--job-only", "--broken-health", "--no-postgres", "--no-views", "--evil-label"):
         p.add_argument(flag, action="store_true")
+    p.add_argument("--big-file", type=int)
     p.add_argument("--env", action="append")
     p.add_argument("--secret", action="append")
     ns = p.parse_args(list(args))
@@ -56,6 +57,12 @@ class Variants(unittest.TestCase):
         evil = (build("--evil-label") / "Dockerfile").read_text()
         self.assertNotIn("traefik", plain)
         self.assertIn("USER 10001\nLABEL traefik.http.routers.evil.rule=Host(`evil.example`)\n", evil)
+
+    def test_the_big_file_variant_adds_a_file_of_that_size_before_the_user_line(self):
+        plain = (build() / "Dockerfile").read_text()
+        big = (build("--big-file", "30") / "Dockerfile").read_text()
+        self.assertNotIn("urandom", plain)
+        self.assertIn("RUN head -c 31457280 /dev/urandom > /opt/big.bin\nUSER 10001\n", big)
 
     def test_drop_sections(self):
         m = self.load(build("--drop", "webhooks,notify"))

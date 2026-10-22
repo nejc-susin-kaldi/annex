@@ -34,6 +34,9 @@ GATEWAY_URL = "http://gateway:3000"
 OPS_URL = "http://ops:8000"
 OPS_CONTAINER = "annex-ops-1"
 HEALTH_TIMEOUT = int(os.environ.get("ANNEX_HEALTH_TIMEOUT", "60"))
+BUILD_MIN_FREE_GB = 3  # D95: a build is refused with less than this free on the data disk
+IMAGE_MAX_MB = 2048  # D95: a built image above this is refused and removed
+APP_PIDS_LIMIT = 256  # D95: processes an app container may have (a fork bomb stays inside it)
 KEEP_RELEASES = 3  # images and data snapshots kept per app
 SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", ".DS_Store", ".pytest_cache", ".mypy_cache"}
 
@@ -216,6 +219,7 @@ def compose_for(m: mf.Manifest, r: Remote, image: str, release: int) -> dict:
         "security_opt": ["no-new-privileges:true"],
         "mem_limit": f"{m.memory_mb}m",
         "cpus": 0.5,
+        "pids_limit": APP_PIDS_LIMIT,
         "env_file": [f"{data_dir}/secrets/apps/{m.name}/runtime.env"],
         "environment": env,
         "labels": labels,
@@ -397,7 +401,47 @@ def platform_label_offenders(labels: dict | None, app: str) -> list[str]:
                   if k.lower().startswith(PLATFORM_LABEL_PREFIXES) and allowed.get(k) != v)
 
 
+def build_space_verdict(free_bytes: int, min_gb: float) -> str | None:
+    """None if the disk has room for a build, else the refusal (pure, D95)."""
+    if free_bytes >= min_gb * 1024 ** 3:
+        return None
+    return (f"The VM has only {free_bytes / 1024 ** 3:.1f} GB free on its data disk and a build needs at least "
+            f"{min_gb:g} GB, so nothing was built and the running version is unchanged. Tell the Annex owner: "
+            "'docker system df' on the VM shows what takes the space, 'docker image prune -a' and "
+            "'docker builder prune' free it")
+
+
+def image_size_verdict(size_bytes: int, max_mb: float, app: str) -> str | None:
+    """None if the image is small enough, else the refusal (pure, D95)."""
+    if size_bytes <= max_mb * 1024 ** 2:
+        return None
+    return (f"The image of {app} is {size_bytes / 1024 ** 2:.0f} MB, above the limit of {max_mb:g} MB, so it was "
+            "removed and the running version is unchanged. Make it smaller: a slim base image, no build tools or "
+            "caches in the final stage ('pip install --no-cache-dir'), and no data files in the source folder "
+            "(the Dockerfile's COPY takes everything in it)")
+
+
+def _limit(r: Remote, key: str, default: float) -> float:
+    """A build limit: the CLI's environment first (tests), then the platform's .env (the VM owner), then the default."""
+    raw = os.environ.get(key) or r.settings.get(key) or ""
+    if not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = -1
+    if value < 0:
+        raise AnnexError(f"{key}={raw!r} is not a number. Set it to a plain number in the platform's .env "
+                         "(scripts/push.sh applies it) or unset it to use the default")
+    return value
+
+
 def _build(r: Remote, m: mf.Manifest, image: str) -> None:
+    free = r.out(f"df -PB1 {shlex.quote(r.data)} | awk 'NR==2 {{print $4}}'", check=False).strip()
+    if free.isdigit():  # a df that can't answer must not block a deploy
+        refusal = build_space_verdict(int(free), _limit(r, "ANNEX_BUILD_MIN_FREE_GB", BUILD_MIN_FREE_GB))
+        if refusal:
+            raise AnnexError(refusal)
     d = r.path("deploy", _name(m.name))
     build = r.run(f"docker build --progress=plain --label com.kaldi.annex=true --label com.kaldi.annex.app={m.name} "
                   f"-t {image} {d}/src 2>&1", check=False)
@@ -405,6 +449,11 @@ def _build(r: Remote, m: mf.Manifest, image: str) -> None:
         tail = "\n".join(build.stdout.decode(errors="replace").splitlines()[-40:])
         raise AnnexError(f"Docker build failed for {m.name}. Fix the Dockerfile or code and deploy again. "
                          f"The running version is unchanged.\n{tail}")
+    size = r.out(f"docker image inspect -f '{{{{.Size}}}}' {image}", check=False).strip()
+    refusal = size.isdigit() and image_size_verdict(int(size), _limit(r, "ANNEX_IMAGE_MAX_MB", IMAGE_MAX_MB), m.name)
+    if refusal:
+        r.run(f"docker rmi {image} >/dev/null 2>&1", check=False)
+        raise AnnexError(refusal)
     user = r.out(f"docker image inspect -f '{{{{.Config.User}}}}' {image}").strip()
     if user in ("", "root", "0", "0:0"):
         r.run(f"docker rmi {image} >/dev/null 2>&1", check=False)
@@ -547,15 +596,19 @@ def _record_for(r: Remote, m: mf.Manifest, image: str | None, release: int | Non
               "egress": m.egress}  # networks-sync (push.sh) reads type, postgres, views and egress from here
 
 
-def _cleanup(r: Remote, app: str, current: str, progress: Progress = _quiet) -> None:
+def _cleanup(r: Remote, app: str, current: str, progress: Progress = _quiet) -> list[str]:
     """Keep the images of the last KEEP_RELEASES live releases and as many snapshots; trim build cache. Runs under the
     deploy lock (another deploy's fresh image must not be removed), before end(): the release going live is still
-    pending in the file, so its image (`current`) is named. Best effort: the release is live whatever happens here."""
+    pending in the file, so its image (`current`) is named. Best effort: the release is live whatever happens here.
+    Returns the warning for the deploy result when it fails (D95), so the disk filling up is not silent."""
     try:
         _prune(r, app, current)
     except (AnnexError, subprocess.SubprocessError, OSError) as e:
-        progress(f"Warning: cleaning up old images and snapshots failed ({(str(e).splitlines() or [''])[0]}); "
-                 "the next deploy tries again")
+        msg = (f"Cleaning up old images and snapshots failed ({(str(e).splitlines() or [''])[0]}); the next deploy "
+               "tries again. If this keeps happening, tell the Annex owner: the disk may fill up")
+        progress("Warning: " + msg)
+        return [msg]
+    return []
 
 
 def _prune(r: Remote, app: str, current: str) -> None:
@@ -644,10 +697,10 @@ def _deploy(r: Remote, m: mf.Manifest, folder: Path, lock: _Lock, progress: Prog
     lock.step("finish")
     _reload_scheduler(r, progress, m.schedule, previous and previous.get("schedule"))
     record = _write_record(r, m, image, n)
-    _cleanup(r, m.name, image, progress)
+    cleanup_warnings = _cleanup(r, m.name, image, progress)
     lock.end({**rel, "result": "live"})
     progress("Done")
-    warnings = list(lock.notes) + _warnings(r, m, folder)
+    warnings = list(lock.notes) + cleanup_warnings + _warnings(r, m, folder)
     if m.is_web:  # job-only apps are checked on their first run (a later step)
         lines = r.out(f"docker logs --tail 50 {container(m.name)} 2>&1", check=False).splitlines()
         warnings += [w for w in [logcheck.warning(lines)] if w]
@@ -917,12 +970,12 @@ def _rollback_locked(r: Remote, app: str, live: dict, target: dict, with_data: b
     lock.step("finish")
     _reload_scheduler(r, progress, tm.schedule, cm.schedule)
     record = _write_record(r, tm, target["image"], n)
-    _cleanup(r, app, target["image"], progress)
+    cleanup_warnings = _cleanup(r, app, target["image"], progress)
     lock.end({**rel, "result": "live"})
     progress("Done")
     return {"app": app, "release": n, "rolled_back_from": live["release"], "rolled_back_to": t,
             "image": target["image"], "with_data": with_data, "restored": restored, "url": record["url"],
-            "snapshot": rel["snapshot"], "warnings": list(lock.notes)}
+            "snapshot": rel["snapshot"], "warnings": list(lock.notes) + cleanup_warnings}
 
 
 # --- inspect ---------------------------------------------------------------
