@@ -149,6 +149,9 @@ expect "200 new lines: the 100 written while ops was down are there" $((BASE + 2
 expect "no line is stored twice" 0 "$(sql "SELECT count(*) FROM (SELECT ts, ns, container, msg, fields FROM annex_ops.logs WHERE app='$APP' AND msg='burst line' GROUP BY 1,2,3,4,5 HAVING count(*) > 1) x")"
 sleep 6
 expect "and still no duplicates after the restart's replay settled" $((BASE + 200)) "$(sql "SELECT count(*) FROM annex_ops.logs WHERE app='$APP' AND msg='burst line'")"
+hz=$(vm "docker exec annex-ops-1 python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/healthz').read().decode())\"")
+has "/healthz lists the log followers (B1)" '"name": "follow-ship:' "$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["threads"]))' <<<"$hz")"
+has "  ...the log sink's counters" '"lost"' "$hz"
 expect "the burst's lines came out in order" 0 "$(sql "SELECT count(*) FROM (SELECT (fields->>'i')::int - lag((fields->>'i')::int) OVER (ORDER BY ts, ns) AS d FROM (SELECT * FROM annex_ops.logs WHERE app='$APP' AND msg='burst line' ORDER BY ts DESC, ns DESC LIMIT 100) q) z WHERE d <> 1")"
 
 echo "6. A flood is capped; a dead annex-ops never blocks a deploy"

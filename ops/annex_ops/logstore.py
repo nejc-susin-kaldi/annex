@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 import psycopg
 from psycopg.types.json import Jsonb
 
-from . import db
+from . import db, threads
 from .errors import OpsError
 
 FLUSH_S = 1.0          # buffered lines are inserted at least this often ...
@@ -180,15 +180,24 @@ class Sink:
                 return True
             except Exception as e:  # noqa: BLE001: keep the rows for the next try
                 with self.lock:
-                    self.buf = (rows + self.buf)[-MAX_BUFFER:]
+                    merged = rows + self.buf
+                    self.lost += max(0, len(merged) - MAX_BUFFER)  # the oldest are dropped; count them like add() does
+                    self.buf = merged[-MAX_BUFFER:]
                 if time.monotonic() - self.last_error > 60:  # the shipper's own errors must not flood the log it ships
                     self.last_error = time.monotonic()
                     log(f"insert failed ({type(e).__name__}); {len(rows)} line(s) wait for the next try\n" + traceback.format_exc(limit=2))
                 return False
 
+    def status(self) -> dict:
+        """Rows waiting for the database and rows dropped since ops started because the buffer was full (/healthz)."""
+        with self.lock:
+            return {"buffered": len(self.buf), "max": MAX_BUFFER, "lost": self.lost}
+
     def run(self) -> None:
+        threads.register("log-sink", 30)
         while True:
             time.sleep(FLUSH_S)
+            threads.beat("log-sink")
             try:
                 self.flush()
             except Exception:  # noqa: BLE001

@@ -11,7 +11,7 @@ import traceback
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import config, db, directory, docker_api, email, usage
+from . import config, db, directory, docker_api, email, threads, usage
 from .errors import OpsError
 
 
@@ -166,8 +166,10 @@ class Worker(threading.Thread):
         super().__init__(daemon=True, name="digest")
 
     def run(self) -> None:
+        threads.register(self.name, 90)
         while True:
             time.sleep(60)
+            threads.beat(self.name)
             try:
                 s = config.usage_settings()
                 now = datetime.now(ZoneInfo(config.USAGE_TZ))

@@ -36,6 +36,8 @@ def slack_connected() -> bool:
 WATCHERS = os.environ.get("OPS_WATCHERS", "1") != "0"  # unit tests turn the background threads off
 DOCKER_API = os.environ.get("OPS_DOCKER_API", "socket-ro:2375")  # the read-only socket proxy
 FRONTDOOR_URL = os.environ.get("ANNEX_FRONTDOOR_URL", "")  # what the health checker requests to check the front door (D41)
+OPS_URL = os.environ.get("OPS_URL", "http://ops:8000")  # annex-ops as the platform network sees it: the health checker's ops check, the console's thread table (D81)
+OPS_SELF_URL = "http://127.0.0.1:8000"  # the same, from inside the ops container (ctl)
 TUNING_FILE = os.environ.get("OPS_TUNING_FILE", "/annex/state/tuning.json")
 ALERT_SLACK_CHANNEL = os.environ.get("ANNEX_ALERT_SLACK_CHANNEL", "#annex-alerts")
 STATUS_URL = os.environ.get("ANNEX_URL_STATUS", "")

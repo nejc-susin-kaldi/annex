@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 
-from . import config, db, docker_api, engine
+from . import config, db, docker_api, engine, threads
 from .errors import OpsError
 
 BACKUP_CONTAINER = "annex-backup-1"
@@ -87,7 +87,9 @@ class Sampler(threading.Thread):
 
     def run(self) -> None:
         last_store = last_clean = None
+        threads.register(self.name, 60)
         while True:
+            threads.beat(self.name, max(5.0, config.tuning().host_sample_s) + 30)  # sleep plus a slow sample
             try:
                 s = sample()
                 self.submit(s)

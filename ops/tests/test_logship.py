@@ -226,3 +226,34 @@ def test_authelia_at_debug_keeps_only_successful_sign_ins():
     kept = ls.parse_authelia_line(ok)
     assert kept is not None and kept.level == "debug" and "user 'sam'" in kept.msg
     assert ls.parse_authelia_line(mark) is None and all(ls.parse_authelia_line(c) is None for c in chatter)
+
+
+def test_the_shipper_starts_a_follower_that_ended_again_and_leaves_a_stopped_one(monkeypatch):
+    """B1: a follower that ended on its own is restarted from its cursor (start_for); a stopped one is not."""
+
+    class Flag:
+        def __init__(self, on):
+            self.on = on
+
+        def is_set(self):
+            return self.on
+
+    class Fol:
+        key = "k"
+
+        def __init__(self, alive, stopping):
+            self._alive, self.stopping = alive, Flag(stopping)
+
+        def is_alive(self):
+            return self._alive
+
+    shipper = ls.Shipper(None, None, store=object())
+    shipper.followers = {"dead": Fol(False, False), "stopped": Fol(False, True), "alive": Fol(True, False)}
+    shipper.inputs = {"dead": "in-dead", "stopped": "in-stopped", "alive": "in-alive"}
+    started = []
+    monkeypatch.setattr(shipper, "start_for", started.append)
+    shipper.revive()
+    assert started == ["in-dead"]
+    shipper.revive()                       # throttled: not again within 5 s
+    assert started == ["in-dead"]
+    assert shipper.status() == {"followers": 3, "waiting": 0}

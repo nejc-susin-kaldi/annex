@@ -13,7 +13,7 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from . import config, db, directory, docker_api, errors_group as eg, follow_logs, incidents, messages
+from . import config, db, directory, docker_api, errors_group as eg, follow_logs, incidents, messages, threads
 from .errors import OpsError
 
 CURSOR = "errors-scan"
@@ -200,8 +200,10 @@ class ErrorScanner(threading.Thread):
         self.last_housekeeping = 0.0
 
     def run(self) -> None:
+        threads.register(self.name, 60)
         while True:
             s = config.error_settings()
+            threads.beat(self.name, max(1.0, s.errors_scan_s) + 60)  # sleep plus a slow pass
             try:
                 scan(time.time(), s, self.cursors)
                 send_due(s)

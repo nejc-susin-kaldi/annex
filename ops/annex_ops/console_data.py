@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 import psycopg
 
-from . import audit, config, console_view as v, db, errors_run, health, host, incidents, logstore, usage
+from . import audit, config, console_view as v, db, errors_run, health, host, incidents, logstore, threads, usage
 from .errors import OpsError
 
 NO_RECORD = "no release record"
@@ -457,5 +457,6 @@ def platform_view() -> dict:
             "incidents": [{"subject": i["subject"], "opened_at": i["opened_at"], "what": ", ".join(i["signals"])} for i in open_all
                           if i["subject"] != "platform:front-door"],
             "host": host_latest(), "series": host_series(),
+            "ops": threads.fetch(config.OPS_URL),  # annex-ops's own /healthz: threads and queues (D81); the console can't see inside ops
             "tuning": {k: getattr(t, k) for k in ("disk_alert_pct", "disk_clear_pct", "mem_alert_mb", "mem_clear_mb", "backup_max_age_s")},
             "links": [(name, url, what) for name, what in PLATFORM_TOOLS if (url := v.host_url(name))]}

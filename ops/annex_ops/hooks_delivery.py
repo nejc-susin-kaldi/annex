@@ -12,7 +12,7 @@ import threading
 import time
 import traceback
 
-from . import config, engine, hooks_config, hooks_store
+from . import config, engine, hooks_config, hooks_store, threads
 
 DEFAULT_BACKOFF = (10, 30, 60, 300, 900, 3600)  # then hourly
 HOUSEKEEPING_S = 60
@@ -95,8 +95,10 @@ class Worker(threading.Thread):
         self.last_purge = 0.0
 
     def run(self) -> None:
+        threads.register(self.name, 60)  # a cycle can wait on several deliveries
         while True:
             time.sleep(2)
+            threads.beat(self.name)
             try:
                 self.cycle(time.time())
             except Exception:  # noqa: BLE001: the worker must never die

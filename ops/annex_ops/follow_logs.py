@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 
-from . import db, docker_api
+from . import db, docker_api, threads
 from .errors import OpsError
 
 LOOKBACK_S = 600  # first start without a cursor: begin this far back
@@ -19,6 +19,9 @@ SAVE_EVERY_S = 2
 RETRY_S = 2
 MAX_IDLE_S = 10   # exact mode: a container with nothing new is asked again at most this seldom
 EXACT_MARGIN_NS = 10**9  # exact mode, restart: replay this much before the cursor (it is rounded to a microsecond)
+PERIOD_S = 150    # one pass of a follower: Docker ends a quiet stream after 120 s, plus the wait before asking again
+WARN_EVERY_S = 60  # an unexpected error is logged this seldom per follower (a database outage must not flood the log)
+MAX_BACKOFF_S = 60
 
 
 class CursorStore:
@@ -58,6 +61,13 @@ class Follower(threading.Thread):
         self.key, self.exact, self.before_save, self.start_ns = key or container, exact, before_save, start_ns
         self.stopping = threading.Event()
         self.wake = threading.Event()
+        self.last_warn = 0.0
+
+    def warn(self, what: str, e: Exception) -> None:
+        """Log an unexpected error, once a minute at most."""
+        if time.monotonic() - self.last_warn >= WARN_EVERY_S:
+            self.last_warn = time.monotonic()
+            print(f"follow_logs[{self.key}]: {what}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
 
     def stop(self) -> None:
         """Ends the thread once the container's stream is over (a destroyed container's stream already is)."""
@@ -69,8 +79,32 @@ class Follower(threading.Thread):
         self.wake.set()
 
     def run(self) -> None:
+        """Never ends until stopped: whatever goes wrong (a driver error nobody expected, a bug in a handler) is
+        logged once a minute, waited out with a growing delay, and the follower starts again from its saved cursor."""
+        threads.register(self.name, PERIOD_S, self)
+        fails = 0
+        try:
+            while not self.stopping.is_set():
+                began = time.monotonic()
+                try:
+                    self._follow()
+                    return
+                except Exception as e:  # noqa: BLE001: a follower must not die (B1, D81)
+                    self.warn("crashed, starting again", e)
+                    fails = 1 if time.monotonic() - began > 60 else fails + 1
+                    delay = min(MAX_BACKOFF_S, RETRY_S * 2 ** min(fails, 5))
+                    end = time.monotonic() + delay
+                    while time.monotonic() < end and not self.stopping.is_set():
+                        threads.beat(self.name)
+                        self.stopping.wait(min(5.0, delay))
+        finally:
+            if self.stopping.is_set():
+                threads.retire(self.name)  # stopped on purpose; one that just ends otherwise stays listed, as dead
+
+    def _follow(self) -> None:
         cursor = None
         while cursor is None and not self.stopping.is_set():
+            threads.beat(self.name)
             try:
                 cursor = self.store.get(self.key)
                 if cursor is None:
@@ -78,6 +112,10 @@ class Follower(threading.Thread):
                     self.store.set(self.key, cursor)  # so a quiet log doesn't replay the lookback at every restart
             except OpsError:
                 cursor = None
+                time.sleep(RETRY_S)
+            except Exception as e:  # noqa: BLE001: the same, for an error the database driver raised on its own
+                cursor = None
+                self.warn("can't read the cursor", e)
                 time.sleep(RETRY_S)
         if cursor is None:
             return
@@ -89,11 +127,13 @@ class Follower(threading.Thread):
     def _run(self, cursor: float) -> None:
         saved = 0.0  # the first line saves at once; later ones at most every SAVE_EVERY_S
         while not self.stopping.is_set():
+            threads.beat(self.name)
             try:
                 for ts, stream, line in docker_api.stream_logs(self.container, cursor):
                     if not newer(ts, cursor):
                         continue
                     cursor = ts
+                    threads.beat(self.name)
                     self._deliver(ts, stream, line)
                     if time.monotonic() - saved >= SAVE_EVERY_S:
                         self.store.set(self.key, cursor)
@@ -102,10 +142,14 @@ class Follower(threading.Thread):
                 pass  # the container isn't there (yet), or was recreated: wait and resolve the name again
             except OpsError:
                 pass
+            except Exception as e:  # noqa: BLE001: keep following
+                self.warn("pass failed", e)
             try:
                 self.store.set(self.key, cursor)
             except OpsError:
                 pass
+            except Exception as e:  # noqa: BLE001
+                self.warn("couldn't save the cursor", e)
             saved = time.monotonic()
             time.sleep(RETRY_S)
 
@@ -114,12 +158,14 @@ class Follower(threading.Thread):
         saved, idle = 0.0, 0
         while not self.stopping.is_set():
             got = False
+            threads.beat(self.name)
             try:
                 for ns, stream, line in docker_api.stream_logs_ns(self.container, last_ns):
                     if ns < last_ns:
                         continue  # equal is replayed on purpose; the handler's insert is idempotent
                     got = got or ns > last_ns
                     last_ns = ns
+                    threads.beat(self.name)
                     self._deliver(ns, stream, line)
                     if time.monotonic() - saved >= SAVE_EVERY_S:
                         self._save_exact(last_ns)
@@ -127,7 +173,7 @@ class Follower(threading.Thread):
             except (docker_api.DockerError, OSError, ValueError, OpsError):
                 pass  # the container isn't there (yet) or the stream broke: ask again
             except Exception as e:  # noqa: BLE001: a truncated chunked stream is an HTTPException, not an OSError
-                print(f"follow_logs[{self.key}]: {type(e).__name__}: {e}; asking again", file=sys.stderr, flush=True)
+                self.warn("asking again after", e)
             self._save_exact(last_ns)
             saved = time.monotonic()
             idle = 0 if got else min(idle + 1, MAX_IDLE_S // RETRY_S)
@@ -138,7 +184,7 @@ class Follower(threading.Thread):
         try:
             self.handler(ts, stream, line)
         except Exception as e:  # noqa: BLE001: one bad line must not stop the follower
-            print(f"follow_logs[{self.key}]: handler failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            self.warn("handler failed", e)
 
     def _save_exact(self, ns: int) -> None:
         try:
@@ -146,7 +192,7 @@ class Follower(threading.Thread):
                 self.store.set(self.key, ns / 1e9)
         except Exception as e:  # noqa: BLE001: the database is busy or down: save at the next round
             if not isinstance(e, OpsError):
-                print(f"follow_logs[{self.key}]: couldn't save the cursor: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+                self.warn("couldn't save the cursor", e)
 
 
 # --- Traefik ---------------------------------------------------------------------

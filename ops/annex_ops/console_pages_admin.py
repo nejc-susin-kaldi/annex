@@ -63,14 +63,34 @@ def _age(sec: float) -> str:
     return f"{int(sec // 3600)} h" if 86400 <= sec < 3 * 86400 else v.ago_text(sec).replace(" ago", "")
 
 
+def ops_threads(ops: dict | None) -> Raw:
+    """annex-ops's threads and buffers from its /healthz (`ops`, as threads.fetch returns it): one row per thread, the
+    unhealthy ones first, and the queue depths with what was lost."""
+    if not ops:
+        return Raw("")
+    if "unreachable" in ops:
+        return v.section("annex-ops", Raw(f'<p>{v.state("unreachable", "annex-ops did not answer")} <span class="muted">{e(ops["unreachable"])}</span></p>'))
+    rows = sorted(ops.get("threads", []), key=lambda t: (t["state"] == "ok", t["name"]))
+    table = [[t["name"], v.state(t["state"]), v.ago_text(t["age_s"]) if t["age_s"] >= 60 else f'{t["age_s"]:.0f} s ago',
+              f'{t["period_s"]:.0f} s'] for t in rows]
+    queues = [[name, ", ".join(f"{k} {n}" for k, n in q.items())] for name, q in sorted((ops.get("queues") or {}).items())]
+    lost = sum(n for q in (ops.get("queues") or {}).values() for k, n in q.items() if k in ("lost", "dropped") and isinstance(n, int))
+    note = f"{len(rows)} threads" + (f", {lost} log or usage rows dropped since ops started" if lost else "")
+    html = str(v.table(["Thread", "State", "Last progress", "Expected every"], table, "no threads reported")) \
+        + str(v.table(["Buffer", "Now"], queues, "none"))
+    return v.section("annex-ops", Raw(html), note + ". A thread silent for three times its period, or one that ended, turns the state red and ops' /healthz to 503.")
+
+
 def platform_page(who: v.Who, p: dict, now: float | None = None) -> str:
-    """p: front_door, incidents, host (latest sample or None), series, tuning (thresholds), links [(name, url, what)]."""
+    """p: front_door, incidents, host (latest sample or None), series, tuning (thresholds), links [(name, url, what)],
+    ops (annex-ops's /healthz, optional)."""
     import time
     now = now or time.time()
     t, h = p["tuning"], p["host"]
     rows = [[v.link("/status", "front door"), v.state(p["front_door"]), ""]]
     rows += [[i["subject"].removeprefix("platform:"), v.state("down"), v.raw(i["what"], " since ", v.rel_time(i["opened_at"]))] for i in p["incidents"]]
-    body = ["<h1>Platform</h1>", str(v.section("Health", v.table(["Part", "State", "Detail"], rows, "nothing to show")))]
+    body = ["<h1>Platform</h1>", str(v.section("Health", v.table(["Part", "State", "Detail"], rows, "nothing to show"))),
+            str(ops_threads(p.get("ops")))]
     if h is None:
         host_html = '<p class="muted">No host samples yet. annex-ops stores one every 5 minutes.</p>'
     else:

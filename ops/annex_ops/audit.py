@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 
 from psycopg.types.json import Jsonb
 
-from . import config, db, follow_logs
+from . import config, db, follow_logs, threads
 from .errors import OpsError
 
 LOGIN = re.compile(r"^[a-z][a-z0-9._-]{1,31}$")  # the same rule as annex users
@@ -199,8 +199,10 @@ class Auditor(threading.Thread):
         self.last_housekeeping = 0.0
 
     def run(self) -> None:
+        threads.register(self.name, 60)
         while True:
             s = config.audit_settings()
+            threads.beat(self.name, max(2.0, s.audit_scan_s) + 60)  # sleep plus a slow pass
             try:
                 now = time.time()
                 scan_signins(self.cursors, now)

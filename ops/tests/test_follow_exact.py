@@ -94,3 +94,53 @@ def test_the_classic_mode_still_runs(monkeypatch):
     fol.stop()
     fol.join(5)
     assert not fol.is_alive() and "annex-traefik-1" in store.d
+
+
+def test_a_follower_survives_an_error_nobody_expected(monkeypatch):
+    """B1: the cursor store raising something that isn't an OpsError (a driver error) used to end the thread, and
+    nothing restarted it. Now it is logged, waited out and retried: once the store works the follower reads lines."""
+    from annex_ops import threads
+
+    class Flaky(MemStore):
+        def __init__(self):
+            super().__init__()
+            self.failures = 2
+
+        def get(self, k):
+            if self.failures:
+                self.failures -= 1
+                raise RuntimeError("a driver error nobody expected")
+            return super().get(k)
+
+    monkeypatch.setattr(f, "RETRY_S", 0.05)
+    monkeypatch.setattr(docker_api, "stream_logs_ns", lambda c, s, follow=True, timeout=120: iter([(T + 1, "stdout", "a")]))
+    got, store = [], Flaky()
+    fol = f.Follower("c1", lambda ns, s, line: got.append(line), store, key="k", exact=True, before_save=lambda: True, start_ns=T)
+    fol.start()
+    assert wait_for(lambda: got)                 # it got past two failures
+    assert fol.is_alive()
+    assert any(r["name"] == "follow-k" and r["state"] == "ok" for r in threads.snapshot())
+    fol.stop()
+    fol.join(5)
+    assert not fol.is_alive()
+    assert not any(r["name"] == "follow-k" for r in threads.snapshot())   # stopped on purpose: no longer listed
+
+
+def test_a_crash_inside_the_loop_does_not_end_the_follower(monkeypatch):
+    calls = []
+
+    def fake(container, since_ns, follow=True, timeout=120):
+        calls.append(since_ns)
+        if len(calls) == 1:
+            raise MemoryError("not an OSError, not a DockerError")
+        return iter([(T + 9, "stdout", "later")])
+
+    monkeypatch.setattr(f, "RETRY_S", 0.05)
+    monkeypatch.setattr(docker_api, "stream_logs_ns", fake)
+    got = []
+    fol = f.Follower("c1", lambda ns, s, line: got.append(line), MemStore(), key="k2", exact=True, before_save=lambda: True, start_ns=T)
+    fol.start()
+    assert wait_for(lambda: got == ["later"])
+    assert fol.is_alive()
+    fol.stop()
+    fol.join(5)
