@@ -378,27 +378,25 @@ class ReleaseRecord(Base):
 
 
 class DeployEnd(Base):
-    def test_begin_then_end_copies_the_final_line_to_the_database(self):
-        line = {"manifest": {"name": "x"}, "deployed_at": "2026-10-22T11:00:00+0200", "deployed_by": "kim@mac", "via": "cli"}
-        res = self.call(vm.cmd_deploy_begin, {"app": "x", "actor": "kim@mac", "stale_after": None},
-                        json.dumps({"line": line, "record": {"name": "x"}}))
+    LINE = {"manifest": {"name": "x"}, "deployed_at": "2026-10-22T11:00:00+0200", "deployed_by": "kim@mac", "via": "cli"}
+
+    def ended(self):
+        cur = {"pid": 1, "actor": "kim@mac", "step": "begin"}
+        res = vm.begin(self.d, "x", dict(self.LINE), {"name": "x"}, cur, inspect=lambda app, m: None)
         n = res["release"]
-        final = {**line, "release": n, "image": f"annex-app/x:r{n}", "result": "live"}
-        out = self.call(vm.cmd_deploy_end, {"app": "x", "token": res["token"], "release": n, "result": "live"}, json.dumps(final))
-        self.assertEqual(out["warnings"], [])
+        return vm.end(self.d, "x", n, "live", {**self.LINE, "release": n, "image": f"annex-app/x:r{n}"}), n
+
+    def test_the_final_line_is_copied_to_the_database(self):
+        final, n = self.ended()
+        self.assertIsNone(vm.record_release_db("x", final))
         sql = self.fake.sqls(vm.APPDATA_DB)[-1]
         self.assertIn("INSERT INTO annex_ops.releases", sql)
         self.assertIn(f'"release": {n}', sql)
 
     def test_a_psql_failure_is_a_warning_not_an_error(self):
-        line = {"manifest": {"name": "x"}, "deployed_at": "2026-10-22T11:00:00+0200", "deployed_by": "kim@mac", "via": "cli"}
-        res = self.call(vm.cmd_deploy_begin, {"app": "x", "actor": "kim@mac", "stale_after": None},
-                        json.dumps({"line": line, "record": {"name": "x"}}))
-        n = res["release"]
-        final = {**line, "release": n, "image": f"annex-app/x:r{n}", "result": "live"}
+        final, _ = self.ended()
         self.fake.fail = ("psql",)
-        out = self.call(vm.cmd_deploy_end, {"app": "x", "token": res["token"], "release": n, "result": "live"}, json.dumps(final))
-        self.assertEqual(len(out["warnings"]), 1)
+        self.assertIn("next scripts/push.sh catches up", vm.record_release_db("x", final))
 
 
 if __name__ == "__main__":

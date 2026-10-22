@@ -5,6 +5,8 @@ Runs ON THE VM with the stock python3 (stdlib only; the user commands also use U
 over SSH by the CLI. Database passwords and gateway tokens are generated and kept here, in
 /srv/annex/secrets/apps/<app>/. Every command prints one JSON object; secret values are never printed, with
 one exception: `users-add/users-reset --print-password` returns the new password once, for a human.
+`deploy` and `rollback` are the exception to "one object": the whole sequence runs here (vm/annex_deploy.py, D101)
+and prints one JSON object per line, the last one the result.
 """
 from __future__ import annotations
 
@@ -523,41 +525,33 @@ def apps_on_shared_networks() -> dict[str, list[str]]:
     return out
 
 
-# --- deploy lock and pending release (C1, D92) -------------------------------------------------------------------
-# One deploy or rollback of an app at a time. deploy-begin takes deploy/<app>/.lock (a directory: mkdir is atomic),
-# reconciles a release left pending by an earlier run, numbers the new release and appends it to releases.jsonl as
-# "pending"; deploy-step records where the deploy is; deploy-end rewrites the pending line with the outcome and
-# releases the lock. Everything below takes the data directory as `base`, so the tests run on a temp dir.
-LOCK_STALE_S = 30 * 60
+# --- deploy lock and pending release (C1, D92; one VM-side process since D101) ----------------------------------------
+# One deploy or rollback of an app at a time. The process that runs it (annex_vm.py deploy|rollback, vm/annex_deploy.py)
+# holds an flock on deploy/<app>/.lock.guard for its whole run, so the lock ends exactly when the process does.
+# deploy/<app>/current.json says who holds it and at which step (trusted only while the flock is held). Under the lock
+# the run settles a release an earlier run left pending, numbers its own release and appends it to releases.jsonl as
+# "pending"; end() rewrites that line with the outcome. Everything below takes the data directory as `base`, so the
+# tests run on a temp dir.
 OFELIA = "annex-ofelia-1"
-TOKEN_RE = re.compile(r"[0-9a-f]{32}")
-STEP_RE = re.compile(r"[a-z][a-z0-9:-]{0,40}")
+OLD_CLI = ("this Annex runs deploys on the server now (D101): update your checkout of the Annex repository and run the "
+           "command again with the new CLI")
 
 
-def lock_dir(base: Path, app: str) -> Path:
+def guard_path(base: Path, app: str) -> Path:
+    return base / "deploy" / app / ".lock.guard"
+
+
+def current_path(base: Path, app: str) -> Path:
+    return base / "deploy" / app / "current.json"
+
+
+def old_lock_dir(base: Path, app: str) -> Path:
+    """The lock directory deploys used before D101 (a CLI on the Mac held it)."""
     return base / "deploy" / app / ".lock"
 
 
 def releases_path(base: Path, app: str) -> Path:
     return base / "apps" / app / "releases.jsonl"
-
-
-class _Guard:
-    """A short flock around the lock's bookkeeping (check, take over, step, release), so that "read the lock, then act
-    on it" is one step. The lock itself is the directory."""
-
-    def __init__(self, base: Path, app: str):
-        self.path = base / "deploy" / app / ".lock.guard"
-
-    def __enter__(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.f = open(self.path, "a")
-        fcntl.flock(self.f, fcntl.LOCK_EX)
-        return self
-
-    def __exit__(self, *_):
-        fcntl.flock(self.f, fcntl.LOCK_UN)
-        self.f.close()
 
 
 def _iso(ts: float) -> str:
@@ -581,74 +575,75 @@ def write_atomic(path: Path, text: str) -> None:
     tmp.replace(path)
 
 
-def read_lock(base: Path, app: str) -> dict | None:
-    """The lock's owner file, or None if the app isn't locked. A lock directory without a readable owner file (its
-    owner died between mkdir and writing it) is held by an unknown deploy since the directory's mtime."""
-    d = lock_dir(base, app)
+def read_current(base: Path, app: str) -> dict | None:
+    """current.json: the run that holds (or last held) the app's lock, or None."""
     try:
-        return json.loads((d / "owner.json").read_text())
+        info = json.loads(current_path(base, app).read_text())
     except (OSError, ValueError):
-        pass
-    try:
-        return {"actor": "unknown", "token": None, "started_at": d.stat().st_mtime, "step": None, "release": None}
-    except FileNotFoundError:
         return None
+    return info if isinstance(info, dict) else None
 
 
-def describe_lock(info: dict, now: float) -> str:
+def write_current(base: Path, app: str, info: dict) -> None:
+    current_path(base, app).parent.mkdir(parents=True, exist_ok=True)
+    write_atomic(current_path(base, app), json.dumps(info, default=str))
+
+
+def describe_holder(info: dict | None, now: float) -> str:
+    if not info:
+        return "a run that hasn't said who it is yet (no current.json)"
     rel = f"r{info['release']}, " if info.get("release") else ""
-    return (f"{info.get('actor') or 'unknown'} ({rel}at step {info.get('step') or 'unknown'}, started "
-            f"{_iso(info['started_at'])}, {_age(now - info['started_at'])} ago)")
+    started = info.get("started_at")
+    when = f", started {_iso(started)}, {_age(now - started)} ago" if isinstance(started, (int, float)) else ""
+    return (f"{info.get('actor') or 'unknown'} ({rel}at step {info.get('step') or 'unknown'}{when}; "
+            f"pid {info.get('pid') or 'unknown'} on the VM)")
 
 
-def take_lock(base: Path, app: str, actor: str, now: float, stale_after: float = LOCK_STALE_S
-              ) -> tuple[dict, dict | None]:
-    """Take the app's deploy lock: (our owner info, the stale lock taken over or None). Fail if a deploy holds it."""
-    d = lock_dir(base, app)
-    with _Guard(base, app):
-        held = read_lock(base, app)
-        if held is not None:
-            if now - held["started_at"] < stale_after:
-                raise Fail(f"{app} is being deployed or rolled back by {describe_lock(held, now)}. Wait for it to "
-                           f"finish, then try again. A lock older than {LOCK_STALE_S // 60} minutes (a deploy that "
-                           "died) is taken over by the next deploy, which reconciles what it left")
-            shutil.rmtree(d)
-        d.mkdir()
-        info = {"actor": actor, "token": secrets.token_hex(16), "started_at": now, "started": _iso(now),
-                "step": "begin", "release": None}
-        write_atomic(d / "owner.json", json.dumps(info))
-    return info, held
+def lock_refusal(app: str, info: dict | None, now: float) -> str:
+    return (f"{app} is being deployed or rolled back by {describe_holder(info, now)}. Wait for it to finish, then try "
+            "again; it runs on the VM, so it finishes even if its terminal closed")
 
 
-def check_token(base: Path, app: str, token: str, now: float) -> dict:
-    """The lock's owner info if `token` holds it; Fail (saying who has it now) if not."""
-    held = read_lock(base, app)
-    if held is None:
-        raise Fail(f"{app} isn't locked: this deploy's lock was taken over and released by a later deploy, which "
-                   f"reconciled its release. See: annex releases {app}")
-    if held.get("token") != token:
-        raise Fail(f"{app}'s deploy lock was taken over by {describe_lock(held, now)}: this deploy held it for more "
-                   f"than {LOCK_STALE_S // 60} minutes, and the one that took it over reconciled this one's release. "
-                   f"See: annex releases {app}")
-    return held
+class LockHeld(Fail):
+    """The app's lock is held by another process; `holder` is its current.json."""
+
+    def __init__(self, message: str, holder: dict | None):
+        super().__init__(message)
+        self.holder = holder
 
 
-def set_step(base: Path, app: str, token: str, step: str, now: float) -> dict:
-    with _Guard(base, app):
-        held = check_token(base, app, token, now)
-        held.update(step=step, step_at=now)
-        write_atomic(lock_dir(base, app) / "owner.json", json.dumps(held))
-    return held
+def hold_app_lock(base: Path, app: str, tries: int = 10, pause: float = 0.1) -> int:
+    """Take the app's lock (an flock on deploy/<app>/.lock.guard, non-blocking) and return its file descriptor; it is
+    held until every copy of that descriptor is closed (the process ends). LockHeld names the holder from current.json.
+    A few short retries cover a `deploy-state` probe that holds a shared lock for a moment."""
+    path = guard_path(base, app)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    for i in range(max(1, tries)):
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except BlockingIOError:
+            if i < tries - 1:
+                time.sleep(pause)
+    os.close(fd)
+    holder = read_current(base, app)
+    raise LockHeld(lock_refusal(app, holder, time.time()), holder)
 
 
-def release_lock(base: Path, app: str, token: str) -> bool:
-    """Remove the lock if `token` holds it. False if it doesn't (it was taken over)."""
-    with _Guard(base, app):
-        held = read_lock(base, app)
-        if held is None or held.get("token") != token:
-            return False
-        shutil.rmtree(lock_dir(base, app))
-    return True
+def lock_held(base: Path, app: str) -> bool:
+    """Whether a run holds the app's lock now (a shared, non-blocking probe that lets go at once)."""
+    path = guard_path(base, app)
+    if not path.exists():
+        return False
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    finally:
+        os.close(fd)  # closing lets go of the probe's lock
+    return False
 
 
 def read_releases(base: Path, app: str) -> list[dict]:
@@ -753,46 +748,81 @@ def reconcile(base: Path, app: str, step: str | None, inspect=container_state, w
     return done
 
 
-def begin(base: Path, app: str, actor: str, line: dict, record: dict | None, now: float,
-          stale_after: float = LOCK_STALE_S, inspect=container_state, wait: float = 60, sleep=time.sleep) -> dict:
-    """Take the lock, reconcile, number the release and append its pending line.
-    Returns {release, image, token, reconciled, took_over}. The image is annex-app/<app>:r<n> unless `line` names one
-    (a rollback re-uses its target's)."""
-    info, stale = take_lock(base, app, actor, now, stale_after)
+def dead_step(rels: list[dict], *holders: dict | None) -> str | None:
+    """The step a dead run reached, from the first holder record (current.json, an old lock's owner.json) whose release
+    is the pending one; None (an unknown step) when none matches."""
+    pending = {x.get("release") for x in rels if x.get("result") == "pending"}
+    for h in holders:
+        if h and h.get("release") is not None and h.get("release") in pending:
+            return h.get("step")
+    return None
+
+
+def clear_old_lock(base: Path, app: str) -> tuple[str | None, dict | None]:
+    """Remove a lock directory left by a CLI from before D101 (the flock is the lock now). Returns (a note for the
+    run's output, its owner.json) or (None, None)."""
+    d = old_lock_dir(base, app)
+    if not d.exists():
+        return None, None
     try:
-        took_over = f"Took over {app}'s deploy lock from {describe_lock(stale, now)}" if stale else None
-        reconciled = reconcile(base, app, stale and stale.get("step"), inspect, wait, sleep)
-        rels = read_releases(base, app)
-        n = max((x["release"] for x in rels), default=0) + 1
-        image = line.get("image") or f"annex-app/{app}:r{n}"
-        pending = {**line, "release": n, "image": image, "result": "pending"}
-        if record is not None:  # deploy.json as it will be if this release goes live: reconcile writes it if needed
-            pending["record"] = {**record, "release": n, "image": image}
-        write_releases(base, app, rels + [pending])
-        with _Guard(base, app):
-            info.update(release=n)
-            write_atomic(lock_dir(base, app) / "owner.json", json.dumps(info))
-    except BaseException:
-        release_lock(base, app, info["token"])
-        raise
-    return {"release": n, "image": image, "token": info["token"], "reconciled": reconciled, "took_over": took_over}
+        owner = json.loads((d / "owner.json").read_text())
+    except (OSError, ValueError):
+        owner = {}
+    shutil.rmtree(d, ignore_errors=True)
+    who = owner.get("actor") or "unknown"
+    rel = f" r{owner['release']}," if owner.get("release") else ""
+    return (f"Removed {app}'s lock directory from before deploys ran on the VM (held by {who},{rel} at step "
+            f"{owner.get('step') or 'unknown'}); the lock is now held by the deploy process on the VM"), owner
 
 
-def end(base: Path, app: str, token: str, n: int, result: str, line: dict, now: float) -> dict:
-    """Replace release n's pending line with its outcome and release the lock. Fail if the lock was taken over."""
-    with _Guard(base, app):
-        check_token(base, app, token, now)
+def settle(base: Path, app: str, current: dict, inspect=container_state, wait: float = 60,
+           sleep=time.sleep) -> tuple[list[str], list[dict]]:
+    """The start of a run that holds the app's lock: record this run in current.json, remove a pre-D101 lock
+    directory, and reconcile a release an earlier run left pending (its step from the previous current.json when that
+    one ran it). Returns (notes, reconciled)."""
+    previous = read_current(base, app)
+    write_current(base, app, current)
+    note, owner = clear_old_lock(base, app)
+    step = dead_step(read_releases(base, app), previous, owner)
+    done = reconcile(base, app, step, inspect, wait, sleep)
+    return ([note] if note else []), done
+
+
+def open_release(base: Path, app: str, line: dict, record: dict | None, current: dict) -> tuple[int, str]:
+    """Number the release and append its pending line; current.json gets the number. The image is annex-app/<app>:r<n>
+    unless `line` names one (a rollback re-uses its target's). Returns (n, image)."""
+    rels = read_releases(base, app)
+    n = max((x["release"] for x in rels), default=0) + 1
+    image = line.get("image") or f"annex-app/{app}:r{n}"
+    pending = {**line, "release": n, "image": image, "result": "pending"}
+    if record is not None:  # deploy.json as it will be if this release goes live: reconcile writes it if needed
+        pending["record"] = {**record, "release": n, "image": image}
+    write_releases(base, app, rels + [pending])
+    current.update(release=n, image=image)
+    write_current(base, app, current)
+    return n, image
+
+
+def begin(base: Path, app: str, line: dict, record: dict | None, current: dict, inspect=container_state,
+          wait: float = 60, sleep=time.sleep) -> dict:
+    """settle() then open_release(), for a deploy (a rollback resolves its target in between). The caller holds the
+    lock. Returns {release, image, reconciled, notes}."""
+    notes, done = settle(base, app, current, inspect, wait, sleep)
+    n, image = open_release(base, app, line, record, current)
+    return {"release": n, "image": image, "reconciled": done, "notes": notes}
+
+
+def end(base: Path, app: str, n: int, result: str, line: dict) -> dict:
+    """Replace release n's pending line with its outcome. The caller holds the lock."""
     rels = read_releases(base, app)
     idx = next((i for i, x in enumerate(rels) if x.get("release") == n and x.get("result") == "pending"), None)
     if idx is None:
-        release_lock(base, app, token)
         raise Fail(f"r{n} of {app} has no pending line in releases.jsonl (it was reconciled or removed). "
                    f"See: annex releases {app}")
     final = {**{k: v for k, v in line.items() if k != "record"}, "release": n,
              "image": line.get("image") or rels[idx]["image"], "result": result}
     rels[idx] = final
     write_releases(base, app, rels)
-    release_lock(base, app, token)
     return final
 
 
@@ -849,47 +879,51 @@ def _reconciled_out(done: list[dict]) -> list[dict]:
     return [{"release": x["release"], "result": x["result"], "message": x["message"]} for x in done]
 
 
-def cmd_deploy_begin(a: argparse.Namespace) -> None:
-    """stdin: {"line": the release line without release/result (and without image for a deploy), "record": the
-    deploy.json the release will have if it goes live}."""
-    data = json.loads(sys.stdin.read() or "{}")
-    res = begin(DATA, a.app, a.actor, data.get("line") or {}, data.get("record"), time.time(),
-                LOCK_STALE_S if a.stale_after is None else a.stale_after)
-    warnings = after_reconcile(a.app, res["reconciled"])
-    out({"ok": True, **res, "reconciled": _reconciled_out(res["reconciled"]), "warnings": warnings})
+def _deploy_module():
+    """vm/annex_deploy.py, imported lazily (the other commands stay free of the manifest module). It imports
+    annex_vm: run as a script, this module is __main__, so it is registered under its name first, or annex_deploy
+    would get a second copy whose Fail this main() doesn't catch."""
+    sys.modules.setdefault("annex_vm", sys.modules[__name__])
+    import annex_deploy
+    return annex_deploy
 
 
-def _token(token: str) -> str:
-    if not TOKEN_RE.fullmatch(token):
-        raise Fail("invalid lock token")
-    return token
+def cmd_deploy(a: argparse.Namespace) -> None:
+    """The whole deploy on the VM (D101): a JSON meta line then the source tar.gz on stdin; JSON lines on stdout."""
+    sys.exit(_deploy_module().serve("deploy", a))
 
 
-def cmd_deploy_step(a: argparse.Namespace) -> None:
-    if not STEP_RE.fullmatch(a.step):
-        raise Fail(f"invalid step name {a.step!r}")
-    set_step(DATA, a.app, _token(a.token), a.step, time.time())
-    out({"ok": True, "step": a.step})
+def cmd_rollback(a: argparse.Namespace) -> None:
+    """The whole rollback on the VM (D101): a JSON meta line on stdin; JSON lines on stdout."""
+    sys.exit(_deploy_module().serve("rollback", a))
 
 
-def cmd_deploy_end(a: argparse.Namespace) -> None:
-    """stdin: the release's final line."""
-    final = end(DATA, a.app, _token(a.token), a.release, a.result, json.loads(sys.stdin.read() or "{}"), time.time())
-    warning = record_release_db(a.app, final)
-    out({"ok": True, "release": a.release, "result": a.result, "warnings": [warning] if warning else []})
+def deploy_state(base: Path, app: str) -> dict:
+    return {"running": lock_held(base, app), "current": read_current(base, app)}
+
+
+def cmd_deploy_state(a: argparse.Namespace) -> None:
+    """Whether a deploy or rollback of the app runs now, and its current.json (the last run's when none runs)."""
+    out({"ok": True, **deploy_state(DATA, a.app)})
 
 
 def cmd_deploy_reconcile(a: argparse.Namespace) -> None:
-    """Settle a release a dead deploy left pending, without deploying. --break takes over a lock however young (only
-    when you know its deploy is dead)."""
-    info, stale = take_lock(DATA, a.app, a.actor, time.time(), 0 if a.break_lock else LOCK_STALE_S)
+    """Settle a release a dead deploy left pending, without deploying. Refuses while a run holds the app's lock: that
+    run is alive (the lock dies with its process)."""
     try:
-        done = reconcile(DATA, a.app, stale and stale.get("step"))
+        fd = hold_app_lock(DATA, a.app)
+    except LockHeld as e:
+        pid = (e.holder or {}).get("pid") or "<pid>"
+        raise Fail(f"{a.app} is being deployed or rolled back now by {describe_holder(e.holder, time.time())}. Wait "
+                   f"for it to finish, or stop it with `kill {pid}` on the VM and run this again (a stopped run "
+                   "records its release as failed)") from None
+    try:
+        note, owner = clear_old_lock(DATA, a.app)
+        done = reconcile(DATA, a.app, dead_step(read_releases(DATA, a.app), read_current(DATA, a.app), owner))
     finally:
-        release_lock(DATA, a.app, info["token"])
+        os.close(fd)
     warnings = after_reconcile(a.app, done)
-    out({"ok": True, "took_over": describe_lock(stale, time.time()) if stale else None,
-         "reconciled": _reconciled_out(done), "warnings": warnings,
+    out({"ok": True, "reconciled": _reconciled_out(done), "warnings": warnings, **({"note": note} if note else {}),
          **({} if done else {"message": f"{a.app} has no pending release: nothing to reconcile"})})
 
 
@@ -898,10 +932,20 @@ def cmd_views(_: argparse.Namespace) -> None:
 
 
 def cmd_provision(a: argparse.Namespace) -> None:
-    """Create or update everything an app needs, then write its runtime env file."""
-    app = a.app
-    views = [v for v in a.views.split(",") if v]
-    declared = [s for s in a.secrets.split(",") if s]
+    try:
+        hooks = json.loads(a.hooks) if a.hooks else []
+    except ValueError:
+        raise Fail("--hooks must be a JSON list of {name, verify, secret, path}") from None
+    out({"ok": True, **provision(a.app, postgres=a.postgres, files=a.files, views=[v for v in a.views.split(",") if v],
+                                 secrets=[s for s in a.secrets.split(",") if s], notify_email=a.notify_email,
+                                 slack=[c for c in a.slack.split(",") if c], hooks=hooks, hook_port=a.hook_port)})
+
+
+def provision(app: str, *, postgres: bool, files: bool, views: list[str], secrets: list[str],
+              notify_email: bool = False, slack: list[str] | None = None, hooks: list[dict] | None = None,
+              hook_port: int = 0) -> dict:
+    """Create or update everything an app needs, then write its runtime env file. Returns {env_file, injected, views}."""
+    declared = list(secrets)
     sdir = app_secrets_dir(app)
     user_secrets = read_kv(sdir / "secrets.env")
     missing = [s for s in declared if s not in user_secrets]
@@ -910,32 +954,27 @@ def cmd_provision(a: argparse.Namespace) -> None:
                    + f". A human sets them with: annex secret set {app} {missing[0]}  (it asks for the value; or --from-file PATH)")
 
     env: dict[str, str] = {}
-    if a.postgres:
+    if postgres:
         env["DATABASE_URL"] = ensure_database(app)
     token = grant_views(app, views)
     if token:
         env["ANNEX_GATEWAY_TOKEN"] = token
-    ops_token = grant_notify(app, a.notify_email, [c for c in a.slack.split(",") if c])
+    ops_token = grant_notify(app, notify_email, list(slack or []))
     if ops_token:
         env["ANNEX_OPS_TOKEN"] = ops_token
-    try:
-        hooks = json.loads(a.hooks) if a.hooks else []
-    except ValueError:
-        raise Fail("--hooks must be a JSON list of {name, verify, secret, path}") from None
-    hook_token = write_hooks(app, hooks, a.hook_port, user_secrets)
+    hook_token = write_hooks(app, list(hooks or []), hook_port, user_secrets)
     if hook_token:
         env["ANNEX_HOOK_TOKEN"] = hook_token
     for s in declared:
         env[s] = user_secrets[s]
-    if a.files:
+    if files:
         data = DATA / "apps" / app / "data"
         data.mkdir(parents=True, exist_ok=True)
         if owner(data) != APP_UID:
             as_root(["chown", "-R", f"{APP_UID}:{APP_UID}", str(data)], data)
     write_kv(sdir / "runtime.env", env)
     (DATA / "deploy" / app).mkdir(parents=True, exist_ok=True)
-    out({"ok": True, "env_file": str(sdir / "runtime.env"),
-         "injected": sorted(env), "views": views})
+    return {"env_file": str(sdir / "runtime.env"), "injected": sorted(env), "views": list(views)}
 
 
 def cmd_secret_set(a: argparse.Namespace) -> None:
@@ -1075,12 +1114,16 @@ def snapshot_dirs(app: str) -> list[Path]:
 
 
 def cmd_snapshot(a: argparse.Namespace) -> None:
-    """Before release N goes live: dump the app's database, and archive /data if it's under 200 MB."""
-    app = a.app
-    target = SNAPSHOTS / app / f"pre-r{a.release}"
+    out({"ok": True, "snapshot": snapshot(a.app, a.release, a.from_release)})
+
+
+def snapshot(app: str, release: int, from_release: int | None) -> dict | None:
+    """Before release N goes live: dump the app's database, and archive /data if it's under 200 MB. Returns the
+    snapshot's meta, or None when the app has nothing to snapshot."""
+    target = SNAPSHOTS / app / f"pre-r{release}"
     shutil.rmtree(target, ignore_errors=True)
     target.mkdir(mode=0o700, parents=True)
-    meta: dict = {"name": target.name, "release": a.release, "from_release": a.from_release,
+    meta: dict = {"name": target.name, "release": release, "from_release": from_release,
                   "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "db": False, "files": False}
     try:
         if database_exists(app):
@@ -1107,11 +1150,10 @@ def cmd_snapshot(a: argparse.Namespace) -> None:
         raise
     if not meta["db"] and meta["files"] is False:
         shutil.rmtree(target, ignore_errors=True)
-        out({"ok": True, "snapshot": None})
-        return
+        return None
     meta["bytes"] = sum(p.stat().st_size for p in target.iterdir())
     (target / "meta.json").write_text(json.dumps(meta))
-    out({"ok": True, "snapshot": meta})
+    return meta
 
 
 def cmd_snapshots(a: argparse.Namespace) -> None:
@@ -1119,17 +1161,20 @@ def cmd_snapshots(a: argparse.Namespace) -> None:
 
 
 def cmd_restore_snapshot(a: argparse.Namespace) -> None:
+    out({"ok": True, **restore_snapshot(a.app, a.from_release)})
+
+
+def restore_snapshot(app: str, from_release: int) -> dict:
     """Replace the app's database and /data with the newest snapshot taken while release K was live.
     Leaves the app's container stopped: the caller starts the release it rolls back to."""
-    app = a.app
-    snaps = [p for p in snapshot_dirs(app) if json.loads((p / "meta.json").read_text())["from_release"] == a.from_release]
+    snaps = [p for p in snapshot_dirs(app) if json.loads((p / "meta.json").read_text())["from_release"] == from_release]
     if not snaps:
-        raise Fail(f"no data snapshot from while r{a.from_release} was live; snapshots are taken before each "
+        raise Fail(f"no data snapshot from while r{from_release} was live; snapshots are taken before each "
                    "deploy and the last 3 are kept. Roll back without --with-data, or restore a nightly backup "
                    f"with scripts/restore.sh {app}")
     snap = snaps[-1]
     meta = json.loads((snap / "meta.json").read_text())
-    maintenance(app, 15)  # the CLI ends it once the release it rolls back to is running
+    maintenance(app, 15)  # the rollback ends it once the release it rolls back to is running
     run(["docker", "stop", f"annex-app-{app}"], capture_output=True)
     if (snap / "db.dump").exists():
         restore_database(app, snap / "db.dump")
@@ -1141,16 +1186,20 @@ def cmd_restore_snapshot(a: argparse.Namespace) -> None:
                       [f"{appdir}:/app", f"{snap}:/snap:ro"])
         if r.returncode != 0:
             raise Fail(f"restoring /data failed: {r.stderr.decode(errors='replace').strip()[-400:]}")
-    out({"ok": True, "app": app, "snapshot": meta["name"], "database": (snap / "db.dump").exists(),
-         "files": (snap / "data.tar.gz").exists()})
+    return {"app": app, "snapshot": meta["name"], "database": (snap / "db.dump").exists(),
+            "files": (snap / "data.tar.gz").exists()}
 
 
 def cmd_prune_snapshots(a: argparse.Namespace) -> None:
-    snaps = snapshot_dirs(a.app)
-    old = snaps[:-a.keep] if a.keep else snaps
+    out({"ok": True, **prune_snapshots(a.app, a.keep)})
+
+
+def prune_snapshots(app: str, keep: int) -> dict:
+    snaps = snapshot_dirs(app)
+    old = snaps[:-keep] if keep else snaps
     for p in old:
         shutil.rmtree(p, ignore_errors=True)
-    out({"ok": True, "removed": [p.name for p in old], "kept": [p.name for p in snaps[len(old):]]})
+    return {"removed": [p.name for p in old], "kept": [p.name for p in snaps[len(old):]]}
 
 # --- releases in the database (M2.2) -----------------------------------------------------------------------------
 # releases.jsonl stays the file of record; annex_ops.releases is the copy the console and the audit trail read. The
@@ -1530,6 +1579,10 @@ def cmd_users_sync(_: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    if sys.argv[1:2] and sys.argv[1] in ("deploy-begin", "deploy-step", "deploy-end"):
+        # what a CLI from before D101 calls first: stop it before it changes anything
+        out({"ok": False, "error": OLD_CLI})
+        sys.exit(1)
     p = argparse.ArgumentParser(prog="annex_vm")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("views").set_defaults(fn=cmd_views)
@@ -1591,26 +1644,25 @@ def main() -> None:
     s.set_defaults(fn=cmd_release_record)
     sub.add_parser("release-backfill", help="load every app's releases.jsonl into annex_ops.releases (idempotent)").set_defaults(
         fn=cmd_release_backfill)
-    s = sub.add_parser("deploy-begin", help="take the app's deploy lock, reconcile, append a pending release (C1, D92)")
+    s = sub.add_parser("deploy", help="deploy an app (D101): a JSON meta line, then the source tar.gz, on stdin; "
+                                      "JSON lines on stdout; the deploy carries on if the caller goes away")
     s.add_argument("app")
     s.add_argument("--actor", default="unknown", help="who is deploying, named to anyone who finds the lock held")
-    s.add_argument("--stale-after", type=int, help=f"seconds after which a lock is taken over (default {LOCK_STALE_S})")
-    s.set_defaults(fn=cmd_deploy_begin)
-    s = sub.add_parser("deploy-step", help="record the step a deploy is at, in its lock")
+    s.add_argument("--via", default="cli", choices=["cli", "mcp"])
+    s.set_defaults(fn=cmd_deploy)
+    s = sub.add_parser("rollback", help="switch an app back to an earlier release (D101): a JSON meta line on stdin")
     s.add_argument("app")
-    s.add_argument("token")
-    s.add_argument("step")
-    s.set_defaults(fn=cmd_deploy_step)
-    s = sub.add_parser("deploy-end", help="rewrite the pending release with its outcome (final line on stdin), unlock")
+    s.add_argument("--actor", default="unknown", help="who is rolling back")
+    s.add_argument("--via", default="cli", choices=["cli", "mcp"])
+    s.add_argument("--to", type=int, help="the release to switch to (default: the live one before the current)")
+    s.add_argument("--with-data", action="store_true", help="also restore the snapshot from the target's time")
+    s.set_defaults(fn=cmd_rollback)
+    s = sub.add_parser("deploy-state", help="whether a deploy or rollback of the app runs now, and its current.json")
     s.add_argument("app")
-    s.add_argument("token")
-    s.add_argument("release", type=int)
-    s.add_argument("result", choices=["live", "failed"])
-    s.set_defaults(fn=cmd_deploy_end)
-    s = sub.add_parser("deploy-reconcile", help="settle a release a dead deploy left pending")
+    s.set_defaults(fn=cmd_deploy_state)
+    s = sub.add_parser("deploy-reconcile", help="settle a release a dead deploy left pending (refused while one runs)")
     s.add_argument("app")
     s.add_argument("--actor", default=os.environ.get("ANNEX_ACTOR", "deploy-reconcile"))
-    s.add_argument("--break", dest="break_lock", action="store_true", help="take over the lock however young it is")
     s.set_defaults(fn=cmd_deploy_reconcile)
     sub.add_parser("users-list").set_defaults(fn=cmd_users_list)
     sub.add_parser("users-sync").set_defaults(fn=cmd_users_sync)

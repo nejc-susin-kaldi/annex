@@ -116,6 +116,25 @@ class Argv(Repo):
         self.assertEqual(r.out("echo $ANNEX_DATA_DIR").strip(), "/Users/someone/.annex/local")
         self.assertEqual(r.run("exit 3", check=False).returncode, 3)
 
+    def test_call_streams_through_the_local_prefix(self):
+        # V1's Remote.call (D101) builds its command with vm_command and _argv: locally that is a real local process
+        r = self.local()
+        r.data = self.tmp.name
+        vmdir = Path(self.tmp.name) / "platform" / "vm"
+        vmdir.mkdir(parents=True)
+        (vmdir / "annex_vm.py").write_text(
+            "import json, os, sys\n"
+            "print(json.dumps({'progress': 'step one'}), flush=True)\n"
+            "print(json.dumps({'ok': True, 'args': sys.argv[1:], 'stdin': sys.stdin.read(),"
+            " 'exe': sys.executable, 'data': os.environ['ANNEX_DATA_DIR']}))\n")
+        seen = []
+        res = r.call("deploy", "demo", input="tar-bytes", progress=seen.append)
+        self.assertEqual(seen, ["step one"])
+        self.assertEqual((res["args"], res["stdin"]), (["deploy", "demo"], "tar-bytes"))
+        # python3 on the prefix's PATH is this CLI's interpreter (PyYAML), not whatever the system has
+        self.assertEqual(Path(res["exe"]).parent, Path(sys.executable).parent)
+        self.assertEqual(r.vm_command("x"), f"python3 {self.tmp.name}/platform/vm/annex_vm.py x")
+
     def test_context_that_reaches_the_vm_is_refused(self):
         r = self.local(context="annex-vm", endpoint="ssh://annex")
         with self.assertRaises(AnnexError) as e:

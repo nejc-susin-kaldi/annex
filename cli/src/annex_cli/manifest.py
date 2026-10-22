@@ -9,7 +9,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import yaml
+# PyYAML is imported in load() only: the VM's copy of this module (vm/annex_manifest.py in the bundle, D101) uses
+# Manifest.from_dict with the stock python3, which may lack it
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}[a-z0-9]$")
 KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
@@ -117,6 +118,8 @@ def load(folder: Path) -> Manifest:
         raise ManifestError(folder, [f"{folder} is not a folder. Pass the app folder that contains annex.yaml."])
     if not path.exists():
         raise ManifestError(path, ["annex.yaml is missing. Start from a template: annex init python-web <name>"])
+    import yaml
+
     try:
         raw = yaml.safe_load(path.read_text()) or {}
     except yaml.YAMLError as e:
