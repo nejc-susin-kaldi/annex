@@ -55,6 +55,41 @@ def test_backup_age():
     assert ("resolve", "platform:backup", None) in run(e, now, eng.HostSample(None, None, None, now - 60))
 
 
+def test_backup_stale_dump():
+    e = eng.Engine()
+    now = 500000.0
+    fresh = lambda gap: eng.HostSample(None, None, None, now - 60, now - 60 - gap)  # noqa: E731
+    assert run(e, now, fresh(600)) == []                                   # dumped minutes before the archive
+    assert run(e, now, fresh(86400)) == []                                 # exactly a day: still fine
+    assert run(e, now, fresh(86401)) == [("open", "platform:backup", None)]
+    assert run(e, now, fresh(3 * 86400)) == []                             # already open, same signal
+    assert ("resolve", "platform:backup", None) in run(e, now, fresh(30))
+    assert e.signals == {}
+
+
+def test_backup_stale_adds_to_overdue_incident():
+    e = eng.Engine()
+    now = 500000.0
+    assert run(e, now, eng.HostSample(None, None, None, now - 27 * 3600, now - 80 * 3600)) == [
+        ("open", "platform:backup", None), ("add_signal", "platform:backup", "backup-stale")]
+    # the archive came back but the dumps are still old: the incident stays open on the second signal
+    acts = run(e, now + 1, eng.HostSample(None, None, None, now, now - 80 * 3600))
+    assert ("clear_signal", "platform:backup", "backup") in acts and ("resolve", "platform:backup", None) not in acts
+
+
+def test_unknown_marker_leaves_stale_signal_alone():
+    e = eng.Engine()
+    now = 500000.0
+    run(e, now, eng.HostSample(None, None, None, now, now - 3 * 86400))
+    assert run(e, now + 1, eng.HostSample(None, None, None, now, None)) == []   # marker unreadable: no verdict
+    assert "backup-stale" in e.signals["platform:backup"]
+
+
+def test_marker_parse():
+    assert host.parse_marker("2026-10-22T02:00:07Z\n") == 1792634407.0
+    assert host.parse_marker("") is None and host.parse_marker("garbage") is None
+
+
 def test_unmeasured_values_leave_signals_alone():
     e = eng.Engine()
     run(e, 1, sample(disk=90))
@@ -87,3 +122,34 @@ def test_a_failing_database_never_stops_the_sampler(monkeypatch, capsys):
     host.store(sample())          # must not raise
     host.housekeeping()
     assert "couldn't store a sample" in capsys.readouterr().err
+
+
+def test_path_read_one_small_file(monkeypatch):
+    import io
+    import tarfile
+
+    from annex_ops import docker_api
+
+    def tar_of(name, data):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as t:
+            i = tarfile.TarInfo(name)
+            i.size = len(data)
+            t.addfile(i, io.BytesIO(data))
+        return buf.getvalue()
+
+    class Resp:
+        def __init__(self, raw): self.raw = raw
+        def read(self, n): return self.raw[:n]
+
+    class Conn:
+        def close(self): pass
+
+    monkeypatch.setattr(docker_api, "_get", lambda path, timeout: (Conn(), Resp(tar_of("MARKER", b"2026-10-22T02:00:07Z\n"))))
+    assert host.parse_marker(docker_api.path_read("c", "/backup/dumps/current/MARKER")) == 1792634407.0
+    monkeypatch.setattr(docker_api, "_get", lambda path, timeout: (Conn(), Resp(tar_of("big", b"x" * 9000))))
+    try:
+        docker_api.path_read("c", "/x")
+        raise AssertionError("expected a refusal")
+    except docker_api.DockerError:
+        pass

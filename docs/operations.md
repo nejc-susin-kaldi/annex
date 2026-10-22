@@ -23,6 +23,7 @@
 | Remove an app | `./annex remove <app> [--keep-data]` |
 | Back up now | `scripts/backup.sh` (nightly at 02:00 anyway; 7 days kept) |
 | Restore one app | `scripts/restore.sh <app> [archive]` (replaces its DB and `/data`) |
+| Restore a whole VM | the recipe under "Restore a whole VM" below |
 | Quick check after a push | `scripts/test-smoke.sh` (under a minute: every part once) |
 | All checks | `scripts/test-all.sh` (30+ minutes; `--slow` adds the 20-minute `test-alerts.sh`; `--only platform,apps` for a few). Only when a change concerns timings, retries or alerts |
 | Host health as ops sees it | `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl host` (disk, memory, newest backup's age) |
@@ -41,8 +42,40 @@
 | `apps/<app>/data` | app files, mounted at `/data`, backed up |
 | `apps/<app>/releases.jsonl` | release history: image, manifest, who, when, git commit, result (backed up) |
 | `snapshots/<app>/pre-r<N>/` | database dump and `/data` archive taken before release N went live; the last 3 are kept (not backed up) |
-| `dumps/`, `backups/` | nightly pg_dump output and backup archives (7 days). The `annex_ops` dump leaves out the stored logs and health-check results (D74): restored, those tables come back empty |
+| `dumps/`, `backups/` | nightly pg_dump output (with `MARKER`, the time `dump-all.sh` finished) and backup archives (7 days; they hold `secrets/` and `state/directory/` too since D87, so `backups/` is mode 700, annex only). The `annex_ops` dump leaves out the stored logs and health-check results (D74): restored, those tables come back empty |
 | `certs/` | mkcert wildcard certificate (local TLS mode) |
+
+## Restore a whole VM (D87)
+What a nightly archive holds: `backup/apps/<app>/data` and `releases.jsonl`, `backup/dumps/current/*.dump` (every database, custom format), `globals.sql` (roles with their password hashes), `MARKER`, `backup/secrets/` (everything, including `master.env`, the Authelia key and users, each app's tokens) and `backup/state/directory/`. Not in it: the Postgres data directories (rebuilt from the dumps), `deploy/` (app source and images: redeploy each app from its folder with `annex deploy`), `snapshots/`, `certs/` (reissued by `scripts/bootstrap.sh`), Metabase's own state beyond its database. product-db is synthetic data rebuilt by `push.sh`.
+
+The archive contains the secrets: copy it only to places that may hold them, and delete scratch copies.
+
+1. **Prepare the new VM** as in `docs/setup.md` (Docker, the `annex` user, `/srv/annex` owned by annex, the SSH config). Do **not** run `scripts/bootstrap.sh` yet: it would generate new secrets.
+2. **Put the archive on the VM** (`scp annex-<time>.tar.gz annex:/srv/annex/backups/`; `chmod 700 /srv/annex/backups`, `chmod 600` the archive).
+3. **Unpack the files** (sudo, so the owners in the archive are kept: ops runs as uid 10001 and reads `secrets/hooks` and `state/directory`):
+   ```
+   ssh annex 'cd /srv/annex && sudo tar -xzpf backups/annex-<time>.tar.gz --strip-components=1 --same-owner backup/secrets backup/state backup/apps backup/dumps'
+   ```
+   `secrets/` is now the old VM's. `.env` keeps the old values too if you restore the same `.env` on the Mac (`ANNEX_*` settings, domain, TLS mode).
+4. **Bootstrap and push.** `scripts/bootstrap.sh` (it never replaces an existing secret, so it only fills the layout and reissues the certificate), then `scripts/push.sh`. The platform starts empty; Authelia has the old users and the apps' secrets are in place.
+5. **Restore the databases** (appdata-db holds the app databases, `annex_ops`, Metabase's): the roles first, then each dump. `pg_restore --clean --if-exists --create` replaces the empty database the first start created:
+   ```
+   ssh annex 'cd /srv/annex && docker exec -i annex-appdata-db-1 psql -U postgres -f - < dumps/current/globals.sql'   # "already exists" errors for postgres and the platform roles are expected
+   ssh annex 'cd /srv/annex && for f in dumps/current/*.dump; do docker exec -i annex-appdata-db-1 pg_restore -U postgres -d postgres --clean --if-exists --create < "$f"; done'
+   ```
+   Then `docker restart annex-ops-1 annex-hooks-1 annex-console-1` so they reconnect. `annex_ops.logs` and `health_checks` come back empty (D74).
+6. **Redeploy the apps** from their source folders (`./annex deploy <folder>`). Each deploy provisions as usual with the restored secrets and keeps the restored database and `/data` (`apps/<app>/data` came back with step 3). `releases.jsonl` is restored, so release numbers continue.
+7. **Check:** `scripts/test-smoke.sh`, `./annex users list`, the console's Platform page, and `ctl host` shows the dump age near zero after `scripts/backup.sh`.
+
+**Try it without touching the VM's data (a scratch directory).** Same unpack with a different target, plus a throwaway Postgres on the dumps:
+```
+ssh annex 'mkdir -p /srv/annex/restore-scratch && cd /srv/annex/restore-scratch && sudo tar -xzpf ../backups/annex-<time>.tar.gz --strip-components=1 --same-owner backup/secrets backup/state backup/apps backup/dumps'
+ssh annex 'cd /srv/annex && sudo diff -rq secrets restore-scratch/secrets'          # only changes since the archive was taken
+ssh annex 'cat /srv/annex/restore-scratch/dumps/current/MARKER'
+ssh annex 'docker run -d --rm --name annex-restore-scratch -e POSTGRES_PASSWORD=scratch --network none postgres:16.15-alpine3.24'
+# wait a few seconds, then for each dump: docker exec -i annex-restore-scratch pg_restore -U postgres -d postgres --create < dump, then \dt in the databases
+ssh annex 'docker rm -f annex-restore-scratch; sudo rm -rf /srv/annex/restore-scratch'
+```
 
 ## Console (M2.4, D69–D70, D76)
 - **What:** `console.<domain>` (`ANNEX_HOST_CONSOLE`; add it to `/etc/hosts`, docs/setup.md): server-rendered, read-only pages, no JavaScript (charts are inline SVG, filters are links, tabs are URLs). Redone in M2.7–M2.9 (D76): **one home per thing**.
@@ -109,7 +142,7 @@
 - **Maintenance:** `restore.sh` and `rollback --with-data` hold the app's alerts for up to 15 minutes while its container is stopped on purpose. For other planned work use `ctl maintenance` (see the table above): signals are collected and nothing is sent until it ends; any that are still active then open the incident.
 - **Tuning:** thresholds are defaults in `ops/annex_ops/engine.py` (`Tuning`), overridable by `OPS_<NAME>` environment variables on ops and, at runtime, by `/srv/annex/state/ops/tuning.json` (`stopped_grace_s`, `crash_count`, `crash_window_s`, `crash_stable_s`, `error_window_s`, `error_min`, `error_ratio`, `reminder_first_s`, `reminder_repeat_s`, `tick_s`, `check_interval_s`, `check_timeout_s`, `check_fail_threshold`, `check_ok_threshold`). Production never has the file; `scripts/test-alerts.sh` writes a short one and removes it. If an alert storm ever needs silencing, put a long `reminder_first_s` there, or open maintenance for the subject.
 - **State:** the `annex_ops` tables `incidents` (with the full history of signals), `job_runs` (90 days), `log_cursors` (where ops stopped reading Traefik's, Ofelia's and every shipped container's log) and `maintenance`. ops restores open incidents at start and re-reads Docker's state, so a push (which recreates ops) doesn't lose or repeat alerts.
-- **The VM itself** (D56): its disk (alert at 85 % used, cleared below 80 %), its memory (alert when under 256 MB stays available for 5 minutes, cleared above 400 MB) and the age of the newest backup (alert when over 26 hours; it's the archive folder's time, so a manual `scripts/backup.sh` counts) are sampled every minute and alerted to admins like any platform problem, with what to check in the message. `ctl host` shows the current numbers. Settings `disk_alert_pct`, `disk_clear_pct`, `mem_alert_mb`, `mem_alert_s`, `mem_clear_mb`, `backup_max_age_s`, `host_sample_s` in `Tuning`.
+- **The VM itself** (D56): its disk (alert at 85 % used, cleared below 80 %), its memory (alert when under 256 MB stays available for 5 minutes, cleared above 400 MB) and the age of the newest backup (alert when over 26 hours; it's the archive folder's time, so a manual `scripts/backup.sh` counts) are sampled every minute and alerted to admins like any platform problem, with what to check in the message. `backup-stale` (D87) is a second signal on the same incident: the newest archive is more than a day newer than the `MARKER` of the dumps inside it, i.e. `dump-all.sh` is failing and the archives only look fresh. `ctl host` shows the current numbers (and `dump_age_h`). Settings `disk_alert_pct`, `disk_clear_pct`, `mem_alert_mb`, `mem_alert_s`, `mem_clear_mb`, `backup_max_age_s`, `backup_stale_s`, `host_sample_s` in `Tuning`.
 - **Limits:** if the VM itself dies, nothing on it can say so: that needs a check from outside the LAN (production item). The checker's own front-door request makes Authelia log an anonymous "not authorized" line every interval (the log shipper drops it).
 
 ## Usage stats and the weekly digest (M1.4)

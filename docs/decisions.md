@@ -666,3 +666,25 @@ It takes about 63 MB on disk and seeds in under a minute.
 **Tests.** `ops/tests/test_threads.py` (verdict, registry, `/healthz` 503, `fetch`), a follower surviving an unexpected store error and an unexpected loop error (`test_follow_exact.py`), `Shipper.revive` (`test_logship.py`), the `platform:ops` target (`test_health.py`) and the console's table (`test_console_view.py`). `test-logs.sh` checks that `/healthz` lists the followers and the sink's counters after ops restarts. Not run here (VM): `test-smoke.sh`, `test-logs.sh`.
 
 **Prod:** metrics (Prometheus or CloudWatch) replace the thread table; `/healthz` stays.
+
+## D87. Backups that restore a VM (22 Oct, hardening B7)
+**What.**
+- The backup container also mounts `secrets/` and `state/directory/` read-only (`/backup/secrets`, `/backup/state/directory`), so a nightly archive holds what a new VM needs besides the databases and `/data`. Nejc approved that the archives now contain secrets.
+- `dump-all.sh` writes `dumps/current/MARKER` (UTC time, one line) into the new dump folder before it replaces `current/`, so the marker always belongs to the dumps next to it. A failed dump leaves the old `current/` and the old marker.
+- `host.py` reads the marker with one small request (`docker_api.path_read`: `GET /containers/annex-backup-1/archive?path=/backup/dumps/current/MARKER` on the read-only proxy, which already allows the HEAD form; it refuses anything over 4 KB). `HostSample` gets `dump_at`. The engine raises `backup-stale` on `platform:backup` when the archive's time is more than `backup_stale_s` (a day) newer than the marker, and clears it when not. It is a second signal on the existing subject, so one incident, one e-mail; an unreadable or missing marker (the first night after the upgrade, a proxy error) gives no verdict and leaves an open signal alone. `ctl host` shows `dump_age_h`.
+- `vm/bootstrap-secrets.sh` makes `backups/` mode 700.
+- `docs/operations.md`: "Restore a whole VM", and the scratch-directory check.
+
+**Why.** Archives held app data and database dumps but not the secrets, so a lost VM meant a new `master.env`, new tokens and all accounts gone. And a failing dump hook (set -eu) left the archive step succeeding with the previous dump: the archive-age alert stayed green over data that was days old.
+
+**Alternatives.**
+- Read the marker out of the newest archive: a gzip tar has no index, so reading one member decompresses everything before it (every app's `/data`), every minute. The dumps folder is replaced as a whole and archived at the same moment, so the live marker is the same file the newest archive holds. The cost: if someone runs `dump-all.sh` by hand between archive and check, the marker is newer than the archive's copy; the check only lets a newer marker pass, so that is harmless.
+- Mount `dumps/` into ops: a bigger mount than one file read, and ops would see every database dump.
+- Archive permissions: offen v2.49.1 runs as root in the container and I found no setting for the file mode that I could verify offline. The protection is the directory: `backups/` is 700, owned by annex, so other local users can't enter it whatever the file mode. Per-file 600 (and an offen `BACKUP_FILE_PERMISSIONS`-style setting, or GPG) is left to the orchestrator's check on the VM; see the hand-back.
+- Backing up Postgres data directories: no, dumps are the format that restores across minor versions.
+
+**Not done.** The secrets sit unencrypted in the archive (offen's `GPG_PASSPHRASE` would encrypt, but then the key must live outside the VM: prod). `deploy/` (app sources) isn't archived: redeploy from the app's own folder.
+
+**Tests.** `ops/tests/test_host.py`: the engine rule (open, exact-day boundary, no repeat, clear, joining the overdue incident, unreadable marker), marker parsing, `path_read` on a fake tar. Not run here (VM): a backup, the archive's contents and mode, the scratch restore.
+
+**Prod:** archives to S3 with offen's GPG encryption and a key outside the VM; secrets in a secrets manager make this moot for most of `secrets/`.

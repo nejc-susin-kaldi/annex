@@ -48,6 +48,23 @@ def path_stat(container: str, path: str, timeout: float = 10) -> dict:
         conn.close()
 
 
+def path_read(container: str, path: str, max_bytes: int = 4096, timeout: float = 10) -> str:
+    """The text of one small file inside a container (GET .../archive returns a tar of it). Used for the one-line
+    dump marker only; refuses anything that is not a regular file under `max_bytes`, so it can't pull an archive."""
+    import io
+    import tarfile
+    conn, resp = _get(f"/containers/{urllib.parse.quote(container)}/archive?path={urllib.parse.quote(path)}", timeout)
+    try:
+        raw = resp.read(max_bytes + 4096 * 3)  # tar header and padding on top of the content
+    finally:
+        conn.close()
+    with tarfile.open(fileobj=io.BytesIO(raw)) as tar:
+        m = tar.next()
+        if m is None or not m.isfile() or m.size > max_bytes:
+            raise DockerError(0, f"{container}:{path} is not a small file")
+        return tar.extractfile(m).read().decode(errors="replace")
+
+
 def get_json(path: str, timeout: float = 10):
     conn, resp = _get(path, timeout)
     try:
