@@ -24,6 +24,12 @@ class Contract(unittest.TestCase):
         for must in ("## annex.yaml", "## Runtime rules", "## Injected environment", "## Gateway views", "## Commands"):
             self.assertIn(must, core)
 
+    def test_cross_site_rule_is_core(self):
+        # hardening A4: every app gets it, so it is not a topic
+        self.assertIn("\n## Cross-site requests\n", ops.contract())
+        self.assertNotIn("Cross-site requests", [h for h, _ in ops.CONTRACT_TOPICS.values()])
+        self.assertIn("Sec-Fetch-Site", ops.contract())
+
     def test_core_is_about_half(self):
         self.assertLess(len(ops.contract().split()), 0.6 * len(ops.contract("all").split()))
 

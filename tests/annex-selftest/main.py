@@ -23,6 +23,8 @@ Web endpoints (all GET unless said; every response has an X-Request-Id, every lo
   /env                    the names (never the values) of the environment Annex injected
   POST /hooks/trello | gh | plain      a webhook forwarded by Annex: checks the token, records it in /data/events.jsonl
   POST /api/_errors, GET /annex-errors.js    browser error reports (the runtime's)
+  Every POST goes through the runtime's csrf_violation first: a cross-site Origin or Sec-Fetch-Site gets 403 (ANNEX_CSRF=off
+  under env: turns it off); any other POST path answers 404, which tests use as "passed the check".
 
 Switches (files in /data, so a test can flip them with `docker exec`):
   /data/crashes   a number N > 0: the server writes N-1 and exits 1, once a second until it reaches 0 (crash loop)
@@ -188,7 +190,12 @@ class Handler(BaseHTTPRequestHandler):
             url = urlparse(self.path)
             self.q = {k: v[0] for k, v in parse_qs(url.query).items()}
             try:
-                self.route(url.path)
+                why = rt.csrf_violation(self.command, self.headers)  # the contract's "Cross-site requests"
+                if why:
+                    log.warn("cross-site request refused", method=self.command, path=url.path, why=why)
+                    self.reply(403, "Cross-site request refused")
+                else:
+                    self.route(url.path)
             except Exception as e:  # noqa: BLE001: an unhandled exception is one error line with its stack, and a 500
                 if PLAIN:
                     traceback.print_exc()
