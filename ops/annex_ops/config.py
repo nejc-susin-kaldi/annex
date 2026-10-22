@@ -12,6 +12,10 @@ def _int(name: str, default: int) -> int:
 
 
 DATABASE_URL = os.environ.get("OPS_DATABASE_URL", "")
+# appdata-db's name on annex-appdata only (compose sets it for ops). The URL's `appdata-db` also resolves on every app
+# network ops shares with appdata-db (D88), where Docker may answer with the app network's address; a connection made
+# there hangs when the app is removed and its network goes, and fills the pool (D100).
+DATABASE_HOST = os.environ.get("OPS_DATABASE_HOST", "").strip()
 DB_POOL_MAX = _int("OPS_DB_POOL_MAX", 8)  # connections this process may hold; compose sets 2 for the console and the receiver (D84)
 USERS_FILE = os.environ.get("OPS_USERS_FILE", "/annex/directory/users.json")
 

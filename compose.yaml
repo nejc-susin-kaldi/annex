@@ -220,8 +220,11 @@ services:
       - ./db/appdata/hooks:/annex:ro
       - ${ANNEX_DATA_DIR}/dumps:/dumps
     # appdata: ops, the receiver and Metabase; console: the console's read-only role (D69), nobody else.
-    # It also joins the network of each app with Postgres at runtime, as `appdata-db` (networks-sync, D88).
-    networks: [appdata, console]
+    # It also joins the network of each app with Postgres at runtime, as `appdata-db` (networks-sync, D88). ops, which is
+    # on those networks too, connects as appdata-db-platform, a name that exists on annex-appdata only (D100).
+    networks:
+      appdata: {aliases: [appdata-db-platform]}
+      console:
     shm_size: 128m
     mem_limit: 640m  # max_connections=60 (D84): 128 MB shared buffers + 60 backends at up to ~6 MB + headroom
     healthcheck:
@@ -255,6 +258,8 @@ services:
       ANNEX_EMAIL_DOMAINS: ${ANNEX_EMAIL_DOMAINS}
       ANNEX_EMAIL_ALLOW: ${ANNEX_EMAIL_ALLOW}
       ANNEX_EMAIL_FROM: ${ANNEX_EMAIL_FROM}
+      # appdata-db by its annex-appdata-only alias: ops is also on every app network, where `appdata-db` is the app's (D100)
+      OPS_DATABASE_HOST: appdata-db-platform
       OPS_SMTP_HOST: mailpit
       OPS_SMTP_PORT: "1025"
       OPS_USERS_FILE: /annex/directory/users.json

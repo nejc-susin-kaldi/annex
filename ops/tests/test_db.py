@@ -230,3 +230,21 @@ def test_connections_are_opened_with_keepalives(monkeypatch):
     with db.Pool("postgres://x", 1).connection():
         pass
     assert seen["keepalives"] == 1 and seen["tcp_user_timeout"] > 0 and seen["autocommit"] is True
+
+
+def test_the_host_override_replaces_only_the_host(monkeypatch):
+    # ops connects to appdata-db by its annex-appdata-only alias (D100); user, password, port and database stay
+    monkeypatch.setattr(config, "DATABASE_URL", "postgres://annex_ops:s3cret@appdata-db:5432/annex_ops")
+    monkeypatch.setattr(config, "DATABASE_HOST", "appdata-db-platform")
+    parts = psycopg.conninfo.conninfo_to_dict(db.dsn())
+    assert parts == {"user": "annex_ops", "password": "s3cret", "host": "appdata-db-platform", "port": "5432",
+                     "dbname": "annex_ops"}
+    monkeypatch.setattr(config, "DATABASE_HOST", "")
+    assert db.dsn() == "postgres://annex_ops:s3cret@appdata-db:5432/annex_ops"
+
+
+def test_the_pool_is_made_with_the_overridden_host(fake, monkeypatch):
+    monkeypatch.setattr(config, "DATABASE_HOST", "appdata-db-platform")
+    with db.connect():
+        pass
+    assert "host=appdata-db-platform" in fake[0][0]

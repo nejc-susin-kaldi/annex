@@ -15,6 +15,7 @@ from typing import Iterator
 
 import psycopg
 from psycopg import pq
+from psycopg.conninfo import make_conninfo
 
 from . import config
 from .errors import OpsError
@@ -136,6 +137,13 @@ def _make_pool(url: str, max_size: int) -> Pool:
     return Pool(url, max_size)
 
 
+def dsn() -> str:
+    """OPS_DATABASE_URL, with its host replaced by OPS_DATABASE_HOST when that is set (config.DATABASE_HOST)."""
+    if not config.DATABASE_HOST:
+        return config.DATABASE_URL
+    return make_conninfo(config.DATABASE_URL, host=config.DATABASE_HOST)
+
+
 def pool_size() -> int:
     return max(1, config.DB_POOL_MAX)
 
@@ -145,7 +153,7 @@ def _get_pool() -> Pool:
     if _pool is None:
         with _lock:
             if _pool is None:
-                _pool = _make_pool(config.DATABASE_URL, pool_size())
+                _pool = _make_pool(dsn(), pool_size())
     return _pool
 
 
