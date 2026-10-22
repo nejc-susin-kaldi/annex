@@ -22,6 +22,9 @@ from .errors import OpsError
 POOL_WAIT_S = 10    # how long a caller waits for a free connection
 CHECK_AFTER_S = 30  # an idle connection older than this is checked before it is handed out
 MAX_IDLE_S = 300    # and one idle longer than this is closed instead
+# libpq: a server that vanished without closing (appdata-db recreated) must fail a query in about a minute, not hang it
+CONNECT_OPTS = {"connect_timeout": 5, "keepalives": 1, "keepalives_idle": 30, "keepalives_interval": 10,
+                "keepalives_count": 3, "tcp_user_timeout": 60000}
 
 
 class PoolTimeout(Exception):
@@ -69,22 +72,30 @@ class Pool:
             raise PoolTimeout(f"no connection free in {POOL_WAIT_S} s")
         conn = None
         try:
-            conn = self._take_idle() or psycopg.connect(self.url, autocommit=True, connect_timeout=5)
+            conn = self._take_idle() or psycopg.connect(self.url, autocommit=True, **CONNECT_OPTS)
             with self.lock:
                 self.holders[id(conn)] = (threading.current_thread().name, time.monotonic(), _caller())
             yield conn
         finally:
-            if conn is not None:
-                with self.lock:
-                    self.holders.pop(id(conn), None)
-                reusable = (not self.closed and not conn.closed and not conn.broken
-                            and conn.info.transaction_status == pq.TransactionStatus.IDLE)
-                if reusable:
+            try:  # whatever a broken connection raises here, the slot below is given back (a leak filled the pool once)
+                if conn is not None:
                     with self.lock:
-                        self.idle.append((conn, time.monotonic()))
-                else:
-                    conn.close()
-            self.slots.release()
+                        self.holders.pop(id(conn), None)
+                    try:
+                        reusable = (not self.closed and not conn.closed and not conn.broken
+                                    and conn.info.transaction_status == pq.TransactionStatus.IDLE)
+                    except Exception:  # noqa: BLE001
+                        reusable = False
+                    if reusable:
+                        with self.lock:
+                            self.idle.append((conn, time.monotonic()))
+                    else:
+                        try:
+                            conn.close()
+                        except Exception:  # noqa: BLE001
+                            pass
+            finally:
+                self.slots.release()
 
     def _report(self) -> None:
         """A caller waited POOL_WAIT_S for nothing: say who holds the connections (once a minute at most)."""

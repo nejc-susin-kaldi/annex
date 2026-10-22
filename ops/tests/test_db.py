@@ -203,3 +203,30 @@ def test_a_full_pool_names_its_holders(opened, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "the pool is full" in err and "test_db.py" in err and "test_a_full_pool_names_its_holders" in err
     assert p.holders == {}
+
+
+def test_a_connection_that_raises_on_return_still_gives_its_slot_back(opened, monkeypatch):
+    monkeypatch.setattr(db, "POOL_WAIT_S", 0.05)
+    p = db.Pool("postgres://x", 1)
+
+    class Boom:
+        @property
+        def transaction_status(self):
+            raise RuntimeError("the connection is gone")
+    with p.connection() as a:
+        a.info = Boom()
+    assert a.closed
+    with p.connection() as b:  # the slot came back
+        assert b is not a
+
+
+def test_connections_are_opened_with_keepalives(monkeypatch):
+    seen = {}
+
+    def connect(url, **kw):
+        seen.update(kw)
+        return FakeConn(0)
+    monkeypatch.setattr(db.psycopg, "connect", connect)
+    with db.Pool("postgres://x", 1).connection():
+        pass
+    assert seen["keepalives"] == 1 and seen["tcp_user_timeout"] > 0 and seen["autocommit"] is True
