@@ -262,6 +262,10 @@ class Remote:
             return (f"The {kind} of {app} stopped before it was under way on the VM ({why}, at the "
                     f"{step or 'first'} step). If it had started, the VM records it as failed and nothing was "
                     f"switched: `annex status {app}` and `annex releases {app}` show where it is")
+        if kind not in ("deploy", "rollback"):  # secret-set, remove, migrate-networks (D102): no release to look up
+            what = {"secret-set": "secret set", "migrate-networks": "network migration", "remove": "removal"}.get(kind, kind)
+            return (f"The connection to the VM dropped at the {step} step ({why}); the {what} continues on the VM "
+                    f"and finishes there. `annex status {app}` shows its step while it runs")
         return (f"The connection to the VM dropped at the {step} step ({why}); the {kind} continues on the VM. "
                 f"`annex status {app}` shows its step and `annex releases {app}` its outcome")
 
