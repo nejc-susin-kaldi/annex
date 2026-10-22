@@ -666,3 +666,28 @@ It takes about 63 MB on disk and seeds in under a minute.
 **Tests.** `ops/tests/test_threads.py` (verdict, registry, `/healthz` 503, `fetch`), a follower surviving an unexpected store error and an unexpected loop error (`test_follow_exact.py`), `Shipper.revive` (`test_logship.py`), the `platform:ops` target (`test_health.py`) and the console's table (`test_console_view.py`). `test-logs.sh` checks that `/healthz` lists the followers and the sink's counters after ops restarts. Not run here (VM): `test-smoke.sh`, `test-logs.sh`.
 
 **Prod:** metrics (Prometheus or CloudWatch) replace the thread table; `/healthz` stays.
+
+
+## D86. Byte budgets and bounded queues in annex-ops (22 Oct, hardening B2)
+**What.** Every buffer in annex-ops that grows while something downstream is slow or down now has a limit in bytes as well as rows, and drops the oldest first, counting what it dropped.
+- **Log sink** (`logstore.Sink`): `log_buffer_rows` 20,000 and `log_buffer_mb` **20**. A row's size is `row_bytes`: its text, its serialised `fields` and 600 bytes for the objects around them (an estimate to bound by, not a measurement). Over either limit, `add` and the put-back after a failed insert drop the oldest rows and add them to `lost` (already in `/healthz`, which now also shows `bytes` and `max_bytes`). One row bigger than the whole budget is dropped too.
+- **Usage buffer** (`usage.Ingest`): `usage_buffer_rows` 50,000 and `usage_buffer_mb` **8** (300 bytes per row plus its strings). It used to grow without bound in `handle` as well as in `flush`'s retry, so both are capped now. Dropped rows are counted in `dropped`, which B1's gauge already read, and it also shows `bytes` and `max_bytes`.
+- **Engine queue** (`incidents.Manager`): `queue_max` 10,000 (the queue's `maxsize`) and `queue_soft` 5,000. The queue carries Docker events (die, start, stop, destroy, OOM, health, seen), the health checker's verdicts, host and log samples, webhook and job results, maintenance, **and `Request`, one per Traefik line** (the 5xx rate). Only `Request` is a log-derived signal that is safe to lose: past `queue_soft` waiting inputs it is dropped and counted (`engine.dropped` in `/healthz`, logged once a minute), without blocking the Traefik follower. Everything else waits for room with a plain `put`; the soft limit keeps half the queue free for it, so a flood of requests can never take the place of a container's death. A job result is a log-derived signal too, but one per job run, so it is kept like the rest.
+- **Shipper queue** (`logship.Shipper.q`): not bounded. It only carries Docker events (a container seen, started or destroyed), nothing may be dropped there, and it holds at most a few entries per container. Log lines never use it. A comment says why.
+- All five numbers are settings (`_settings`: `OPS_LOG_BUFFER_MB` and the others in the environment, or in `tuning.json`), read when ops starts. The engine's two are in `Tuning`, the others in `LogSettings` and `UsageSettings`.
+
+**The arithmetic.** ops has 128 MiB (`compose.yaml`) and measured **85 MiB at its highest** (D79, after the alert suite) with these buffers nearly empty. Worst case is a database outage, where the sink and the usage buffer fill together: 20 + 8 MiB, plus the engine queue (10,000 inputs of about 250 bytes, 2.5 MiB if it ever filled) is **30.5 MiB**. 85 + 30.5 = 115.5 MiB, **12.5 MiB of headroom**. The plan's first numbers (32 and 16 MiB) would have reached 135 MiB, over the limit, so they were lowered; they are settings, so a bigger container limit and bigger buffers go together. At normal volume (a few lines per second) neither buffer comes near its limit: 20,000 rows is hours of the whole platform's logs.
+
+**Why.** A database outage left the sink's 20,000-row cap as the only limit, but rows are not the same size (a line is capped at a few KB, `fields` nest), and the usage buffer and the engine queue had no limit at all: ops would have grown until the kernel killed it, taking the alert engine with it, at the moment alerts matter most (review finding, hardening plan "What was found").
+
+**Alternatives.**
+- A byte limit measured with `sys.getsizeof` per row: slow on every line and still blind to shared strings; a fixed overhead plus the text is close enough and cheap.
+- Dropping Docker events when the engine queue is full: no; a missed `die` is a missed alert. Blocking the watcher is the lesser harm (the engine thread is also watched, B1).
+- Two queues for the engine (one for requests): needs the engine loop to read two queues in order; the soft limit does the same with one.
+- Spilling to disk instead of dropping: a disk buffer to manage (and `/srv/annex` is the only place ops may write); the lines are in Docker's own log until a follower reads them, and a restart replays from the saved cursor, so a dropped sink row is only lost if the container's log rotated too.
+
+**Not done.** B6 (a cap before parsing, sink inserts off the follower thread) is a separate step. Rows dropped from the sink are not recovered from Docker's log after the outage; the follower has already moved its cursor.
+
+**Tests.** `ops/tests/test_budgets.py` (14): row and byte limits and the count for the sink, a failed insert put back over both limits, one huge row, the usage buffer by rows and by bytes, `handle` over its limit, and the engine queue (requests dropped past the soft limit, Docker events kept after the requests filled their share, a full queue never blocking a request). Not run here (VM): `scripts/test-logs.sh` (its restart check reads the sink's counters from `/healthz`).
+
+**Prod:** a log pipeline with its own disk buffer (Vector or Fluent Bit) instead of in-process buffers.

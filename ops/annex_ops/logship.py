@@ -45,6 +45,8 @@ class LogSettings:
     log_max_mb: int = 2048          # the size guard: over this, the oldest day goes early (and admins hear)
     log_rate_per_s: int = 200       # per container, counted in log time: a busier second is cut and reported
     log_housekeeping_s: float = 3600
+    log_buffer_rows: int = 20000    # the sink's memory while the database is down (D86): rows ...
+    log_buffer_mb: float = 20       # ... and megabytes (estimated, logstore.row_bytes); over either, the oldest go and are counted
 
 
 def log(msg: str) -> None:
@@ -443,6 +445,8 @@ class Shipper(threading.Thread):
         super().__init__(daemon=True, name="log-shipper")
         self.sink, self.releases = sink, releases
         self.store = store or follow_logs.CursorStore()
+        # Only Docker events (a container seen, started or destroyed) come through here: never dropped, and bounded by
+        # the number of containers, so it has no maxsize (D86). Log lines don't use it: they go straight to the sink.
         self.q: queue.Queue = queue.Queue()
         self.followers: dict[str, follow_logs.Follower] = {}
         self.handlers: dict[str, ContainerHandler] = {}

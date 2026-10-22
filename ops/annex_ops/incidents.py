@@ -26,8 +26,12 @@ def log(msg: str) -> None:
 class Manager(threading.Thread):
     def __init__(self) -> None:
         super().__init__(daemon=True, name="engine")
-        self.q: queue.Queue = queue.Queue()
-        self.engine = eng.Engine(config.tuning())
+        t = config.tuning()
+        self.q: queue.Queue = queue.Queue(maxsize=t.queue_max)
+        self.queue_soft = t.queue_soft
+        self.dropped = 0                         # request lines dropped because the queue was past queue_soft (D86)
+        self.last_drop_log = 0.0
+        self.engine = eng.Engine(t)
         self.ids: dict[str, int] = {}            # subject -> id of its open incident
         self.first_signal: dict[str, str] = {}   # subject -> the signal that opened it (wording of "resolved")
         self.apps: dict[str, dict] = {}          # app -> owner, alerts-to, last seen (the container may be gone later)
@@ -35,7 +39,25 @@ class Manager(threading.Thread):
         self.last_housekeeping = 0.0
 
     def submit(self, inp) -> None:
+        """Queue an input for the engine. A request line (a 5xx-rate sample, log-derived) is the one input that may be
+        dropped: past `queue_soft` waiting inputs it is counted and discarded, never blocking the follower. Everything
+        else (Docker events, verdicts, samples) waits for room: the soft limit leaves it half the queue (D86)."""
+        if isinstance(inp, eng.Request):
+            if self.q.qsize() >= self.queue_soft:
+                self.drop_request()
+                return
+            try:
+                self.q.put_nowait(inp)
+            except queue.Full:
+                self.drop_request()
+            return
         self.q.put(inp)
+
+    def drop_request(self) -> None:
+        self.dropped += 1
+        if time.monotonic() - self.last_drop_log > 60:
+            self.last_drop_log = time.monotonic()
+            log(f"the engine's queue is backed up: {self.dropped} request line(s) dropped so far (Docker events are kept)")
 
     # --- thread ------------------------------------------------------------
     def run(self) -> None:
@@ -326,10 +348,10 @@ def start_background() -> Manager:
 
     mgr = _manager = Manager()
     mgr.start()
-    threads.gauge("engine", lambda: {"waiting": mgr.q.qsize()})
+    threads.gauge("engine", lambda: {"waiting": mgr.q.qsize(), "max": mgr.q.maxsize, "dropped": mgr.dropped})
     ingest = _ingest = usage.Ingest()
-    # the usage buffer; B2 adds a byte budget and a `dropped` count, which this picks up
-    threads.gauge("usage", lambda: {"buffered": len(ingest.buf), "dropped": getattr(ingest, "dropped", 0)})
+    threads.gauge("usage", lambda: {"buffered": len(ingest.buf), "bytes": ingest.bytes, "max": ingest.max_rows,
+                                    "max_bytes": ingest.max_bytes, "dropped": ingest.dropped})
     usage.Worker(ingest).start()
     digest.Worker().start()
     hooks_delivery.Worker(mgr.submit).start()

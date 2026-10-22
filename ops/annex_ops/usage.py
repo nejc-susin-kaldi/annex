@@ -26,6 +26,8 @@ class UsageSettings:
     graduation_weeks: int = 4         # ... and the last this-many complete weeks must not fall (2 to 4)
     dormant_days: int = 30            # no signed-in requests for this long (and the app is at least this old)
     rollup_s: float = 600
+    usage_buffer_rows: int = 50000    # rows kept in memory while the database is down (D86) ...
+    usage_buffer_mb: float = 8        # ... or this many megabytes (estimated, row_bytes); over either, the oldest are dropped and counted
     digest_weekday: int = 0           # Monday
     digest_hour: int = 8
 
@@ -39,6 +41,14 @@ class Row:
     path: str
     status: int
     duration_ms: int
+
+
+ROW_OVERHEAD = 300  # what a Row costs in Python beyond its text
+
+
+def row_bytes(r: Row) -> int:
+    """About what a buffered row costs in memory (an estimate to bound the buffer by)."""
+    return ROW_OVERHEAD + len(r.app) + len(r.login) + len(r.method) + len(r.path)
 
 
 # --- what counts -------------------------------------------------------------------
@@ -157,13 +167,34 @@ class HealthPaths:
 
 
 class Ingest:
-    """Buffers usage rows and inserts them in batches (every 5 s or 200 rows)."""
+    """Buffers usage rows and inserts them in batches (every 5 s or 200 rows). While the database is down the
+    buffer is bounded by rows and bytes (D86): the oldest rows go first and are counted in `dropped`."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_rows: int | None = None, max_bytes: int | None = None) -> None:
+        if max_rows is None or max_bytes is None:
+            s = config.usage_settings()
+            max_rows = s.usage_buffer_rows if max_rows is None else max_rows
+            max_bytes = int(s.usage_buffer_mb * 2**20) if max_bytes is None else max_bytes
+        self.max_rows, self.max_bytes = max_rows, max_bytes
         self.buf: list[Row] = []
+        self.sizes: list[int] = []
+        self.bytes = 0
+        self.dropped = 0
         self.lock = threading.Lock()
         self.last_flush = time.monotonic()
         self.health = HealthPaths()
+
+    def _trim(self) -> None:
+        """Drop the oldest rows until the buffer fits both limits, and count them. Call with the lock held."""
+        over = max(0, len(self.buf) - self.max_rows)
+        total = sum(self.sizes[over:])
+        while over < len(self.buf) and total > self.max_bytes:
+            total -= self.sizes[over]
+            over += 1
+        if over:
+            del self.buf[:over], self.sizes[:over]
+            self.dropped += over
+            self.bytes = total
 
     def handle(self, ts: float, stream: str, line: str) -> None:
         """The Traefik handler's usage half: one parsed line in, a row buffered if it counts."""
@@ -173,15 +204,21 @@ class Ingest:
         row = parse_access_entry(entry, self.health.get())
         if row is None:
             return
+        size = row_bytes(row)
         with self.lock:
             self.buf.append(row)
+            self.sizes.append(size)
+            self.bytes += size
+            if len(self.buf) > self.max_rows or self.bytes > self.max_bytes:
+                self._trim()
             full = len(self.buf) >= 200
         if full:
             self.flush()
 
     def flush(self) -> int:
         with self.lock:
-            rows, self.buf = self.buf, []
+            rows, sizes = self.buf, self.sizes
+            self.buf, self.sizes, self.bytes = [], [], 0
         self.last_flush = time.monotonic()
         if not rows:
             return 0
@@ -189,7 +226,10 @@ class Ingest:
             insert_rows(rows)
         except Exception:  # noqa: BLE001: keep the rows for the next try
             with self.lock:
-                self.buf = rows + self.buf
+                self.buf = rows + self.buf  # the oldest are dropped and counted, as handle() does
+                self.sizes = sizes + self.sizes
+                self.bytes = sum(self.sizes)
+                self._trim()
             log("insert failed, will retry:\n" + traceback.format_exc())
             return 0
         return len(rows)
