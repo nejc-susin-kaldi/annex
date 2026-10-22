@@ -2,6 +2,110 @@
 
 Newest last. Each entry: what, why, alternatives considered.
 
+## Index with status
+
+Status: active, superseded by Dn, retired, or revised by Dn (the entry still stands for the rest). Entries are not edited to hide history; D84 is the one revised in place (marked in its text). D74b is the second entry that was numbered D74.
+
+| # | Title | Status |
+|---|---|---|
+| D1 | Apps run through `ssh annex` and the VM's Compose | active |
+| D2 | Split the edge network: `annex-edge` + `annex-platform` | revised by D88 (per-app networks) |
+| D3 | Pinned images | active |
+| D4 | Two socket proxies | active |
+| D5 | Forward-auth on the entrypoint, plus header stripping | active |
+| D6 | `ANNEX_PUBLIC_PORT` | active |
+| D7 | Config changes force a recreate | active |
+| D8 | Authelia memory 256 MiB | active |
+| D9 | Metabase keeps its own login | active |
+| D10 | Gateway details | active |
+| D11 | Backup container is not on the `appdata` network | active |
+| D12 | Demo passwords and tests | active |
+| D13 | Platform service tiles are static | active |
+| D14 | Synthetic product data | active |
+| D15 | Wipe round trip not tested in M0.1 | active |
+| D16 | App runtime hardening | revised by D95 (`pids_limit`) |
+| D17 | How the CLI deploys | revised by D88 (networks) and D92 (lock, order of steps) |
+| D18 | Ofelia restarts on schedule changes | active |
+| D19 | Missing secrets fail the deploy | active |
+| D20 | Authelia `GOMEMLIMIT=160MiB` | active |
+| D21 | Jobs run as the app user | active |
+| D22 | `monthly-report` has a demo schedule | active |
+| D23 | Backups and restore | revised by D74 (logs left out) and D87 (secrets, marker) |
+| D24 | MCP server on the 2.x SDK | active |
+| D25 | `static` template has a tiny server with two endpoints | active |
+| D26 | `node-web` template | active |
+| D27 | The skill lives in the repo, symlinked | active |
+| D28 | Demo reset | active |
+| D29 | M0.4 proof run is part of the demo | active |
+| D30 | Releases and the health gate | revised by D92 (lock, pending record) |
+| D31 | Data snapshots before each switch | active |
+| D32 | Apps deployed before M1.1 | active |
+| D33 | Bring your own stack, and `resources.memory` | active |
+| D34 | annex-ops: one service built from the repo | active |
+| D35 | Tokens are stored hashed in `app_grants` | active |
+| D36 | Networks for ops, and no public route | revised by D88 (ops reached on app networks) |
+| D37 | The user directory file | active |
+| D38 | Defaults chosen in the M1.2 plan | active |
+| D39 | Incidents, not alerts | revised by D90 (outbox sender, saved state) |
+| D40 | Recipients and the status page | revised by D73 (the status page is the console's) |
+| D41 | Spike results | partly superseded by D73 (Gatus workarounds retired) |
+| D42 | Job failures come from Ofelia's log | active |
+| D43 | Grace period, maintenance and thresholds | revised by D90 (what a restart keeps) |
+| D44 | Gatus: a derived image, the edge network, no external heartbeat | superseded by D73 (Gatus retired) |
+| D45 | Apps deployed before M1.3 | active |
+| D46 | Usage stats: what counts, where it's kept, who sees what | active; the Metabase part (item 7) superseded by D76 |
+| D47 | M1.3's interfaces and the spikes | active |
+| D48 | Differences from the plan | active |
+| D49 | Apps deployed before M1.4 | active |
+| D50 | Spike results | active |
+| D51 | The hooks route: the only one without a login | active |
+| D52 | Signing secrets, tokens and what the app must check | active |
+| D53 | Receive, store, deliver | active |
+| D54 | Alerting and differences from the plan | active |
+| D55 | The webhook receiver runs in its own container | active |
+| D56 | The host and the backups are monitored | revised by D87 (`backup-stale`) |
+| D57 | Annex's own user accounts | active |
+| D58 | Review follow-ups: tests, runtime helpers, demo, docs | active |
+| D59 | The logging convention | active |
+| D60 | Spike: Traefik's access log keeps the request id | active |
+| D61 | Open question: pg_trgm and the search index | active |
+| D62 | Open question: partition management | active |
+| D63 | How lines get into the table | active |
+| D64 | No gap on a redeploy, and it must never block one | active |
+| D65 | Release records | revised by D92 (only the VM writes `releases.jsonl`) |
+| D66 | CLI, MCP and the job-only check | active |
+| D67 | Error groups: where they come from, what is "the same", when an email is owed | active |
+| D68 | Browser errors | active |
+| D69 | The console is its own container, on networks no app is on | revised by D88 (network line) |
+| D70 | What the console shows and how it decides | active |
+| D71 | Spike 2: where successful sign-ins come from | active |
+| D72 | The audit trail | active |
+| D73 | Gatus is retired: annex-ops checks health itself | active; front-door subject revised by D90 |
+| D74 | Pre-demo fixes | active; contract-in-parts refined by D94 |
+| D74b | Tests don't notify people: test mode and one test channel | active |
+| D75 | One fixture for every platform suite: `annex-selftest` | active |
+| D76 | The console overhaul: one home per thing | active |
+| D77 | A client's own database behind the gateway: Goat Arcade | active |
+| D78 | The Goat Arcade data | active |
+| D79 | App names validated at every entry point | active |
+| D80 | Small security items | active |
+| D81 | annex-ops reports its own threads | active |
+| D82 | Gateway audit cursor, usage rollup table, logs index | active (`usage_apps` kept, D93) |
+| D83 | Images with platform labels are refused | active |
+| D84 | A connection pool in ops, appdata-db sized to its connections | active; revised in place 22 Oct (own pool, no psycopg-pool) |
+| D85 | Push stamp, one settings source, secrets from stdin, prerequisites | active |
+| D86 | Byte budgets and bounded queues in annex-ops | active |
+| D87 | Backups that restore a VM | active |
+| D88 | Per-app networks | active |
+| D89 | Log shipper: the cap before the parse, inserts only on the sink thread | active |
+| D90 | Alert engine robustness: an outbox, saved timers, a monotonic clock, one front-door incident | active |
+| D91 | CSRF check in the runtime and the contract | active |
+| D92 | Deploy lock and pending release record | active |
+| D93 | Numbered schema migrations with a version table | active |
+| D94 | Contract and runtime versions; generated summaries in the agent-facing copies | active |
+| D95 | Build limits: free disk, image size, pids_limit, cleanup warnings | active |
+| D96 | annex_vm.py test seam and quoted SQL | active |
+
 ## D1. Apps run through `ssh annex` and the VM's Compose (14 Oct)
 **What.** The CLI copies the app folder to `/srv/annex/deploy/<app>`, writes the generated compose file there and runs `docker compose` on the VM over SSH, the same way the platform runs. The brief said "built and run through the annex-vm Docker context, using the Mac's Compose".
 **Why.** Compose reads `env_file` on the client. With the Mac's Compose, per-app secrets (DB password, gateway JWT, `annex secret set` values) would have to pass through the Mac. Nejc said it's fine for secrets to touch the Mac in this throwaway demo, and asked for the least complex option. One transport (SSH) for both platform and apps is simpler: no path translation, no Compose version skew, and env files stay on the VM.
@@ -519,7 +623,7 @@ From the review after M2 (Nejc approved fixes 1, 2, 3 and 5; the full test run a
 - **ops memory** (83–85 MiB of 128 after M2, up from 51 before M2.2) is being measured over a quiet day: Docker's figure, the process's anonymous memory and RSS, and its threads, every 5 minutes into `.build/ops-mem.csv`. **Verdict: no leak, the limit stays at 128 MiB.** 95 samples from 06:04 to 18:53 UTC (none from 08:55 to 14:16, while the Mac slept). In the quiet afternoon ops was flat at 74 MiB anonymous, 96 MiB RSS, 76.8 MiB in Docker's figure, 27 threads: +0.15 MiB in four and a half hours. The morning's 52–83 MiB followed the work done on the VM (deploys, a backup, smoke tests) and fell back each time; the alert suite's 85 MiB is the highest seen, about 40 MiB under the limit.
 
 
-## D74. Tests don't notify people: test mode and one test channel (17 Oct)
+## D74b. Tests don't notify people: test mode and one test channel (17 Oct)
 **The problem.** Slack was connected for real, and the platform suites posted to real channels: `test-smoke.sh`, `test-notify.sh` and others ran the demo app's notifying job (`#finance-reports`), and every suite that stops or breaks something made annex-ops post its alerts to `#annex-alerts`. (Email never mattered: it only reaches Mailpit.) Nejc: tests must not notify people, and should be flagged.
 **What.** **Test mode** in annex-ops: while the file `state/ops/test-mode` holds a time in the future, every Slack post, from an app (the allowlist is still checked against the channel the app asked for) or from the platform (alerts, error emails), is delivered to `#annex-selftest` instead, with the text `[TEST] ... (test run: this was meant for #channel)`; the send log row keeps the original channel and says "test mode: posted to #annex-selftest" in the subject column; `ctl info` shows `test_mode: ON until HH:MM`. `scripts/testlib.sh` writes the file (an end time three hours ahead) when a suite sources it and removes it on exit, so every suite is covered without a line of its own; `ANNEX_TEST_MODE=0` skips it. A suite that dies leaves a file that stops mattering at its end time (a dead run can't silence or redirect real alerts for more than three hours). The channel is `ANNEX_TEST_SLACK_CHANNEL` (default `#annex-selftest`). Unit tests: the redirect and the expiry (`test_slack.py`).
 **Not done.** No banner in the console (it doesn't mount `state/ops`; `ctl info` and the marked posts are the flag); a person who runs `annex run` by hand in a demo still posts for real, on purpose.
@@ -606,23 +710,6 @@ It takes about 63 MB on disk and seeds in under a minute.
 
 **Tests.** `cli/tests/test_ops_names.py` calls each function with `x; id`, `../etc`, `Console` and a trailing newline, with every `Remote` method patched to fail the test if reached.
 
-## D82. Gateway audit cursor, usage rollup table, logs index (21 Oct, hardening B3)
-**What.**
-- `audit.scan_gateway` keeps a cursor (`log_cursors`, key `audit:gateway`) like the other scans. It aggregates only buckets that closed since the cursor, plus one bucket before it (a late line still lands; the upsert by `ref` makes the replay harmless), and never reaches back more than the 48-hour window. The first run after the upgrade starts from the newest `gateway.reads` event already stored. Before, every 60-second pass counted two days of gateway lines.
-- `logs_container_ts` on `annex_ops.logs (container, ts DESC)`: a parent index on the partitioned table. Creating it builds it on the existing partitions, and `logstore.create_partition_sql` makes new partitions with `PARTITION OF`, which copies the parent's indexes.
-- `annex_ops.usage_rollup_apps`: the `usage_apps` view's rows, stored by the 10-minute `usage.rollup` in one transaction, with `signal` refreshed after the verdicts are written. `usage_rows()` (so `tile_for`, `app_status`, the digest, the console) reads it. `annex_console` has SELECT on it.
-
-**Why.** The console and status calls aggregated the raw `requests` (7, 14 and 30-day distinct users, p95) on every page load, and the auditor scanned the gateway lines every minute. Both grow with traffic; the new reads are one row per app.
-
-**Alternatives.**
-- A materialized view: needs a refresh with its own privileges, and `REFRESH` locks readers unless it has a unique index and is `CONCURRENTLY`. A table written by the existing rollup is simpler.
-- Dropping `usage_apps` now: it stays for one release (Metabase's role is granted it, the rollup copies from it). C3's migration drops it.
-
-**Notes.**
-- New tables and indexes only; `annex_ops.sql` stays idempotent and alters nothing existing.
-- Numbers on the usage pages are up to 10 minutes old (they were live). An app that appears for the first time shows after the next rollup (the worker runs one at start).
-- The first rollup after the upgrade fills the table; until then `usage_rows()` is empty, so run `scripts/push.sh` and wait for it (or restart annex-ops) before the smoke test.
-
 ## D80. Small security items (21 Oct, hardening A3)
 **What.** Five small fixes from the technical review:
 1. **Gateway token.** `annex_vm.py` signs the JWT with `exp` (one year after `iat`) and regenerates it on every `provision`, writing it beside the old file and renaming. Deploys recreate the container anyway and a rollback re-provisions, so every release gets a fresh token. The contract says so: read the token from the environment at startup, never store it. Unit test: `vm/tests/test_jwt.py`. PostgREST enforces `exp` on its own.
@@ -639,7 +726,6 @@ It takes about 63 MB on disk and seeds in under a minute.
 - Passwords from a file with `\set x \`cat ...\``: the same as `\getenv`, with a mount to add.
 
 **Prod:** short-lived tokens minted per request by a deploy API, and rotation of `GATEWAY_JWT_SECRET` (changing it invalidates every token at once; deploys then reissue them).
-
 
 ## D81. annex-ops reports its own threads (21 Oct, hardening B1)
 **What.** `ops/annex_ops/threads.py` is a registry: every long-running thread registers a name and the longest one pass may take (sleep included), then calls `beat(name)` on every pass.
@@ -667,6 +753,22 @@ It takes about 63 MB on disk and seeds in under a minute.
 
 **Prod:** metrics (Prometheus or CloudWatch) replace the thread table; `/healthz` stays.
 
+## D82. Gateway audit cursor, usage rollup table, logs index (21 Oct, hardening B3)
+**What.**
+- `audit.scan_gateway` keeps a cursor (`log_cursors`, key `audit:gateway`) like the other scans. It aggregates only buckets that closed since the cursor, plus one bucket before it (a late line still lands; the upsert by `ref` makes the replay harmless), and never reaches back more than the 48-hour window. The first run after the upgrade starts from the newest `gateway.reads` event already stored. Before, every 60-second pass counted two days of gateway lines.
+- `logs_container_ts` on `annex_ops.logs (container, ts DESC)`: a parent index on the partitioned table. Creating it builds it on the existing partitions, and `logstore.create_partition_sql` makes new partitions with `PARTITION OF`, which copies the parent's indexes.
+- `annex_ops.usage_rollup_apps`: the `usage_apps` view's rows, stored by the 10-minute `usage.rollup` in one transaction, with `signal` refreshed after the verdicts are written. `usage_rows()` (so `tile_for`, `app_status`, the digest, the console) reads it. `annex_console` has SELECT on it.
+
+**Why.** The console and status calls aggregated the raw `requests` (7, 14 and 30-day distinct users, p95) on every page load, and the auditor scanned the gateway lines every minute. Both grow with traffic; the new reads are one row per app.
+
+**Alternatives.**
+- A materialized view: needs a refresh with its own privileges, and `REFRESH` locks readers unless it has a unique index and is `CONCURRENTLY`. A table written by the existing rollup is simpler.
+- Dropping `usage_apps` now: it stays for one release (Metabase's role is granted it, the rollup copies from it). C3's migration drops it.
+
+**Notes.**
+- New tables and indexes only; `annex_ops.sql` stays idempotent and alters nothing existing.
+- Numbers on the usage pages are up to 10 minutes old (they were live). An app that appears for the first time shows after the next rollup (the worker runs one at start).
+- The first rollup after the upgrade fills the table; until then `usage_rows()` is empty, so run `scripts/push.sh` and wait for it (or restart annex-ops) before the smoke test.
 
 ## D83. Images with platform labels are refused (22 Oct, hardening A2)
 **What.**
@@ -714,6 +816,7 @@ It takes about 63 MB on disk and seeds in under a minute.
 
 
 **Revised 22 Oct (after the first VM runs).** psycopg-pool is gone; `db.py` has its own pool of about forty lines with no threads. Two failures on the VM: a one-shot `ctl` command waited up to 20 s at exit for the pool's workers (so a deploy's log drain, under a 10 s timeout, was cut off: fixed first with a quick close at exit), and after a push ops went unhealthy with every caller timing out "busy" while appdata-db showed its four connections idle for minutes, the pool's bookkeeping stuck. No ops code holds a connection while it blocks (checked across the package). The replacement opens connections in the caller's thread, caps them with a semaphore, checks one idle for over 30 s before handing it out, closes one that broke or was left in a transaction, and keeps the same 503 messages. Sizes, the contract line and appdata-db's limit are unchanged.
+
 ## D85. Push stamp, one settings source, secrets from stdin, prerequisites (22 Oct, hardening C2)
 **What.**
 - **Push stamp.** `render.py` writes `.build/platform/VERSION` (`commit=`, `dirty=`, `env_sha256=`); it goes to the VM with the bundle. `push.sh` reads the VM's `platform/VERSION` first and calls `scripts/pushcheck.py check`, which prints both commits and refuses when the VM's commit is not an ancestor of the local HEAD (the same commit passes), or is not in this checkout at all (message: `git fetch`, or `--force`). A VM with no VERSION file (the first push) proceeds. `--force` skips the check and `--extras` still works; flags combine. The decision is a pure function (`pushcheck.decide`), tested in `cli/tests/test_pushcheck.py` (the repo's script tests live in `cli/tests`, like `test_selftest_builder.py`).
@@ -866,19 +969,6 @@ It takes about 63 MB on disk and seeds in under a minute.
 
 **Prod:** the outbox is also where a real email provider's bounces and delivery receipts would be recorded; with a managed queue (SQS) and a provider with idempotency keys the sender becomes a consumer of that queue.
 
-
-## D93. Numbered schema migrations with a version table (22 Oct, hardening C3)
-**What.** `db/appdata/annex_ops.sql` is gone. `db/appdata/bootstrap.sql` keeps what must run outside a transaction and on every push: `REVOKE CONNECT ... template1`, the roles and their passwords (read with `\getenv`, D80), `CREATE DATABASE annex_ops`. The schema is `db/appdata/migrations/`: `001_base.sql` (the old file as it was before the hardening tables, minus the roles), `002_usage_rollup_logs_index.sql` (B3, D82: `usage_rollup_apps`, `logs_container_ts`, the console's grant), `003_db_connections.sql` (B4, D84), `004_outbox_engine_state.sql` (B5, D90). `vm/migrate.py` (stdlib, on the VM, called by `push.sh` after the bootstrap) lists the files, reads `annex_ops.schema_version(version text primary key, applied_at)`, and applies each missing file with `psql --single-transaction -v ON_ERROR_STOP=1`, as `SET ROLE annex_ops`, with the `INSERT INTO schema_version` in the same transaction, so a file is applied and recorded, or not at all. It stops at the first failure and names the file. A file that is missing but sorts below an applied one is refused (renumber it). It needs no password: psql runs as `postgres` inside the container, and the migrations contain none.
-- **The switch-over.** On the live VM `schema_version` is empty at first, so the first push applies 001 to 004 in order. All are idempotent and the VM already has everything, so only the grants move: 001 resets `annex_console`'s grants (`REVOKE ALL ON ALL TABLES`) and gives the old set, and 002 to 004 add theirs, each in its own transaction a moment apart. The console may see a permission error in that window if it reads in it. The next push is a no-op.
-- **Grants live in the migration that creates the object.** The `usage_rollup_apps` grant moved out of 001's grant list into 002; the others were already separate statements.
-- **`usage_apps` stays.** The plan said to drop the old view in C3. B3's follow-up made `usage.usage_rows()` fall back to the view for apps the rollup has not stored yet and `refresh_rollup()` reads it, so it is the rollup's source and is kept; its comment says so.
-- **Alternatives.** (1) A migration tool (Alembic, Flyway, sqitch): a component outside the brief's stack for a dozen files. (2) Keeping the roles and `CREATE DATABASE` inside 001: `CREATE DATABASE` can't run in a transaction and the passwords have to follow `master.env` (a rotated one must reach the roles), so they stay a rerunnable bootstrap. (3) Running the runner on the Mac: it would need the database through SSH; on the VM it is one `docker compose exec`. (4) A checksum per file to catch an edited applied file: not done; the rule is in CLAUDE.md and `operations.md`, and review sees the diff.
-- **Costs.** An applied file can't be repaired in place: a mistake is fixed by the next file. `001` can't be tidied. `CREATE INDEX CONCURRENTLY` is not possible (a test in `vm/tests/test_migrate.py` checks no migration uses it, `\c` or `\getenv`); on a big table that matters, and the step then needs its own runner mode.
-
-**Tests.** `vm/tests/test_migrate.py` (7): order, skipping the applied, a no-op when all are applied, a gap below the newest applied, unknown applied versions ignored, bad names and a duplicate number, and the repo's own files (names, no `CONCURRENTLY`, `\c`, `\getenv`). On the VM: `push.sh` twice (the second applies nothing), a failing scratch migration stops the push with its name (`docs/operations.md`, "Database migrations").
-
-**Prod:** the same mechanism against RDS, run as a separate deploy step with `migrate --list` (a dry run) before a platform upgrade, a migration role that is not the superuser, and expand-then-contract changes for anything the running version still reads.
-
 ## D91. CSRF check in the runtime and the contract (22 Oct, hardening A4, Nejc: default on, opt-out env)
 **What.**
 - **Contract, core section "Cross-site requests"** (not a topic: every app gets it): a `POST`, `PUT`, `PATCH` or `DELETE` is refused with 403 when `Sec-Fetch-Site` is anything but `same-origin` or `none`, or when `Origin` is present and is not the app's own host. Requests with neither header (curl, another server, ops' webhook delivery, which sends no `Origin`: `hooks_verify.FORWARD_HEADERS` doesn't forward it) pass. `GET` never changes anything.
@@ -900,26 +990,6 @@ It takes about 63 MB on disk and seeds in under a minute.
 **Tests.** `runtime/tests/test_csrf.py` and `csrf.test.mjs` (both runtimes: headerless, safe methods, each `Sec-Fetch-Site` value, own-host and sibling `Origin`, port, `null`, forwarded host, webhook-delivery headers, opt-out values, the middleware answering 403 or passing); `cli/tests/test_manifest_env.py` (`ANNEX_CSRF` values, other `ANNEX_` names still refused); `cli/tests/test_contract.py` (the section is core). `scripts/test-apps.sh` "Cross-site requests": through the front door with a login, a foreign `Origin` plus `cross-site`, a foreign `Origin` alone and `same-site` get 403, same-origin and headerless POSTs pass (404 from a probe path), a cross-site GET is untouched. Not run here (VM): `test-apps.sh`.
 
 **Prod:** per-app session cookies (a host-only cookie per app) or an origin check in the front door, once the IdP is decided (production item 13); this runtime check stays as the second layer.
-
-## D94. Contract and runtime versions; generated summaries in the agent-facing copies (22 Oct, hardening C4)
-**What.**
-- **`ANNEX_CONTRACT_VERSION: 1`** is the second line of `cli/src/annex_cli/contract.md` (the title lost its old "v0"); it is part of the core, so every agent sees it. `docs/app-contract.md` is a symlink to `contract.md`, so there is nothing to copy there (the plan's "copy" step is not needed). Raise it when a rule changes in a way an existing app would notice.
-- **`__version__ = 1`** in `runtime/annex_runtime.py` and `export const __version__ = 1` in `annex_runtime.js` (synced to every copy by `sync-runtime.sh`). Raise it when a helper is added or changed.
-- **The deploy records both** in the release dict the CLI builds: `contract_version` and `runtime` (`{"annex_runtime.py": 1}`, per helper file the app folder carries; an old copy without a version is 0). Only the dict was extended, not how `releases.jsonl` is written (C1 moves that to the VM).
-- **The runtime warning** now reads "your runtime is v1, the current one is v2" (a copy without a version: "v0 (before versions)"); a copy of the current version that was edited gets its own wording, a newer one a third. Pure functions `runtime_version`, `runtime_message`, `runtime_versions`, `contract_version` in `ops.py`.
-- **`scripts/sync-contract.sh`** (`--check` in `test-all.sh` and `test-smoke.sh`) regenerates a summary between `<!-- contract:begin -->` and `<!-- contract:end -->` in `skills/annex/SKILL.md` and each `templates/*/AGENTS.md`: the version, the core section headings and the topics with their descriptions (read from `CONTRACT_TOPICS` in `ops.py` by `ast`, so no dependencies). It does not copy rules: the copies say "run `annex contract`". `SKILL.md`'s "Rules that matter" stays as a digest and is marked "the contract wins".
-- **MCP `annex_logs`** gets `source` (`app`, `gateway`, `all`), which `ops.logs` and the CLI already had.
-
-**Why.** An app's copy of the runtime could only be called "different"; an agent can't tell whether that is old, edited or newer. Rules copied by hand into the skill and four AGENTS.md files had already drifted (D74, D91 each touched several). A short generated block can't drift and costs nothing to keep.
-
-**Alternatives.** Copy the whole core into each AGENTS.md (large, and the topics system exists to avoid that); a semantic version string (an integer is enough: only "older or not" is asked); a hash of the runtime (no ordering, no message).
-
-**Limits.** The runtime version is raised by hand: a change that forgets to is not detected (the byte comparison still warns, as "same version, file differs"). Rollback releases don't carry the two fields. Existing deployed releases have none.
-
-**Tests.** `cli/tests/test_versions.py` (version line, parsing, the message for old, unversioned, newer, edited and equal, folder scan; topics and core unchanged); `sync-contract.sh --check` and `sync-runtime.sh --check` green. Not run here (VM): `test-smoke.sh`, a deploy with an old runtime copy.
-
-**Prod:** the version pair goes into the image's labels and the release record in the registry pipeline.
-
 
 ## D92. Deploy lock and pending release record (22 Oct, hardening C1)
 **What.**
@@ -947,6 +1017,37 @@ It takes about 63 MB on disk and seeds in under a minute.
 
 **Prod:** the lock and the pending record live on in the deploy API, which replaces the shared SSH key (the plan's production list, item 1); the API owns the lock, the pending record, provisioning and the switch.
 
+## D93. Numbered schema migrations with a version table (22 Oct, hardening C3)
+**What.** `db/appdata/annex_ops.sql` is gone. `db/appdata/bootstrap.sql` keeps what must run outside a transaction and on every push: `REVOKE CONNECT ... template1`, the roles and their passwords (read with `\getenv`, D80), `CREATE DATABASE annex_ops`. The schema is `db/appdata/migrations/`: `001_base.sql` (the old file as it was before the hardening tables, minus the roles), `002_usage_rollup_logs_index.sql` (B3, D82: `usage_rollup_apps`, `logs_container_ts`, the console's grant), `003_db_connections.sql` (B4, D84), `004_outbox_engine_state.sql` (B5, D90). `vm/migrate.py` (stdlib, on the VM, called by `push.sh` after the bootstrap) lists the files, reads `annex_ops.schema_version(version text primary key, applied_at)`, and applies each missing file with `psql --single-transaction -v ON_ERROR_STOP=1`, as `SET ROLE annex_ops`, with the `INSERT INTO schema_version` in the same transaction, so a file is applied and recorded, or not at all. It stops at the first failure and names the file. A file that is missing but sorts below an applied one is refused (renumber it). It needs no password: psql runs as `postgres` inside the container, and the migrations contain none.
+- **The switch-over.** On the live VM `schema_version` is empty at first, so the first push applies 001 to 004 in order. All are idempotent and the VM already has everything, so only the grants move: 001 resets `annex_console`'s grants (`REVOKE ALL ON ALL TABLES`) and gives the old set, and 002 to 004 add theirs, each in its own transaction a moment apart. The console may see a permission error in that window if it reads in it. The next push is a no-op.
+- **Grants live in the migration that creates the object.** The `usage_rollup_apps` grant moved out of 001's grant list into 002; the others were already separate statements.
+- **`usage_apps` stays.** The plan said to drop the old view in C3. B3's follow-up made `usage.usage_rows()` fall back to the view for apps the rollup has not stored yet and `refresh_rollup()` reads it, so it is the rollup's source and is kept; its comment says so.
+- **Alternatives.** (1) A migration tool (Alembic, Flyway, sqitch): a component outside the brief's stack for a dozen files. (2) Keeping the roles and `CREATE DATABASE` inside 001: `CREATE DATABASE` can't run in a transaction and the passwords have to follow `master.env` (a rotated one must reach the roles), so they stay a rerunnable bootstrap. (3) Running the runner on the Mac: it would need the database through SSH; on the VM it is one `docker compose exec`. (4) A checksum per file to catch an edited applied file: not done; the rule is in CLAUDE.md and `operations.md`, and review sees the diff.
+- **Costs.** An applied file can't be repaired in place: a mistake is fixed by the next file. `001` can't be tidied. `CREATE INDEX CONCURRENTLY` is not possible (a test in `vm/tests/test_migrate.py` checks no migration uses it, `\c` or `\getenv`); on a big table that matters, and the step then needs its own runner mode.
+
+**Tests.** `vm/tests/test_migrate.py` (7): order, skipping the applied, a no-op when all are applied, a gap below the newest applied, unknown applied versions ignored, bad names and a duplicate number, and the repo's own files (names, no `CONCURRENTLY`, `\c`, `\getenv`). On the VM: `push.sh` twice (the second applies nothing), a failing scratch migration stops the push with its name (`docs/operations.md`, "Database migrations").
+
+**Prod:** the same mechanism against RDS, run as a separate deploy step with `migrate --list` (a dry run) before a platform upgrade, a migration role that is not the superuser, and expand-then-contract changes for anything the running version still reads.
+
+## D94. Contract and runtime versions; generated summaries in the agent-facing copies (22 Oct, hardening C4)
+**What.**
+- **`ANNEX_CONTRACT_VERSION: 1`** is the second line of `cli/src/annex_cli/contract.md` (the title lost its old "v0"); it is part of the core, so every agent sees it. `docs/app-contract.md` is a symlink to `contract.md`, so there is nothing to copy there (the plan's "copy" step is not needed). Raise it when a rule changes in a way an existing app would notice.
+- **`__version__ = 1`** in `runtime/annex_runtime.py` and `export const __version__ = 1` in `annex_runtime.js` (synced to every copy by `sync-runtime.sh`). Raise it when a helper is added or changed.
+- **The deploy records both** in the release dict the CLI builds: `contract_version` and `runtime` (`{"annex_runtime.py": 1}`, per helper file the app folder carries; an old copy without a version is 0). Only the dict was extended, not how `releases.jsonl` is written (C1 moves that to the VM).
+- **The runtime warning** now reads "your runtime is v1, the current one is v2" (a copy without a version: "v0 (before versions)"); a copy of the current version that was edited gets its own wording, a newer one a third. Pure functions `runtime_version`, `runtime_message`, `runtime_versions`, `contract_version` in `ops.py`.
+- **`scripts/sync-contract.sh`** (`--check` in `test-all.sh` and `test-smoke.sh`) regenerates a summary between `<!-- contract:begin -->` and `<!-- contract:end -->` in `skills/annex/SKILL.md` and each `templates/*/AGENTS.md`: the version, the core section headings and the topics with their descriptions (read from `CONTRACT_TOPICS` in `ops.py` by `ast`, so no dependencies). It does not copy rules: the copies say "run `annex contract`". `SKILL.md`'s "Rules that matter" stays as a digest and is marked "the contract wins".
+- **MCP `annex_logs`** gets `source` (`app`, `gateway`, `all`), which `ops.logs` and the CLI already had.
+
+**Why.** An app's copy of the runtime could only be called "different"; an agent can't tell whether that is old, edited or newer. Rules copied by hand into the skill and four AGENTS.md files had already drifted (D74, D91 each touched several). A short generated block can't drift and costs nothing to keep.
+
+**Alternatives.** Copy the whole core into each AGENTS.md (large, and the topics system exists to avoid that); a semantic version string (an integer is enough: only "older or not" is asked); a hash of the runtime (no ordering, no message).
+
+**Limits.** The runtime version is raised by hand: a change that forgets to is not detected (the byte comparison still warns, as "same version, file differs"). Rollback releases don't carry the two fields. Existing deployed releases have none.
+
+**Tests.** `cli/tests/test_versions.py` (version line, parsing, the message for old, unversioned, newer, edited and equal, folder scan; topics and core unchanged); `sync-contract.sh --check` and `sync-runtime.sh --check` green. Not run here (VM): `test-smoke.sh`, a deploy with an old runtime copy.
+
+**Prod:** the version pair goes into the image's labels and the release record in the registry pipeline.
+
 ## D95. Build limits: free disk, image size, pids_limit, cleanup warnings (22 Oct, hardening C5)
 **What.**
 - **Free disk before a build.** `_build` first runs `df -PB1 /srv/annex` on the VM and refuses with under **3 GB** free. The message says how much is free, that nothing was built, and names `docker system df` (what takes the space) and `docker image prune -a` / `docker builder prune` (to free it) for the Annex owner. A `df` that returns nothing numeric does not block a deploy.
@@ -969,7 +1070,6 @@ It takes about 63 MB on disk and seeds in under a minute.
 **Tests.** `cli/tests/test_build_limits.py` (17): both verdicts and their boundaries, the lowered minimum, defaults, limit lookup order (env, settings, default), empty and bad values, `_build` refusing before `docker build`, accepting with the setting lowered, a `df` that can't answer, an oversized image removed and refused with size and limit, `pids_limit` in a web and a job compose, `_cleanup` returning its warning. `cli/tests/test_selftest_builder.py` (`--big-file`). `scripts/test-apps.sh` "Build limits" (not run here: VM): a 120 MB variant with `ANNEX_IMAGE_MAX_MB=100` is refused naming the limit, no image is left, the release is `failed`; `ANNEX_BUILD_MIN_FREE_GB=100000` is refused naming `docker system df`; the normal fixture then deploys and its container has `PidsLimit` 256.
 
 **Prod:** builds in CI and images pulled from a registry; no build on the client's server (the plan's production list, item 5). C5's limits are the interim.
-
 
 ## D96. annex_vm.py test seam and quoted SQL (22 Oct, hardening C6)
 **What.**
