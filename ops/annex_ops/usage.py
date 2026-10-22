@@ -287,9 +287,9 @@ def refresh_signals() -> None:
 def usage_rows() -> list[dict]:
     """One row per app, as of the last rollup (at most `rollup_s` old). An app removed since is left out; an app first seen
     since is read live from the view, for that app only, until the next rollup stores it."""
-    cols = ROLLUP_COLUMNS.replace("app, ", "r.app, ", 1)
+    cols = ", ".join("r." + c.strip() for c in ROLLUP_COLUMNS.split(","))
     with db.connect() as conn:
-        cur = conn.execute(f"SELECT {cols} FROM annex_ops.usage_rollup_apps r JOIN annex_ops.app_seen s USING (app) "
+        cur = conn.execute(f"SELECT {cols} FROM annex_ops.usage_rollup_apps r JOIN annex_ops.app_seen s ON s.app = r.app "
                            "WHERE s.removed_at IS NULL")
         names = [d.name for d in cur.description]
         rows = [dict(zip(names, r)) for r in cur.fetchall()]
