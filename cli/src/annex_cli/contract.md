@@ -185,6 +185,7 @@ Two synthetic data sets. `GET $ANNEX_GATEWAY_URL/` with your token returns an Op
 | `leaderboard` | model_id, title, rank (1-10), handle, nickname, score, venue_code, played_at, machine_id |
 | `player_profiles` | player_id, handle, nickname, home_venue_code, member_since, rating, games_180d, venues_played, last_played_at, leaderboard_spots, best_rank |
 | `daily_plays` | day, venue_code, machine_id, title, era, machine_type, games, credits, revenue_eur, avg_duration_s, tilts, members |
+| `hourly_plays` | day, weekday (1 = Monday ... 7 = Sunday), hour (local, 0-23), venue_code, games, credits |
 | `machine_events_daily` | day, machine_id, title, current_venue_code, event_type (tilt, slam_tilt, ball_search, coil_fault, switch_fault, jackpot, replay, match), events |
 | `service_log` | ticket_id, machine_id, serial_no, title, current_venue_code, opened_at, closed_at, status, symptom, resolution, reported_by, took_machine_off_floor, downtime_hours, technician, labour_hours, parts_cost_eur, parts |
 | `revenue_weekly` | week_start, venue_code, venue_name, city, amount_eur, coins_eur, tokens, card_plays, machines |
