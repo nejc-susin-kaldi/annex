@@ -15,7 +15,7 @@ storage:
   postgres: true       # a run history (selftest_runs)
   files: true          # /data: runs, events, switches
 data:
-  views: [client_summary, top_clients_by_aum]    # advisor_book is on purpose not granted
+  views: [venues, machine_models]    # Goat Arcade's (D112); player_profiles is on purpose not granted
 # --- notify ---
 notify:
   email: true

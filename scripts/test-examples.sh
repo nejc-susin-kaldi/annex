@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Do the demo apps in examples/ still build, deploy and work? Run it before a demo, not as a platform check: the platform
 # suites use annex-selftest and never touch these (they are stand-ins for client apps and change with the client).
-# Covers client-lookup and monthly-report (until GA.6 removes them) and the six Goat Arcade apps in examples/goat-arcade/
-# (venue-pulse, weekly-takings, tech-board, high-score-wall, league-desk, party-bookings): deploy, health check, the pages
-# for the logins that use them, and the writes and jobs each one has. Repeatable on a stack where the apps already ran:
+# Covers the six Goat Arcade apps in examples/goat-arcade/ (venue-pulse, weekly-takings, tech-board, high-score-wall,
+# league-desk, party-bookings): deploy, health check, the pages for the logins that use them, and the writes and jobs
+# each one has. Repeatable on a stack where the apps already ran:
 # sign-ups are withdrawn and claims released again; what stays behind is one party request (and its confirmation) from
 # scripts/demo-booking.sh, and venue-pulse's saved venue for sam. Jobs only email demo logins, and Slack posts go to
-# #annex-selftest because testlib switches test mode on while a suite runs (D74). It never runs monthly-report's
-# `monthly` job (that one emails and posts to Slack: it is the demo's to run, on purpose). party-bookings needs its
+# #annex-selftest because testlib switches test mode on while a suite runs (D74). party-bookings needs its
 # secret (`annex secret set party-bookings BOOKING_HOOK_SECRET`, human only): without it that block prints a skip line
 # and the suite goes on. Works on both lanes (ANNEX_ENV=local).
 # Leaves every app deployed, as the demo wants them.
@@ -30,26 +29,6 @@ GA="$ROOT/examples/goat-arcade"
 expect "sam signs in" 200 "$(login sam)"
 expect "maja signs in" 200 "$(login maja)"
 for u in boris lena petra kaldi-admin; do expect "$u signs in" 200 "$(login "$u")"; done
-
-echo "client-lookup"
-out=$("$ANNEX" deploy "$ROOT/examples/client-lookup" 2>&1) && ok "deploys ($(grep -o 'r[0-9]* is live' <<<"$out" | head -1))" || bad "deploy client-lookup" "$(tail -3 <<<"$out")"
-hasnt "no warnings at deploy" "warning:" "$out"
-page=$(as sam "$(url client-lookup)/" | text)
-has "greets the signed-in user" "Hello, Sam Novak" "$page"
-has "reads its granted views" "client_summary : allowed" "$page"
-has "is refused the ungranted one" "advisor_book : denied" "$page"
-has "a search returns clients" "Novak" "$(as maja "$(url client-lookup)/?q=novak" | text)"
-expect "annex status: health check up" up "$("$ANNEX" --json status client-lookup | python3 -c 'import json,sys; print(json.load(sys.stdin)["health_check"]["state"])')"
-
-echo "monthly-report"
-out=$("$ANNEX" deploy "$ROOT/examples/monthly-report" 2>&1) && ok "deploys ($(grep -o 'r[0-9]* is live' <<<"$out" | head -1))" || bad "deploy monthly-report" "$(tail -3 <<<"$out")"
-has "its page answers" "Monthly positions" "$(as maja "$(url monthly-report)/" | text)"
-jobs=$(vm "docker logs annex-ofelia-1 2>&1 | sed 's/\x1b\[[0-9;]*m//g'")
-has "its monthly job is scheduled (and is not run here)" 'registered "monthly-report-monthly"' "$jobs"
-has "so is the demo's refresh job" 'registered "monthly-report-refresh"' "$jobs"
-out=$("$ANNEX" run monthly-report refresh 2>&1) && ok "annex run monthly-report refresh (writes the CSV, notifies nobody)" || bad "run refresh" "$(tail -3 <<<"$out")"
-has "  ...it logged in the convention" '"msg": "job finished"' "$out"
-expect "annex status: health check up" up "$("$ANNEX" --json status monthly-report | python3 -c 'import json,sys; print(json.load(sys.stdin)["health_check"]["state"])')"
 
 echo "venue-pulse"
 if deploy_app venue-pulse "$GA/venue-pulse"; then

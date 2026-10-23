@@ -45,7 +45,7 @@ class Variants(unittest.TestCase):
         self.assertEqual([w.name for w in m.webhooks], ["trello", "gh", "plain"])
         self.assertEqual(sorted(m.secrets), ["GH_SECRET", "PLAIN_SECRET", "TRELLO_SECRET"])
         self.assertEqual({j.name for j in m.schedule}, {"tick", "work", "notify"})
-        self.assertEqual(m.views, ["client_summary", "top_clients_by_aum"])
+        self.assertEqual(m.views, ["venues", "machine_models"])
 
     def test_the_fixture_never_posts_to_a_business_channel(self):
         text = (ROOT / "tests" / "annex-selftest" / "annex.yaml").read_text()

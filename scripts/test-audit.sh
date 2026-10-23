@@ -82,8 +82,8 @@ expect "signin: sam's good sign-in is there (found from Authelia's log)" True "$
 reads=$(py '[x["details"] for x in d if x["action"] == "gateway.reads"]' <<<"$mine")
 has "gateway reads: summed per app, view and bucket" "requests" "$reads"
 expect "  ...and the number of reads is the number of gateway lines the app caused (four page loads, one read each)" \
-  "$("$ANNEX" --json logs $APP --source gateway --grep top_clients_by_aum --since "$(( $(date +%s) - START_EPOCH + 5 ))s" -n 5000 | py 'len(d)')" \
-  "$(py 'sum(x["details"]["requests"] for x in d if x["action"] == "gateway.reads" and x["details"]["view"] == "top_clients_by_aum")' <<<"$mine")"
+  "$("$ANNEX" --json logs $APP --source gateway --grep machine_models --since "$(( $(date +%s) - START_EPOCH + 5 ))s" -n 5000 | py 'len(d)')" \
+  "$(py 'sum(x["details"]["requests"] for x in d if x["action"] == "gateway.reads" and x["details"]["view"] == "machine_models")' <<<"$mine")"
 expect "  ...by the app, not by a person" "app:annex-selftest" "$(py '[x for x in d if x["action"] == "gateway.reads"][0]["actor"]' <<<"$mine")"
 mails=$("$ANNEX" --json audit --action email --app $APP --since "$(( $(date +%s) - START_EPOCH + 5 ))s" | py 'len(d)')
 expect "an email sent by an app is in the trail, once (no body)" 1 "$mails"
