@@ -201,3 +201,15 @@ Final standings of completed tournaments: points over four rounds, by player.
 | `games_played` | bigint | Group games played. |
 | `best_score` | bigint | Their best single score in the tournament. |
 
+## `hourly_plays`
+Play per venue per day and hour: games and credits. One row per day, hour and venue with at least one game. For busiest-hours and weekday-by-hour heatmaps; days and hours are local (Central European) time.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `day` | date | Local date. |
+| `weekday` | integer | Day of the week of day: 1 = Monday ... 7 = Sunday. |
+| `hour` | integer | Local hour of the day the games started, 0-23 (14 = 14:00 to 14:59). |
+| `venue_code` | text | Venue where the games were played. |
+| `games` | bigint | Games started in that hour. |
+| `credits` | bigint | Credits used (a game is one credit, sometimes two). |
+
