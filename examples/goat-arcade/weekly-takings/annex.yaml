@@ -1,0 +1,25 @@
+# Annex manifest. Full contract: `annex contract`
+name: weekly-takings
+owner: sam
+description: Last week's takings per venue, a CSV for finance every Monday, run history
+type: web+job
+port: 8080
+healthcheck: /healthz
+access: internal
+storage:
+  postgres: true       # run history (one row per week)
+  files: true          # one CSV per week in /data/takings
+data:
+  views: [revenue_weekly, daily_plays]   # daily_plays: only its latest day, to tell a complete week from one in progress
+notify:
+  email: true                    # the Monday summary to finance, with a link to the run's page
+  slack: ["#ga-finance"]         # one line per run
+schedule:
+  - name: weekly
+    cron: "0 7 * * 1"            # Monday 07:00, Europe/Ljubljana
+    command: ["python", "job.py"]
+env:
+  TAKINGS_RECIPIENTS: petra              # logins or company addresses, comma-separated
+  TAKINGS_SLACK_CHANNEL: "#ga-finance"
+secrets: []
+egress: []
