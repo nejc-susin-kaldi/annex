@@ -113,6 +113,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D102 | Secret set, remove, migrate-networks and run on the VM | active; extends D101 and D64 to those commands |
 | D103 | Version coupling and one manifest module | active |
 | D104 | CI: unit tests on every push, the local stack on pull requests | active (written, not run: no remote yet) |
+| D105 | Control-plane: final runs on both lanes and resource record | active |
 
 ## D1. Apps run through `ssh annex` and the VM's Compose (14 Oct)
 **What.** The CLI copies the app folder to `/srv/annex/deploy/<app>`, writes the generated compose file there and runs `docker compose` on the VM over SSH, the same way the platform runs. The brief said "built and run through the annex-vm Docker context, using the Mac's Compose".
@@ -1287,3 +1288,15 @@ The Goat Arcade database (`scripts/democlient.sh up`, `reseed`, `link`, `check`)
 **Alternatives.** An `if [ "$TARGET" = local ]` branch per check: two meanings for one check. Writing the tuning file through a container instead of a directory listing: heavier, and the listing is harmless on the VM. Turning Docker Desktop's file sharing to gRPC FUSE: a system setting (Nejc's), and slower. A different alias scheme for apps (e.g. `appdata-db` only on `annex-appdata` and another name on app networks): changes the app contract's `DATABASE_URL`.
 
 **For the VM (the orchestrator, not run here):** `scripts/push.sh` (appdata-db is recreated for its new alias; push's `networks-sync` reconnects it to the app networks), then `test-smoke.sh`, and the suites whose scripts changed: `test-users.sh`, `test-hooks.sh`, `test-host.sh`, `test-console.sh`, `test-audit.sh`, `test-errors.sh`, `test-logs.sh`; `test-alerts.sh` with Nejc's go-ahead (engine change, "exactly one alert"); `scripts/democlient.sh status` (no reseed needed).
+
+## D105. Control-plane: final runs on both lanes and resource record (23 Oct, control-plane D, Nejc: test-all --slow on the VM once)
+**What.** With L1–L4 and V1–V4 on main (D98–D104):
+- **VM lane:** `scripts/test-all.sh --slow` was green, 23 of 23, `alerts` 40/40 (`.build/logs/test-all-cp-vm.log`). Hooks ran in 216 s, down from 824 s in D97: the hung connections D100's `appdata-db-platform` alias removed were most of that time.
+- **Local lane:** `ANNEX_ENV=local scripts/test-all.sh --slow` (`.build/logs/test-all-cp-local.log`) was 22 of 23 green, `alerts` 40/40; `rollback` failed one check, then, after a fix, a different one. Both were races the faster lane exposed, and both are fixed; `test-rollback.sh` then passed 58/58 on both lanes:
+  - scenario 5 interrupted the CLI after the VM entered the gate but before the gate's progress line reached the CLI, which then (correctly) named the previous step. The test now waits for the CLI to print the gate line.
+  - a failed gate's error showed the last 40 log lines only; the health checks' own requests pushed the app's startup line out. `annex_deploy.head_and_tail` now keeps the first 10 lines too, with the skipped count between ("First and last log lines of r<n>").
+- The CI workflow (D104) is written and unrun: the repository has no remote yet.
+
+**Resources, 23 Oct after the runs.**
+- **VM:** 2.1 GiB used of 3.9 GiB, 1.7 GiB available; disk 9.3 of 29 GB (33%). Platform containers about 1.4 GiB (Metabase 758 MiB; ops 88; appdata-db 130; Homepage 124; console 50; hooks 42), apps 18–45 MiB each, arcade-db 60 MiB: unchanged from D97 in substance.
+- **Local (Docker Desktop, 7.65 GiB, 12 CPUs, no extras):** the Annex containers about 0.9 GiB with two apps and arcade-db. The socket proxies take 30–36 MiB each (HAProxy starts a thread per CPU; under 3 on the VM), the gateway 94 MiB (under 15 on the VM), Authelia 87. `~/.annex/local` is 339 MB. Docker Desktop's image and build-cache totals include other projects and aren't Annex's alone.
