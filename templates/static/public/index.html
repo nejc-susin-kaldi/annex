@@ -12,22 +12,23 @@
 </head>
 <body>
   <h1 id="hello">Hello</h1>
-  <h2>Top clients</h2>
-  <table id="clients"><tr><th>#</th><th>Client</th><th>AUM (EUR)</th></tr></table>
+  <h2>Busiest machines (30 days)</h2>
+  <table id="machines"><tr><th>#</th><th>Machine</th><th>Venue</th><th>Games</th></tr></table>
   <script src="annex-errors.js"></script>
   <script>
     // Identity and data come from this app's own server (same origin), never from the browser directly.
     fetch("api/me").then(r => r.json()).then(me => {
       document.getElementById("hello").textContent = `Hello, ${me.name}`;
     });
-    fetch("api/data/top_clients_by_aum?limit=10").then(r => r.json()).then(rows => {
-      const t = document.getElementById("clients");
-      for (const r of rows) {
+    fetch("api/data/machine_floor?order=games_30d.desc&limit=10").then(r => r.json()).then(rows => {
+      const t = document.getElementById("machines");
+      rows.forEach((r, i) => {
         const tr = t.insertRow();
-        tr.insertCell().textContent = r.rank;
-        tr.insertCell().textContent = r.client_name;
-        const c = tr.insertCell(); c.className = "n"; c.textContent = Math.round(r.aum_eur).toLocaleString();
-      }
+        tr.insertCell().textContent = i + 1;
+        tr.insertCell().textContent = r.title;
+        tr.insertCell().textContent = r.venue_name;
+        const c = tr.insertCell(); c.className = "n"; c.textContent = r.games_30d.toLocaleString();
+      });
     });
   </script>
 </body>

@@ -285,7 +285,7 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
     if bad:
         raise mf.ManifestError(folder / "annex.yaml", [
             f"data.views: {', '.join(bad)} not in the gateway allowlist. Available views: {', '.join(allow)}. "
-            "New views are added by the platform team in db/product/api_views.sql"])
+            "New views are added by the platform team in db/product/clientlink/api_views_arcade.sql"])
 
     line = {"manifest": m.to_dict(), "deployed_at": _now(), "deployed_by": _who(), "via": via,
             "source": str(folder).replace(str(Path.home()), "~", 1), "git": _git(folder), "snapshot": None,

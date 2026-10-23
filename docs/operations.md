@@ -9,7 +9,7 @@
 | Browser access | `scripts/tunnel.sh up`, then https://home.annex.home.arpa:8443 |
 | Demo passwords | `scripts/show-users.sh` (the three demo users only) |
 | User accounts | `./annex users list`, `./annex users add <login> --name '…' --email … [--groups users,builders,admins]` (emails an invitation), `./annex users set <login> [--groups …] [--disable\|--enable]`, `./annex users reset <login>`, `./annex users remove <login>` (all human only) |
-| Deploy an app | `./annex deploy examples/client-lookup` |
+| Deploy an app | `./annex deploy examples/goat-arcade/venue-pulse` |
 | Inspect apps | `./annex list`, `./annex status <app>`, `./annex logs <app> -f` |
 | Run a job now | `./annex run <app> <job>` |
 | Releases of an app | `./annex releases <app>` |
@@ -33,12 +33,12 @@
 | All checks | `scripts/test-all.sh` (30+ minutes; `--slow` adds the 20-minute `test-alerts.sh`; `--only platform,apps` for a few). Only when a change concerns timings, retries or alerts |
 | Host health as ops sees it | `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl host` (disk, memory, newest backup's age) |
 | Checks one by one | `scripts/test-platform.sh` (M0.1), `scripts/test-apps.sh` (M0.2), `scripts/test-jobs.sh` + `scripts/restore-test.sh` (M0.3), `scripts/test-rollback.sh` (M1.1), `scripts/test-notify.sh` (M1.2), `scripts/test-alerts.sh` (M1.3, 12-20 minutes), `scripts/test-usage.sh` (M1.4), `scripts/test-hooks.sh` (M1.5), `scripts/test-logs.sh` (M2.2, about 4 minutes), `scripts/test-errors.sh` (M2.3, about 4 minutes), `scripts/test-console.sh` (M2.4, about 2 minutes), `scripts/test-audit.sh` (M2.5, about 3 minutes), `scripts/test-host.sh` (disk, memory, backup alerts), `scripts/test-users.sh` (accounts) |
-| Add a gateway view | edit `db/product/api_views.sql`, run `scripts/push.sh`, and add it to the table in `cli/src/annex_cli/contract.md` |
+| Add a gateway view | edit `db/product/clientlink/api_views_arcade.sql` (with a comment on every column), run `scripts/push.sh` and `scripts/democlient.sh dictionary`, and add it to the table in `cli/src/annex_cli/contract.md` (see "The demo client's database" below) |
 
 `./annex` runs the CLI from the repo through uv. To put `annex` on your PATH, see `docs/setup.md` §6.
 
 ## Two lanes: the VM and the local stack (D99)
-The platform runs in two places from the same files: the **VM** (the default, everything above) and a **local stack** on the Mac's Docker Desktop. Put `ANNEX_ENV=local` in front of any script or `./annex` command to use the local one: `ANNEX_ENV=local scripts/push.sh`, `ANNEX_ENV=local ./annex deploy examples/client-lookup`, `ANNEX_ENV=local scripts/test-smoke.sh`.
+The platform runs in two places from the same files: the **VM** (the default, everything above) and a **local stack** on the Mac's Docker Desktop. Put `ANNEX_ENV=local` in front of any script or `./annex` command to use the local one: `ANNEX_ENV=local scripts/push.sh`, `ANNEX_ENV=local ./annex deploy examples/goat-arcade/venue-pulse`, `ANNEX_ENV=local scripts/test-smoke.sh`.
 - **Per command, never a default.** Don't export it in a profile or a long-lived shell: a forgotten export would send `annex deploy` and `annex remove` to the wrong stack. Without it, nothing changes: `.env`, `ssh annex`, `/srv/annex`.
 - **What it is for.** Developing and proving a change quickly: wipe and rebuild in minutes, no shared environment to wait for, no effect on the VM. Settings in `.env.local` (else `.env.local.example`), data in `~/.annex/local`, Traefik on `127.0.0.1:9443`/`:9080`, its own hostnames (`*.annex-local.home.arpa`); the renders are apart (`.build/vm/platform`, `.build/local/platform`). Setup, browser access and wiping it: `docs/setup.md` §9.
 - **What it is not.** Not a second environment: no backups worth keeping, no Slack, arm64 images where the VM has amd64 (D98). **Prove a change on the local lane first when it allows it; run the suites on the VM before a demo and after platform changes.** Nothing proven only locally counts as proven for the VM.
@@ -250,12 +250,12 @@ Metabase (extras: `scripts/extras.sh on`, `metabase.<domain>`) is configured ent
 - **Run it without a push** (on the VM, e.g. to try a spec from a scratch copy): `cd /srv/annex/platform && METABASE_SPEC_DIR=/srv/annex/<copy>/config/metabase bash vm/metabase-setup.sh`.
 
 ## The demo client's database: Goat Arcade (D77, D78)
-A stand-in for a client's own production database: compose project `democlient` (`democlient/`, on the VM in `/srv/annex/democlient`). It isn't part of the platform, so `push.sh` doesn't start it, and backups, alerts, the console and log shipping ignore it. product-db reads it through postgres_fdw, and apps see it only as the Goat Arcade views on the gateway. Handoff docs: `docs/goat-arcade/`.
-- **Start and link** (once, after `push.sh`): `scripts/democlient.sh up`, then `scripts/democlient.sh link`.
+A stand-in for a client's own production database: compose project `democlient` (`democlient/`, on the VM in `/srv/annex/democlient`), and the only data the gateway and Metabase serve on this instance (D112). It isn't part of the platform: backups, alerts, the console and log shipping ignore it. product-db reads it through postgres_fdw, and apps see it only as the Goat Arcade views on the gateway. Handoff docs: `docs/goat-arcade/`.
+- **Start and link:** `scripts/push.sh` does it, on both lanes (D112): after the platform is up it starts arcade-db if it isn't running (the first start seeds it, about a minute more), links product-db if it isn't linked, and otherwise only re-applies the views. The suites rely on it. By hand: `scripts/democlient.sh up`, then `scripts/democlient.sh link`.
 - **Before a demo or a handoff:** `scripts/democlient.sh reseed` (asks first). The data then ends yesterday. `scripts/democlient.sh check` should print seven `t` rows (the planted stories), and `status` prints the counts, the anchor date and the link.
 - **A view changed:** edit `db/product/clientlink/api_views_arcade.sql`, then `scripts/push.sh` (it re-applies the views once linked) and `scripts/democlient.sh dictionary` (regenerates `docs/goat-arcade/data-dictionary.md`). `CREATE OR REPLACE VIEW` keeps apps' grants. A view whose columns change shape must be dropped, and every app reading it must be deployed again to get its grant back.
 - **A client table changed shape:** `scripts/democlient.sh link --refresh <t>[,<t>]` (D106): the foreign table is renamed aside, imported again, the views re-applied (apps keep their grants) and the old one dropped. If a view no longer fits, the old table stays as `src_arcade.<t>__old` and the message says what to fix. Never drop `src_arcade`: that drops the views and every app's grants on them.
-- **Stop:** `scripts/democlient.sh down` keeps the data. While it's down, the Goat Arcade views fail with a connection error, and everything else works.
+- **Stop:** `scripts/democlient.sh down` keeps the data. While it's down, the Goat Arcade views fail with a connection error, and everything else works; the next `push.sh` starts it again.
 - **Where:** `/srv/annex/democlient` (compose and SQL), `state/democlient-db` (its data), `state/democlient.env` (the client's own file: its admin password and the `annex_reader` login; not in Annex's backups), `secrets/democlient.env` (Annex's copy of the reader's password only, which product-db's user mapping also holds; archived with Annex's other credentials, D106).
 - **Connections:** the reader allows 25 (`democlient/role.sql`, applied on every `up`), for the gateway's pool of 6 (`PGRST_DB_POOL`) plus Metabase's; idle sessions close after 5 minutes and postgres_fdw reconnects by itself.
 

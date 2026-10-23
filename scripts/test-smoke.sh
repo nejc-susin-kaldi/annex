@@ -40,14 +40,11 @@ expect "anonymous is sent to login" 302 "$(code "$HOME_URL/")"
 expect "the status page (the console's /status)" 200 "$(code -b "$TMP/maja.jar" "$(setting ANNEX_URL_CONSOLE)/status")"
 expect "Mailpit is admins only" "403 200" "$(code -b "$TMP/maja.jar" "$(setting ANNEX_URL_MAIL)/") $(code -b "$TMP/kaldi-admin.jar" "$(setting ANNEX_URL_MAIL)/")"
 has "annex users lists the accounts" "kaldi-admin" "$("$ANNEX" users list 2>&1)"
-# the demo client's database (Goat Arcade, D77), when it runs and product-db is linked to it
-if [ -n "$(vm "docker ps -q --filter name=^democlient-arcade-db-1\$ --filter health=healthy")" ] \
-   && vm "docker exec annex-product-db-1 psql -XAt -U postgres -d product -c \"SELECT 1 FROM pg_namespace WHERE nspname = 'src_arcade'\"" | grep -qx 1; then
-  expect "Goat Arcade's data answers through the link (machine_floor)" t \
-    "$(vm "docker exec annex-product-db-1 psql -XAt -U postgres -d product -c 'SELECT count(*) > 100 FROM annex_api.machine_floor'" 2>&1)"
-else
-  echo "  skip: Goat Arcade's database isn't running or linked (scripts/democlient.sh up, link)"
-fi
+# the demo client's database (Goat Arcade, D77): scripts/push.sh brings it up and links it (D112), and the fixture's views are its
+expect "Goat Arcade's database runs (scripts/push.sh starts it)" healthy \
+  "$(vm "docker inspect democlient-arcade-db-1 --format '{{.State.Health.Status}}'" 2>&1)"
+expect "Goat Arcade's data answers through the link (machine_floor)" t \
+  "$(vm "docker exec annex-product-db-1 psql -XAt -U postgres -d product -c 'SELECT count(*) > 100 FROM annex_api.machine_floor'" 2>&1)"
 
 echo "Deploy, identity, gateway"
 selftest_build "$ROOT/.build/selftest-smoke"
@@ -55,8 +52,8 @@ out=$(selftest_deploy "$ROOT/.build/selftest-smoke") && ok "annex deploy annex-s
   || bad "annex deploy annex-selftest" "$(tail -3 <<<"$out")"
 page=$(c -b "$TMP/maja.jar" "$(url $APP)/" | sed 's/<[^>]*>/ /g' | tr -s ' ')
 has "it greets the signed-in user" "Hello, Maja Horvat" "$page"
-has "a granted view is readable" "client_summary : allowed" "$page"
-has "an ungranted view is denied" "advisor_book : denied" "$page"
+has "a granted view is readable" "venues : allowed" "$page"
+has "an ungranted view is denied" "player_profiles : denied" "$page"
 has "a deploy of a conforming app has no logging warning" "is live" "$out"
 hasnt "  ...(logs are structured)" "logs aren't structured" "$out"
 # the logging convention (M2.1): one request carries one id in its response header, its log lines and Traefik's access log

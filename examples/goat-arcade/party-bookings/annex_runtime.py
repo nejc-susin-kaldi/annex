@@ -4,7 +4,7 @@ Keep this file as is; build your app in main.py.
 """
 from __future__ import annotations
 
-__version__ = 1  # raised when a helper is added or changed; a deploy tells you when your copy is older
+__version__ = 2  # raised when a helper is added or changed; a deploy tells you when your copy is older
 
 import contextvars
 import hmac
@@ -231,7 +231,7 @@ class GatewayError(Exception):
 
 def gateway(view: str, **params: str | int) -> list[dict]:
     """Read a gateway view. Filters use PostgREST syntax, e.g.
-    gateway("client_summary", client_name="ilike.*novak*", order="aum_eur.desc", limit=20)
+    gateway("machine_floor", venue_code="eq.LJ1", order="games_30d.desc", limit=20)
     """
     base = os.environ.get("ANNEX_GATEWAY_URL")
     if not base:

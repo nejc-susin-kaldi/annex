@@ -78,7 +78,7 @@ rid=$(py 'd[0]["request_id"]' <<<"$g")
 expect "  ...and a request id that finds the lines" True "$("$ANNEX" logs annex-selftest --request "$rid" | grep -q 'unhandled error' && echo True || echo False)"
 text=$(mail_find $SAM "$P")
 has "the email says where to look" "annex logs annex-selftest --request" "$text"
-has "  ...and what the error was" "cannot load client" "$text"
+has "  ...and what the error was" "cannot load venue" "$text"
 
 echo "2. Another kind is another email; more than 5 an hour are summarised"
 c -o /dev/null -b "$TMP/sam.jar" "$(url annex-selftest)/raise?q=oops"

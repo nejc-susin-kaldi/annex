@@ -66,8 +66,8 @@ if [ "$extras" -ge 2 ]; then
   dbid=$(python3 -c 'import json,sys; print(next(d["id"] for d in json.load(sys.stdin)["data"] if d["name"] == "Goat Arcade"))' <<<"$dbs")
   q() { as kaldi-admin -H "X-Metabase-Session: $mbs" -H 'Content-Type: application/json' \
           --data "{\"database\":${dbid:-0},\"type\":\"native\",\"native\":{\"query\":\"$1\"}}" "$MB_URL/api/dataset"; }
-  if grep -q '"rows":\[\[' <<<"$(q 'select count(*) from annex_api.client_summary')"; then ok "metabase: can read annex_api views"; else bad "metabase: can read annex_api views" "no rows"; fi
-  if grep -q 'permission denied' <<<"$(q 'select count(*) from product.clients')"; then ok "metabase: cannot read base tables"; else bad "metabase: cannot read base tables" "no permission error"; fi
+  if grep -q '"rows":\[\[' <<<"$(q 'select count(*) from annex_api.venues')"; then ok "metabase: can read annex_api views (venues)"; else bad "metabase: can read annex_api views (venues)" "no rows"; fi
+  if grep -q 'permission denied' <<<"$(q 'select count(*) from src_arcade.games')"; then ok "metabase: cannot read the client's raw tables (src_arcade)"; else bad "metabase: cannot read the client's raw tables (src_arcade)" "no permission error"; fi
 else
   echo "  (skipped Metabase and Dozzle checks: extras profile is off)"
 fi
@@ -178,10 +178,11 @@ expect "removing an app removes its networks" "" "$(vm "docker network ls -q --f
 
 echo "Demo client database (Goat Arcade, D77)"
 pdb() { vm "docker exec -i annex-product-db-1 psql -XAt -U postgres -d product" 2>&1; }
+# scripts/push.sh brings it up and links it (D112), so a missing database or link is a failure, not a skip
 if [ -z "$(vm "docker ps -q --filter name=^democlient-arcade-db-1\$ --filter health=healthy")" ]; then
-  echo "  skip: the demo client's database isn't running (scripts/democlient.sh up, then link)"
+  bad "the demo client's database runs" "democlient-arcade-db-1 isn't healthy (scripts/push.sh starts it; scripts/democlient.sh status)"
 elif [ "$(pdb <<<"SELECT 1 FROM pg_namespace WHERE nspname = 'src_arcade'")" != 1 ]; then
-  echo "  skip: product-db isn't linked to the demo client's database (scripts/democlient.sh link)"
+  bad "product-db is linked to the demo client's database" "no src_arcade (scripts/push.sh links it; scripts/democlient.sh link)"
 else
   ARC=annex-selftest-arcade
   on_exit "selftest_remove $ARC"

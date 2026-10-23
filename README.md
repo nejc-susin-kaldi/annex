@@ -10,7 +10,7 @@ scripts/push.sh --extras      # sync and start the platform, incl. Metabase and 
 scripts/test-smoke.sh         # quick check that every part works (under a minute)
 scripts/show-users.sh         # demo user passwords
 ```
-For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo is in [docs/demo.md](docs/demo.md); teardown is in [docs/teardown.md](docs/teardown.md). Day-to-day commands are in [docs/operations.md](docs/operations.md).
+`push.sh` also brings up Goat Arcade's database (`democlient/`), the synthetic client whose curated views the gateway and Metabase serve (D77, D112). For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo is in [docs/demo.md](docs/demo.md); teardown is in [docs/teardown.md](docs/teardown.md). Day-to-day commands are in [docs/operations.md](docs/operations.md).
 
 ## Deploying apps
 ```bash
@@ -19,7 +19,7 @@ For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo 
 ./annex list
 ./annex releases my-tool                       # release history; ./annex rollback my-tool undoes a deploy
 ```
-The app contract is in [docs/app-contract.md](docs/app-contract.md), or run `./annex contract`. Example apps: `examples/client-lookup` (web, gateway) and `examples/monthly-report` (web+job, Postgres, files). Templates: `python-web`, `python-job`, `node-web`, `static`; any other stack works too (the contract's "Bring your own stack").
+The app contract is in [docs/app-contract.md](docs/app-contract.md), or run `./annex contract`. Example apps are Goat Arcade's tools in `examples/goat-arcade/`: `venue-pulse` (web, gateway), `weekly-takings` (web+job, Postgres, files, email, Slack), `tech-board`, `high-score-wall`, `league-desk`, `party-bookings` (a webhook) and `kanboard` (an off-the-shelf tool behind the same login). Templates: `python-web`, `python-job`, `node-web`, `static`; any other stack works too (the contract's "Bring your own stack").
 
 People sign in with Annex's own accounts (no company SSO needed): `./annex users add ana --name 'Ana Kovač' --email ana@client.com` emails them an invitation. See [docs/operations.md](docs/operations.md#accounts-annexs-own-users-d57).
 
@@ -41,11 +41,11 @@ Plus annex-ops (`ops/`: email and Slack for apps, incidents and alerts, host and
 | Script | Does |
 |---|---|
 | `scripts/bootstrap.sh` | prepares `/srv/annex`, generates secrets on the VM, pushes the cert in `local` TLS mode |
-| `scripts/push.sh [--extras]` | renders config, rsyncs to `/srv/annex/platform`, `docker compose up --wait`, applies gateway views, configures Metabase |
+| `scripts/push.sh [--extras]` | renders config, rsyncs to `/srv/annex/platform`, `docker compose up --wait`, brings up and links Goat Arcade's database if needed, applies gateway views, configures Metabase |
 | `scripts/extras.sh on\|off` | Metabase and Dozzle on or off |
 | `scripts/tunnel.sh up\|down` | SSH tunnel `127.0.0.1:8443 → annex:443` |
 | `scripts/test-smoke.sh` | **after every push**: every part once (login, deploy, gateway, job, email, ops, host, webhooks), under a minute |
-| `scripts/test-examples.sh` | before a demo: do `examples/client-lookup` and `examples/monthly-report` still build, deploy and work? Never runs the notifying job. The platform suites don't touch them: they use `annex-selftest` |
+| `scripts/test-examples.sh` | before a demo: do the Goat Arcade apps in `examples/goat-arcade/` still build, deploy and work? The platform suites don't touch them: they use `annex-selftest` |
 | `scripts/test-all.sh [--slow] [--only a,b]` | every check below in order, with a summary (30+ minutes; only when needed) |
 | `scripts/test-platform.sh` | M0.1 acceptance checks |
 | `scripts/backup.sh` | run the nightly backup now |
@@ -64,7 +64,7 @@ Plus annex-ops (`ops/`: email and Slack for apps, incidents and alerts, host and
 | `scripts/test-host.sh` | disk, memory and backup alerts: one alert and one "resolved" each, admins only |
 | `scripts/test-users.sh` | accounts: invitation, self-service reset and change, groups, disable, last-admin guard, removal |
 | `scripts/sync-runtime.sh [--check]` | copies `runtime/annex_runtime.*` into templates, examples and fixtures (or checks they match) |
-| `scripts/demo-bad-deploy.sh` | demo beat: a broken version of client-lookup is rolled back by itself |
-| `scripts/reset-demo.sh` | clean demo state: example apps redeployed, other apps removed, checks run (see docs/demo.md) |
+| `scripts/demo-bad-deploy.sh` | demo beat: a broken version of a demo app is rolled back by itself (being rewritten for Goat Arcade, GA.7) |
+| `scripts/reset-demo.sh` | clean demo state: example apps redeployed, other apps removed, checks run (see docs/demo.md; being rewritten for Goat Arcade, GA.7) |
 | `scripts/wipe-vm.sh` | removes everything Annex from the VM (asks first) |
 | `scripts/show-users.sh` | prints the demo users' passwords |

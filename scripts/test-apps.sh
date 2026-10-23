@@ -34,11 +34,11 @@ post() { c -b "$TMP/sam.jar" -o /dev/null -w '%{http_code}' -X POST "$@" "$APP_U
 [ "$(c -b "$TMP/sam.jar" -o /dev/null -w '%{http_code}' -H 'Sec-Fetch-Site: cross-site' "$APP_URL/healthz")" = 200 ] && ok "cross-site GET is not touched" || bad "cross-site GET" "refused"
 
 echo "Scoped data access"
-has "granted view client_summary is readable" "client_summary : allowed" "$page"
-has "granted view top_clients_by_aum is readable" "top_clients_by_aum : allowed" "$page"
-has "monthly_positions is denied (403)" '"status": 403' "$(c -b "$TMP/sam.jar" "$APP_URL/gateway/monthly_positions")"
-has "advisor_book is denied" "advisor_book : denied" "$page"
-has "a read through the gateway returns rows" '"rows": 5' "$(c -b "$TMP/maja.jar" "$APP_URL/gateway/client_summary")"
+has "granted view venues is readable" "venues : allowed" "$page"
+has "granted view machine_models is readable" "machine_models : allowed" "$page"
+has "daily_plays is denied (403)" '"status": 403' "$(c -b "$TMP/sam.jar" "$APP_URL/gateway/daily_plays")"
+has "player_profiles is denied" "player_profiles : denied" "$page"
+has "a read through the gateway returns rows" '"rows": 5' "$(c -b "$TMP/maja.jar" "$APP_URL/gateway/machine_models")"
 has "gateway logs the app's role" "role=app_annex_selftest" "$(vm "docker logs --since 5m annex-product-db-1 2>&1 | grep annex-gateway")"
 
 echo "Discovery page"
@@ -48,7 +48,7 @@ has "with its owner" 'owner: sam' "$services"
 
 echo "CLI"
 has "annex list shows it healthy" "sam web+job running healthy" "$("$ANNEX" list | awk '$1 == "annex-selftest" {print $2, $3, $4, $5}')"
-has "annex status shows views" "client_summary" "$("$ANNEX" status annex-selftest)"
+has "annex status shows views" "machine_models" "$("$ANNEX" status annex-selftest)"
 has "annex logs shows requests (stored, structured lines)" ' info  request  ' "$("$ANNEX" logs annex-selftest --grep request -n 20)"
 
 echo "Logging convention (M2.1)"

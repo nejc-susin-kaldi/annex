@@ -20,11 +20,11 @@ def main() -> int:
     out_dir = Path(os.environ.get("DATA_DIR", "/tmp")) / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
-        rows = gateway("client_summary", order="aum_eur.desc", limit=20)
+        rows = gateway("revenue_weekly", order="week_start.desc", limit=20)
     except GatewayError as e:
-        log.error("gateway read failed", view="client_summary", status=e.status, error=str(e))
+        log.error("gateway read failed", view="revenue_weekly", status=e.status, error=str(e))
         return 1
-    path = out_dir / f"top-clients-{datetime.now():%Y%m%d-%H%M%S}.csv"
+    path = out_dir / f"revenue-weekly-{datetime.now():%Y%m%d-%H%M%S}.csv"
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]) if rows else ["empty"])
         w.writeheader()

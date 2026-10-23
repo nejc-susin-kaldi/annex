@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs ON THE VM (synced to /srv/annex/democlient by scripts/democlient.sh, which calls it). The client's side of
 # the demo (D77): Goat Arcade's database, and Annex's link to it. Prints no secret values.
-# Usage: vm.sh up | down | reseed [YYYY-MM-DD] | status | check | link [--refresh t[,t]] | dictionary | psql
+# Usage: vm.sh up | down | reseed [YYYY-MM-DD] | status | check | link [--refresh t[,t]] | ensure | dictionary | psql
+#   (ensure: up if not running, link if not linked, else re-apply the views; scripts/push.sh calls it, D112)
 set -euo pipefail
 D=${ANNEX_DATA_DIR:-/srv/annex}
 HERE=$D/democlient
@@ -52,6 +53,36 @@ up() {
   echo "democlient: arcade-db is up (annex_reader's limits applied from role.sql)"
 }
 
+# Connect product-db to arcade-db and (re)apply the views. $1 = --refresh t[,t] or nothing.
+do_link() {
+  running || die "arcade-db is not running (scripts/democlient.sh up)"
+  # --refresh t[,t]: a client table changed shape (D106). The foreign table is renamed aside, the current
+  # definition imported, the views re-applied (CREATE OR REPLACE keeps every app's grants) and the old one
+  # dropped. If a view no longer fits, the old table stays as src_arcade.<t>__old and the message says so.
+  refresh=
+  if [ "${1:-}" = --refresh ]; then
+    refresh=${2:?--refresh needs a table name, or several separated by commas}
+    [[ "$refresh" =~ ^[a-z_][a-z0-9_]*(,[a-z_][a-z0-9_]*)*$ ]] || die "--refresh takes table names only, e.g. machines,games"
+  elif [ -n "${1:-}" ]; then
+    die "usage: vm.sh link [--refresh t[,t]]"
+  fi
+  # shellcheck disable=SC1090
+  . "$SECRETS"
+  for t in ${refresh//,/ }; do
+    product -c "DROP FOREIGN TABLE IF EXISTS src_arcade.${t}__old" -c "ALTER FOREIGN TABLE IF EXISTS src_arcade.$t RENAME TO ${t}__old"
+  done
+  product -v reader_pw="$ANNEX_READER_PASSWORD" -f /docker-entrypoint-initdb.d/clientlink/link.sql
+  if ! product -f /docker-entrypoint-initdb.d/clientlink/api_views_arcade.sql; then
+    [ -n "$refresh" ] && echo "democlient: the views no longer fit the refreshed table(s); the old definition is kept as src_arcade.<t>__old." \
+      "Fix db/product/clientlink/api_views_arcade.sql, scripts/push.sh, then scripts/democlient.sh link (without --refresh)" >&2
+    exit 1
+  fi
+  for t in ${refresh//,/ }; do
+    product -c "DROP FOREIGN TABLE IF EXISTS src_arcade.${t}__old"
+  done
+  echo "democlient: product-db linked; the Goat Arcade views are in annex_api${refresh:+ (refreshed: $refresh)}"
+}
+
 case "${1:-}" in
   up) up ;;
   down) dc down; echo "democlient: arcade-db stopped (data kept in $STATE)" ;;
@@ -79,34 +110,19 @@ SQL
   check)
     running || die "arcade-db is not running (scripts/democlient.sh up)"
     arcade -F ' | ' -A -P footer=off < checks.sql ;;
-  link)
-    running || die "arcade-db is not running (scripts/democlient.sh up)"
-    # --refresh t[,t]: a client table changed shape (D106). The foreign table is renamed aside, the current
-    # definition imported, the views re-applied (CREATE OR REPLACE keeps every app's grants) and the old one
-    # dropped. If a view no longer fits, the old table stays as src_arcade.<t>__old and the message says so.
-    refresh=
-    if [ "${2:-}" = --refresh ]; then
-      refresh=${3:?--refresh needs a table name, or several separated by commas}
-      [[ "$refresh" =~ ^[a-z_][a-z0-9_]*(,[a-z_][a-z0-9_]*)*$ ]] || die "--refresh takes table names only, e.g. machines,games"
-    elif [ -n "${2:-}" ]; then
-      die "usage: vm.sh link [--refresh t[,t]]"
-    fi
-    # shellcheck disable=SC1090
-    . "$SECRETS"
-    for t in ${refresh//,/ }; do
-      product -c "DROP FOREIGN TABLE IF EXISTS src_arcade.${t}__old" -c "ALTER FOREIGN TABLE IF EXISTS src_arcade.$t RENAME TO ${t}__old"
-    done
-    product -v reader_pw="$ANNEX_READER_PASSWORD" -f /docker-entrypoint-initdb.d/clientlink/link.sql
-    if ! product -f /docker-entrypoint-initdb.d/clientlink/api_views_arcade.sql; then
-      [ -n "$refresh" ] && echo "democlient: the views no longer fit the refreshed table(s); the old definition is kept as src_arcade.<t>__old." \
-        "Fix db/product/clientlink/api_views_arcade.sql, scripts/push.sh, then scripts/democlient.sh link (without --refresh)" >&2
-      exit 1
-    fi
-    for t in ${refresh//,/ }; do
-      product -c "DROP FOREIGN TABLE IF EXISTS src_arcade.${t}__old"
-    done
-    echo "democlient: product-db linked; the Goat Arcade views are in annex_api${refresh:+ (refreshed: $refresh)}" ;;
+  link) shift; do_link "$@" ;;
+  ensure)
+    # scripts/push.sh, after the platform is up (D112): this instance's client database comes up with the platform.
+    # Starts arcade-db if it isn't running (seeding it on the first start), links product-db if it isn't linked,
+    # otherwise only re-applies the views. Idempotent.
+    running || up
+    if product -At -c "SELECT 1 FROM pg_namespace WHERE nspname = 'src_arcade'" | grep -qx 1; then
+      product -f /docker-entrypoint-initdb.d/clientlink/api_views_arcade.sql
+      echo "democlient: arcade-db running, product-db linked; the Goat Arcade views re-applied"
+    else
+      do_link
+    fi ;;
   dictionary) product -At < dictionary.sql ;;
   psql) dc exec arcade-db psql -U postgres -d arcade ;;
-  *) die "usage: vm.sh up | down | reseed [YYYY-MM-DD] | status | check | link [--refresh t[,t]] | dictionary | psql" ;;
+  *) die "usage: vm.sh up | down | reseed [YYYY-MM-DD] | status | check | link [--refresh t[,t]] | ensure | dictionary | psql" ;;
 esac

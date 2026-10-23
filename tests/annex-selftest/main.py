@@ -55,8 +55,8 @@ PLAIN = os.environ.get("SELFTEST_LOG") == "plain"
 MARKER = os.environ.get("SELFTEST_MARKER", "boot-default")
 SECRET = os.environ.get("SELFTEST_SECRET", "not-a-secret-just-a-default")
 SLOW_UNTIL = time.monotonic() + float(os.environ.get("SELFTEST_SLOW_HEALTH") or 0)
-GRANTED = ["client_summary", "top_clients_by_aum"]
-UNGRANTED = "advisor_book"
+GRANTED = ["venues", "machine_models"]  # Goat Arcade's views (D112); annex.yaml's data.views
+UNGRANTED = "player_profiles"
 HOOK_PATHS = {"/hooks/trello", "/hooks/gh", "/hooks/plain"}
 SIGNATURE_HEADERS = ("x-hub-signature-256", "stripe-signature", "x-slack-signature", "x-trello-webhook", "x-annex-hook-secret")
 INJECTED = ("PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", "LOG_LEVEL", "DATA_DIR", "DATABASE_URL", "ANNEX_GATEWAY_URL",
@@ -108,7 +108,7 @@ def job_tick() -> int:
 def job_work() -> int:
     t0 = time.monotonic()
     say("info", "job started", job="work")
-    rows = len(gateway("top_clients_by_aum", limit=10))
+    rows = len(gateway("machine_models", limit=10))
     runs = record_run("work") if os.environ.get("DATABASE_URL") else 0
     (DATA / "runs").mkdir(parents=True, exist_ok=True)
     f = DATA / "runs" / f"run-{int(time.time())}.txt"
@@ -300,7 +300,7 @@ class Handler(BaseHTTPRequestHandler):
             {}["missing key"]
         if q.startswith("kind"):
             raise type(f"Failure{q[4:]}Error", (Exception,), {})("one of many different kinds")
-        raise RuntimeError(f"cannot load client {q[4:]} from view client_summary")
+        raise RuntimeError(f"cannot load venue {q[4:]} from view venues")
 
     def handle_boom(self) -> None:
         try:

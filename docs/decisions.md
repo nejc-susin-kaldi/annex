@@ -17,11 +17,11 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D7 | Config changes force a recreate | active |
 | D8 | Authelia memory 256 MiB | active |
 | D9 | Metabase keeps its own login | active |
-| D10 | Gateway details | active |
+| D10 | Gateway details | active; revised by D112 (push applies `annex_api.sql` and the Goat Arcade views) |
 | D11 | Backup container is not on the `appdata` network | active |
 | D12 | Demo passwords and tests | active |
 | D13 | Platform service tiles are static | active |
-| D14 | Synthetic product data | active |
+| D14 | Synthetic product data | retired by D112 (the wealth data is gone; Goat Arcade, D78, is the data) |
 | D15 | Wipe round trip not tested in M0.1 | active |
 | D16 | App runtime hardening | revised by D95 (`pids_limit`) |
 | D17 | How the CLI deploys | revised by D88 (networks), D92 (lock, order of steps) and D101 (the steps run on the VM) |
@@ -29,7 +29,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D19 | Missing secrets fail the deploy | active |
 | D20 | Authelia `GOMEMLIMIT=160MiB` | active |
 | D21 | Jobs run as the app user | active |
-| D22 | `monthly-report` has a demo schedule | active |
+| D22 | `monthly-report` has a demo schedule | retired by D112 (the example is removed) |
 | D23 | Backups and restore | revised by D74 (logs left out) and D87 (secrets, marker) |
 | D24 | MCP server on the 2.x SDK | active |
 | D25 | `static` template has a tiny server with two endpoints | active |
@@ -120,6 +120,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D109 | Goat Arcade's Metabase as code: the connection, collections, permissions, five dashboards, account hygiene | active; revises D9 (the connection's name; the SQL editor for analysts only) and D107 (Analysts group; accounts of removed people deactivated) |
 | D110 | Goat Arcade `tournament_entries` view: who is entered, by nickname | active |
 | D111 | Kanboard, self-hosted as an Annex app: the official image adapted to the contract, header sign-in, its own API token | active |
+| D112 | Goat Arcade is the only product data: the wealth demo is retired | active; revises D14 (retired: the wealth data is gone) and D10 (what push re-applies) |
 
 ## D1. Apps run through `ssh annex` and the VM's Compose (14 Oct)
 **What.** The CLI copies the app folder to `/srv/annex/deploy/<app>`, writes the generated compose file there and runs `docker compose` on the VM over SSH, the same way the platform runs. The brief said "built and run through the annex-vm Docker context, using the Mac's Compose".
@@ -1415,3 +1416,24 @@ The Goat Arcade database (`scripts/democlient.sh up`, `reseed`, `link`, `check`)
 - The token as an Annex secret (`KANBOARD_API_TOKEN`): it shows the secrets feature, but adds a human step per stack and reset.
 - A members job every 15 minutes: people see the boards right away, at the cost of a frequent job and a membership policy in code.
 - Wiki.js, Homebox, Vikunja or n8n (plan §2.7): they need OIDC, a second login, or credentials of their own.
+
+## D112. Goat Arcade is the only product data: the wealth demo is retired (23 Oct, GA.6; decisions B and F)
+**What.** The wealth-management demo data and its two example apps are gone; Goat Arcade (D77, D78), read through postgres_fdw, is the only data the gateway and Metabase serve. Revises D14 (the synthetic wealth data no longer exists) and D10 (`push.sh` re-applies `annex_api.sql`, the shared part, and Goat Arcade's views, not `api_views.sql`). The brief stays as it was written (decision F): it is history, and this entry records the switch.
+- **product-db holds no data of its own.** `db/product/01-schema.sql` and `02-seed.sql` are deleted; `api_views.sql` became `annex_api.sql`: the empty `annex_api` schema, `metabase_ro`'s grants and the PostgREST reload. A fresh product-db initialises with `00-roles.sh`, `annex_api.sql` and `gateway.sql` only. The client's link and views stay in `clientlink/`, out of the first-start init (D77).
+- **The existing stacks:** `db/product/once/retire-wealth.sql`, run once by a human on each stack after `annex remove client-lookup` and `annex remove monthly-report`, drops the four views (`client_summary`, `top_clients_by_aum`, `monthly_positions`, `advisor_book`) and the schema `product` with its seven tables, in one transaction, without CASCADE (anything else depending on them stops it). It refuses, naming them, while a role other than `metabase_ro` still holds a grant on one of the views, and it leaves `annex_api`'s Goat Arcade views, `src_arcade`, the roles and other grants alone. Idempotent. In a subfolder of the init directory, like `clientlink/`, so a first start never runs it.
+- **Goat Arcade comes up with the platform (decision B).** When the checkout has `democlient/`, `scripts/push.sh` (both lanes) syncs it and runs `democlient/vm.sh ensure` after the platform has started and its schema and log hook are applied: arcade-db is started if it isn't running (a first start seeds it, about a minute), product-db is linked if `src_arcade` doesn't exist, and otherwise only the views are re-applied, as before. The order is forced: `annex-clientlink` is the platform's network and exists only once the platform runs, and the link needs arcade-db healthy (`vm.sh up` waits for it). Metabase's setup runs after it and finds the views. `scripts/bootstrap.sh` needs nothing: `vm.sh` makes the client's passwords itself on the first `up` (D106).
+- **Tests use Goat views.** The selftest fixture grants `venues` and `machine_models` and is refused `player_profiles`; its `work` job reads `machine_models` and `/raise` names a venue. `test-smoke.sh`, `test-apps.sh` (granted, denied, a 403 for the undeclared `daily_plays`), `test-audit.sh` (gateway reads of `machine_models`), `test-errors.sh` and `test-platform.sh` (Metabase reads `annex_api.venues` and is refused `src_arcade.games`) follow. Smoke and test-platform now **fail** instead of skipping when arcade-db isn't running or linked, since push guarantees it. Ops unit tests that use `client-lookup` or `monthly-report` as sample app names keep them: they are arbitrary strings.
+- **Removed:** `examples/client-lookup`, `examples/monthly-report` (with it D22's demo schedule) and their blocks in `test-examples.sh`. README and the agent-facing copies (templates' sample code and `annex.yaml`, runtime docstrings, `SKILL.md`, the manifest's error examples, the contract's examples and allowlist) use Goat Arcade views: `machine_floor` in the web templates, `revenue_weekly` in the job template. `reset-demo.sh`, `demo-bad-deploy.sh`, `seed-usage.sh` and `docs/demo.md` still name the removed apps; GA.7 rewrites them.
+- **Versions (D94).** `ANNEX_CONTRACT_VERSION` is **2**: four views left the allowlist, which an existing app reading them notices (its next deploy is refused, its reads fail), and a CLI checkout from before this commit gets the note that it is older. The runtime's `__version__` is **2** too, although only the `gateway()` docstrings changed: otherwise every unedited older copy would be reported as "the current version, but the file differs", which tells the builder they edited it.
+
+**Why.** The demo plan makes Goat Arcade the whole story (`docs/plans/goat-arcade-demo.md` §1), and two data sets told builders' agents two stories: templates read wealth views next to an arcade's dashboards. The platform suites read the wealth views, so the data could not go before the tests moved; with Goat Arcade brought up by push, the suites have one data set they can rely on, on both lanes and in CI.
+
+**Alternatives.**
+- Keep the wealth tables in product-db and drop only the views: no app or agent would see them, but the instance would still carry a second, unused data set that has nothing to do with its client.
+- Drop the wealth objects from `annex_api.sql` itself on every push: the push would drop views under an app that still reads them, and the code would carry a cleanup forever; a one-off script run by a human after the removals is explicit and leaves no trace in the push.
+- `DROP SCHEMA product CASCADE`: shorter, but would silently take along anything someone built on those tables.
+- `bootstrap.sh` starting democlient: it runs before the first push, when `annex-clientlink` doesn't exist yet; it would need its own platform start.
+- Leave the suites skipping when Goat Arcade is missing: a skip would hide a broken push; push now guarantees it, so its absence is a failure.
+- Keep the contract at 1 because the allowlist is data validated live at deploy: true for the deploy, but the contract text is what agents read, and D94's rule is "an existing app would notice".
+
+**Tests.** Unit tests (ops, vm, cli, runtime Python and Node), `sync-runtime.sh --check` and `sync-contract.sh --check` green; `bash -n` on every changed script. Not run here (human steps first): `push.sh` on a fresh local stack (seeds and links), on the VM (re-applies only), `retire-wealth.sql` on both lanes, then `test-smoke.sh`, `test-apps.sh`, `test-audit.sh`, `test-errors.sh`, `test-platform.sh`.

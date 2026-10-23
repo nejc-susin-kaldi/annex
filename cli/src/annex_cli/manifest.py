@@ -135,7 +135,7 @@ def load(folder: Path) -> Manifest:
     name = raw.get("name")
     if not isinstance(name, str) or not NAME_RE.match(name):
         p.append(f"name: {name!r} is not valid. Use 2-32 characters: lowercase letters, digits and '-', "
-                 "starting with a letter and not ending with '-', e.g. monthly-report")
+                 "starting with a letter and not ending with '-', e.g. weekly-takings")
     elif name in RESERVED_NAMES:
         p.append(f"name: {name!r} is reserved for the platform. Pick another name")
     owner = raw.get("owner")
@@ -188,7 +188,7 @@ def load(folder: Path) -> Manifest:
     data = raw.get("data") or {}
     views = data.get("views", []) if isinstance(data, dict) else None
     if not isinstance(views, list) or not all(isinstance(v, str) and re.match(r"^[a-z_][a-z0-9_]*$", v) for v in views):
-        p.append("data.views: must be a list of view names, e.g. views: [client_summary]")
+        p.append("data.views: must be a list of view names, e.g. views: [machine_floor]")
         views = []
     if isinstance(data, dict) and set(data) - {"views"}:
         p.append("data: only 'views' is supported")
