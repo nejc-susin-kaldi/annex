@@ -60,10 +60,10 @@ if [ "$extras" -ge 2 ]; then
   mbpw=$(password kaldi-admin)
   mbs=$(as kaldi-admin -H 'Content-Type: application/json' --data "{\"username\":\"admin@annex.example\",\"password\":\"$mbpw\"}" "$MB_URL/api/session" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
   dbs=$(as kaldi-admin -H "X-Metabase-Session: $mbs" "$MB_URL/api/database")
-  if grep -q '"name":"Product"' <<<"$dbs" && grep -q '"user":"metabase_ro"' <<<"$dbs"; then
-    ok "metabase: Product database connected as metabase_ro"
-  else bad "metabase: Product database connected as metabase_ro" "$(head -c 200 <<<"$dbs")"; fi
-  dbid=$(python3 -c 'import json,sys; print(next(d["id"] for d in json.load(sys.stdin)["data"] if d["name"] == "Product"))' <<<"$dbs")
+  if grep -q '"name":"Goat Arcade"' <<<"$dbs" && grep -q '"user":"metabase_ro"' <<<"$dbs"; then
+    ok "metabase: Goat Arcade database connected as metabase_ro"
+  else bad "metabase: Goat Arcade database connected as metabase_ro" "$(head -c 200 <<<"$dbs")"; fi
+  dbid=$(python3 -c 'import json,sys; print(next(d["id"] for d in json.load(sys.stdin)["data"] if d["name"] == "Goat Arcade"))' <<<"$dbs")
   q() { as kaldi-admin -H "X-Metabase-Session: $mbs" -H 'Content-Type: application/json' \
           --data "{\"database\":${dbid:-0},\"type\":\"native\",\"native\":{\"query\":\"$1\"}}" "$MB_URL/api/dataset"; }
   if grep -q '"rows":\[\[' <<<"$(q 'select count(*) from annex_api.client_summary')"; then ok "metabase: can read annex_api views"; else bad "metabase: can read annex_api views" "no rows"; fi
