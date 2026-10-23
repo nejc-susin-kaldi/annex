@@ -10,7 +10,7 @@ storage:
   postgres: true    # desk sign-ups the club system doesn't have yet (the gateway is read-only)
   files: false
 data:
-  views: [tournaments, tournament_standings, player_profiles, leaderboard, venues]
+  views: [tournaments, tournament_entries, tournament_standings, player_profiles, leaderboard, venues]
 notify:
   slack: ["#ga-community"]   # one line per desk sign-up
 env:

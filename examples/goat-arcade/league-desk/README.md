@@ -1,7 +1,7 @@
 # league-desk
 
 Goat Arcade's tournament desk. The next tournament (the Goat Arcade Masters in the data) with its date, venue, places,
-the club system's entries and the sign-ups taken at the desk; past tournaments with their winners and standings; and a
+the club system's entries (who, by nickname) and the sign-ups taken at the desk; past tournaments with their winners and standings; and a
 player lookup by nickname.
 
 Owner `lena` (Lena Gruber, community and tournaments, Graz). Goat Arcade data, all synthetic.
@@ -18,16 +18,11 @@ from the gateway; sign-ups the club system doesn't have yet are the app's own ro
 - **Sign-ups** (`POST /signups`, `POST /signups/<id>/withdraw`; both pass the CSRF check) are stored in `signups`
   (nickname, tournament, `signed_up_by` = the `Remote-User` login, `signed_up_at`; a withdrawal keeps the row with
   `withdrawn_at` and `withdrawn_by`). A sign-up is refused when the nickname isn't a member's (`player_profiles`), when
-  it's already pending for that tournament (also enforced by a unique index), when the tournament isn't open, or when
+  it's already among the club system's entries (`tournament_entries`, read fresh, 409), it's already pending for that tournament (also enforced by a unique index), when the tournament isn't open, or when
   no places are left (checked under a per-tournament lock). Each sign-up posts one line to Slack `#ga-community`; a
   failed post is logged as `slack post failed` (warn) and the sign-up stands.
-- **Views:** `tournaments`, `tournament_standings`, `player_profiles`, `leaderboard`, `venues` (home venue names).
-  Reads are cached for a minute (standings and venues for ten).
-
-**Known gap:** the gateway gives the club system's entry *count* for an upcoming tournament, not who entered, so a
-desk sign-up can't be checked against the official entry list, only against the desk's own pending ones. The page
-says so next to the form. Fix: a reviewed gateway view of `tournament_entries` (tournament_id, nickname, entered_at)
-from the platform team; then the duplicate check reads it too.
+- **Views:** `tournaments`, `tournament_entries`, `tournament_standings`, `player_profiles`, `leaderboard`, `venues` (home venue names).
+  Reads are cached for a minute (not the sign-up check's entry read) (standings and venues for ten).
 
 Tests for the pure part: `uv run --python 3.13 --with pytest pytest tests -q` in this folder.
 

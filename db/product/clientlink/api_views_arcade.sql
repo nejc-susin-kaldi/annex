@@ -142,6 +142,11 @@ LEFT JOIN (SELECT DISTINCT ON (x.tournament_id) x.tournament_id, p.handle, p.nic
            JOIN src_arcade.players p ON p.id = x.player_id AND p.deleted_at IS NULL
            ORDER BY x.tournament_id, x.points DESC, x.best DESC) w ON w.tournament_id = t.id;
 
+CREATE OR REPLACE VIEW annex_api.tournament_entries AS
+SELECT e.tournament_id, p.nickname, p.handle, e.seed, e.entered_at
+FROM src_arcade.tournament_entries e
+JOIN src_arcade.players p ON p.id = e.player_id AND p.deleted_at IS NULL;
+
 CREATE OR REPLACE VIEW annex_api.tournament_standings AS
 SELECT s.tournament_id, t.name AS tournament_name, t.starts_on,
        rank() OVER (PARTITION BY s.tournament_id ORDER BY s.points DESC, s.best_score DESC) AS position,
@@ -302,6 +307,13 @@ COMMENT ON COLUMN annex_api.tournaments.max_players IS 'Places.';
 COMMENT ON COLUMN annex_api.tournaments.entries IS 'Players entered.';
 COMMENT ON COLUMN annex_api.tournaments.winner_handle IS 'Winner''s initials; NULL until completed.';
 COMMENT ON COLUMN annex_api.tournaments.winner_nickname IS 'Winner''s nickname; NULL until completed.';
+
+COMMENT ON VIEW annex_api.tournament_entries IS 'Goat Arcade: who is entered in each tournament in the club system (past and upcoming), by nickname; erased players are left out, so a tournament can list fewer rows than tournaments.entries.';
+COMMENT ON COLUMN annex_api.tournament_entries.tournament_id IS 'Tournament (tournaments.tournament_id).';
+COMMENT ON COLUMN annex_api.tournament_entries.nickname IS 'Nickname of the entered member (unique; players.nickname).';
+COMMENT ON COLUMN annex_api.tournament_entries.handle IS 'Three-letter initials (not unique).';
+COMMENT ON COLUMN annex_api.tournament_entries.seed IS 'Seed number; NULL until seeding is done.';
+COMMENT ON COLUMN annex_api.tournament_entries.entered_at IS 'When the entry was made.';
 
 COMMENT ON VIEW annex_api.tournament_standings IS 'Goat Arcade: final standings of completed tournaments: points over four rounds, by player.';
 COMMENT ON COLUMN annex_api.tournament_standings.tournament_id IS 'Tournament (tournaments.tournament_id).';

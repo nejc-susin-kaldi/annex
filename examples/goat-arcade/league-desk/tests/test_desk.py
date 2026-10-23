@@ -53,3 +53,18 @@ def test_slack_line():
     assert line == ("Desk sign-up for Goat Arcade Masters (Sun 1 Nov, Goat Arcade Metelkova): otter12 (rating 1840, "
                     "LJ1), signed up by lena. 1 place left.")
     assert desk.as_date("2026-11-01T10:00:00+01:00") == date(2026, 11, 1)
+
+
+def test_official_nicknames_sorted_unique_ignoring_case():
+    rows = [{"nickname": "zed"}, {"nickname": "Otter12"}, {"nickname": "zed"}, {"nickname": None}, {"nickname": "abc"}]
+    assert desk.official_nicknames(rows) == ["abc", "Otter12", "zed"]
+    assert desk.official_nicknames([]) == []
+
+
+def test_is_official_ignores_case_and_wildcards():
+    rows = [{"nickname": "Otter12"}, {"nickname": "ab_c"}]
+    assert desk.is_official(rows, "otter12")
+    assert desk.is_official(rows, "AB_C")
+    assert not desk.is_official(rows, "abxc")
+    assert not desk.is_official(rows, "otter")
+    assert not desk.is_official([], "otter12")

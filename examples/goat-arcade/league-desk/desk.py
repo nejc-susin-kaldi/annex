@@ -25,6 +25,17 @@ def pick_exact(rows: list[dict], nick: str) -> dict | None:
     return next((r for r in rows if (r.get("nickname") or "").lower() == want), None)
 
 
+def official_nicknames(rows: list[dict]) -> list[str]:
+    """The nicknames of the club system's entries, sorted ignoring case (rows from `tournament_entries`)."""
+    return sorted({r["nickname"] for r in rows if r.get("nickname")}, key=str.lower)
+
+
+def is_official(rows: list[dict], nick: str) -> bool:
+    """Is `nick` (any case) among the club system's entries?"""
+    want = nick.lower()
+    return any((r.get("nickname") or "").lower() == want for r in rows)
+
+
 def as_date(v) -> date:
     if isinstance(v, date) and not isinstance(v, datetime):
         return v
