@@ -234,4 +234,25 @@ if [ "$pb_ok" = 1 ]; then
   expect "an unknown request is a 404" 404 "$(code -b "$TMP/maja.jar" "$PB/r/999999999")"
   status_up party-bookings
 fi
+
+echo "kanboard (self-hosted, D111)"
+if deploy_app kanboard "$GA/kanboard"; then
+  KBU=$(url kanboard)
+  expect "boris lands on Kanboard without a second login" 200 "$(as boris -o /dev/null -w '%{http_code}' "$KBU/")"
+  has "  ...on his dashboard" "Dashboard for Boris" "$(as boris "$KBU/" | text)"
+  expect "kaldi-admin is a Kanboard admin" 200 "$(as kaldi-admin -o /dev/null -w '%{http_code}' "$KBU/users")"
+  expect "maja is a normal user" 403 "$(as maja -o /dev/null -w '%{http_code}' "$KBU/users")"
+  expect "no session: the front door's redirect" 302 "$(code "$KBU/")"
+  expect "a forged Remote-User from outside: still the redirect" 302 "$(code -H 'Remote-User: kaldi-admin' "$KBU/")"
+  has "a forged Remote-User with maja's session stays maja" "Dashboard for Maja" "$(as maja -H 'Remote-User: kaldi-admin' "$KBU/" | text)"
+  expect "Kanboard's login form is gone" 404 "$(as boris -o /dev/null -w '%{http_code}' "$KBU/login")"
+  expect "its API is not reachable from outside" 403 "$(as boris -o /dev/null -w '%{http_code}' -X POST -d '{}' "$KBU/jsonrpc.php")"
+  expect "a cross-site POST is refused" 403 "$(as boris -o /dev/null -w '%{http_code}' -X POST -H 'Origin: https://evil.example' "$KBU/")"
+  out=$("$ANNEX" run kanboard seed 2>&1) && ok "annex run kanboard seed" || bad "run seed" "$(tail -3 <<<"$out")"
+  has "  ...it logged its summary" '"msg":"seed finished"' "$out"
+  out=$("$ANNEX" run kanboard seed 2>&1) && ok "annex run kanboard seed, again" || bad "run seed again" "$(tail -3 <<<"$out")"
+  has "  ...and created nothing" '"projects_created":0,"cards_created":0' "$out"
+  has "boris sees the repair boards" "Parts to order" "$(as boris "$KBU/" | text)"
+  status_up kanboard
+fi
 finish

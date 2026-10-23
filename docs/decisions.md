@@ -119,6 +119,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D108 | Goat Arcade `hourly_plays` view; GA.2's Metabase part moves to GA.3 | active |
 | D109 | Goat Arcade's Metabase as code: the connection, collections, permissions, five dashboards, account hygiene | active; revises D9 (the connection's name; the SQL editor for analysts only) and D107 (Analysts group; accounts of removed people deactivated) |
 | D110 | Goat Arcade `tournament_entries` view: who is entered, by nickname | active |
+| D111 | Kanboard, self-hosted as an Annex app: the official image adapted to the contract, header sign-in, its own API token | active |
 
 ## D1. Apps run through `ssh annex` and the VM's Compose (14 Oct)
 **What.** The CLI copies the app folder to `/srv/annex/deploy/<app>`, writes the generated compose file there and runs `docker compose` on the VM over SSH, the same way the platform runs. The brief said "built and run through the annex-vm Docker context, using the Mac's Compose".
@@ -1377,3 +1378,40 @@ The Goat Arcade database (`scripts/democlient.sh up`, `reseed`, `link`, `check`)
 **Why.** league-desk signs members up at the counter before the club system has them, and could only compare against its own pending rows: the gateway gave the entry count, not the entrants (the known gap in its README). With the list it refuses a member who is already officially entered and shows the entrants. The same list answers "who is in the Masters?" for any builder.
 
 **Alternatives.** An array of nicknames in `tournaments` (changes a view apps already use, and a column of arrays is awkward to filter); the `player_id` as the key (the id is not exposed anywhere else, nickname is the key builders use); including the player's name and e-mail for the desk (personal data, not needed for the check).
+
+## D111. Kanboard, self-hosted as an Annex app (23 Oct, GA.5; Nejc: Kanboard's own API token, no members job)
+**What.** `examples/goat-arcade/kanboard/` runs Kanboard v1.2.54, the technicians' repair board, as an ordinary Annex app owned by `sam`, behind the same login. Nothing in the platform changed for it.
+- **The image** is the official `kanboard/kanboard:v1.2.54`, pinned by its multi-arch index digest. v1.2.55 and v1.2.56 were under two weeks old.
+  - The Dockerfile copies the release into a fresh image (`FROM scratch`, `COPY --from=upstream / /`). That keeps Kanboard, PHP and nginx as released, and drops what Annex can't use: the upstream `VOLUME` lines (anonymous volumes outside `/data` and the backups), the root s6 entrypoint (it writes into `/etc`) and the port-80 health check.
+  - The image is 127 MB, and the app runs at about 28 MiB of 256 MiB.
+- **Contract fit:**
+  - `USER 10001`. Our own entrypoint starts php-fpm and nginx and exits when either stops.
+  - Every runtime write goes to `/tmp` (pids, sockets, temp dirs, the rendered nginx config, uploads in progress). Kanboard's data, files, cache and plugins go to `/data`.
+  - nginx listens on `$PORT` only. php-fpm is capped at 5 workers and 96 MB per request.
+  - The health check is Kanboard's own `/healthcheck.php`.
+  - Migrations run once at start. The schema's built-in `admin/admin` is disabled on every start.
+  - No plugin installer, no email (mail settings hidden, `egress: []`).
+  - The database comes from Kanboard's own `DATABASE_URL` parsing; the plan's split into `DB_*` wasn't needed.
+- **Sign-in:** Kanboard's reverse-proxy auth reads `HTTP_REMOTE_USER`, which is the `Remote-User` header, with name and email from `Remote-Name` and `Remote-Email`.
+  - **Not** Kanboard's default `REMOTE_USER`: that is the HTTP basic-auth user, which any client can choose.
+  - Kanboard 1.2.5x honours the header only from `TRUSTED_PROXY_NETWORKS`. The entrypoint writes the container's own networks there: the app's internal network, shared only with platform containers (D88). The trust itself rests on the front door replacing every `Remote-*` header.
+  - Kanboard's login form, password reset, remember-me and logout are off, and nginx answers 404 for their routes. `kaldi-admin` is Kanboard's admin (`KANBOARD_DEFAULT_ADMIN`).
+- **Cross-site check (D91):** written as nginx maps with the same rule as the runtime's `csrf_violation`, so `ANNEX_CSRF` stays on. Kanboard's own CSRF tokens remain too; a few of its GET links change state, each with a Kanboard token.
+- **Logging:** nginx writes one JSON line per request (`request_id`, user, method, path without query, status, duration) and returns `X-Request-Id`. Kanboard's own messages and PHP errors stay plain text: an off-the-shelf tool can't follow the convention fully, and the README says so.
+- **The boards:** `annex run kanboard seed`, by hand, uses Kanboard's JSON-RPC API on `127.0.0.1` only; through the front door it's 403. It creates:
+  - a project per open venue, plus "Parts to order", with columns Reported, Diagnosing, Waiting for parts, Fixed;
+  - a card per open service ticket from the gateway (`service_log`), and a parts card per ticket waiting for parts.
+
+  It is idempotent through Kanboard's task `reference` (`ticket-<id>`, `parts-<id>`), never moves cards, and adds everyone who has signed in so far to the Goat projects. `cronjob` (06:00) is Kanboard's own housekeeping.
+- **The API token (Nejc):** Kanboard's own `api_token` from its settings table, read through the app's `DATABASE_URL`; no Annex secret.
+  - If it is missing, or equals the fixed value in Kanboard's published schema dump, it is replaced at start by a new random one, made the way Kanboard makes them.
+  - It is never printed or logged.
+- **People after the seed (Nejc):** there is no "members" job. Someone who signs in for the first time later is added to the boards by a Kanboard admin, or by rerunning the seed.
+
+**Why.** It shows that Annex hosts off-the-shelf tools a client would otherwise buy as SaaS, under the same rules as AI-built ones: one login, its own database, backups, health, logs and the console, with no change to the platform. Kanboard was the best fit of §2.7's options, because its reverse-proxy sign-in needs no OIDC. Kanboard's own token keeps a demo reset free of human steps. Without the members job, there's one less thing running every 15 minutes.
+
+**Alternatives.**
+- A wrapper that keeps s6, or a build from the release tarball on a PHP base: both more work for the same result.
+- The token as an Annex secret (`KANBOARD_API_TOKEN`): it shows the secrets feature, but adds a human step per stack and reset.
+- A members job every 15 minutes: people see the boards right away, at the cost of a frequent job and a membership policy in code.
+- Wiki.js, Homebox, Vikunja or n8n (plan §2.7): they need OIDC, a second login, or credentials of their own.
