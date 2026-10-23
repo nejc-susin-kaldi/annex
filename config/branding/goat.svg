@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+<title>Goat Arcade</title>
+<rect width="128" height="128" rx="28" fill="#27325c"/>
+<path d="M55 48C52 30 42 14 22 10C34 20 38 34 45 54Z" fill="#f2b441"/>
+<path d="M73 48C76 30 86 14 106 10C94 20 90 34 83 54Z" fill="#f2b441"/>
+<ellipse cx="35" cy="62" rx="14" ry="5" transform="rotate(18 35 62)" fill="#e6dccb"/>
+<ellipse cx="93" cy="62" rx="14" ry="5" transform="rotate(-18 93 62)" fill="#e6dccb"/>
+<path d="M46 46Q64 38 82 46Q87 68 77 98Q64 105 51 98Q41 68 46 46Z" fill="#f6f1e7"/>
+<path d="M57 101Q64 126 71 101Z" fill="#f6f1e7"/>
+<ellipse cx="64" cy="90" rx="10" ry="8" fill="#e3d3ba"/>
+<circle cx="60" cy="90" r="1.6" fill="#27325c"/>
+<circle cx="68" cy="90" r="1.6" fill="#27325c"/>
+<ellipse cx="54" cy="64" rx="5.5" ry="3.8" fill="#f2b441"/>
+<ellipse cx="74" cy="64" rx="5.5" ry="3.8" fill="#f2b441"/>
+<rect x="51" y="63" width="6" height="2" rx="1" fill="#27325c"/>
+<rect x="71" y="63" width="6" height="2" rx="1" fill="#27325c"/>
+</svg>

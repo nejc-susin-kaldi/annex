@@ -3,6 +3,9 @@
 theme: auto
 server:
   address: tcp://:9091/
+  # Goat Arcade's logo and favicon on the sign-in page (D107): Authelia serves logo.png and favicon.ico from this folder
+  # instead of its own. That is all 4.39 lets a config change (no title, text or colours), so the page still says "Authelia".
+  asset_path: /etc/annex/assets
   endpoints:
     rate_limits:
       # `annex users add/reset` sends every invitation from the VM's own address, so the default (5 per 10 min
@@ -21,7 +24,7 @@ log:
 ntp:
   disable_startup_check: true
 totp:
-  issuer: Annex
+  issuer: Goat Arcade
 identity_validation:
   reset_password:
     # `annex users add` invites a user with the reset link, so it lives longer than Authelia's 5-minute default

@@ -57,6 +57,32 @@ class ComposeContent(Base):
         self.assertEqual(json.loads(json.dumps(c, indent=2)), c)
 
 
+class TileGroup(Base):
+    """The Homepage group comes from the platform's config/teams.json, not from the manifest (D107)."""
+
+    def group(self, **kw) -> str:
+        c = dep.compose_for(self.make_run(), manifest(**kw), "annex-app/demo:r1", 1)
+        return c["services"][kw.get("name", "demo")]["labels"]["homepage.group"]
+
+    def write(self, text: str) -> None:
+        cfg = self.base / "platform" / "config"
+        cfg.mkdir(parents=True, exist_ok=True)
+        (cfg / "teams.json").write_text(text)
+
+    def test_no_file_means_tools(self):
+        self.assertEqual(self.group(), "Tools")
+
+    def test_an_app_in_the_file_gets_its_team(self):
+        self.write('{"demo": "Venues", "other": "Finance"}')
+        self.assertEqual(self.group(), "Venues")
+        self.assertEqual(self.group(name="unlisted"), "Tools")
+
+    def test_a_broken_file_or_a_bad_value_means_tools(self):
+        for text in ("{not json", "[]", '{"demo": 3}', '{"demo": ""}', '{"demo": "a\\nb"}'):
+            self.write(text)
+            self.assertEqual(self.group(), "Tools", text)
+
+
 class RoutePort(Base):
     def port(self, key, value, default):
         return dep.bound_port(self.make_run(settings={**SETTINGS, **({key: value} if value is not None else {})}),

@@ -483,6 +483,18 @@ def _tile_labels(m, fields: list[tuple[str, str, str | None]]) -> dict[str, str]
     return labels
 
 
+def tile_group(run: Run, app: str) -> str:
+    """The Homepage group an app's tile goes in: its team from the platform's config/teams.json (app name -> group,
+    D107), else "Tools". Platform config, not the manifest, so the app contract doesn't change. A missing or broken
+    file just means everything is "Tools"."""
+    try:
+        teams = json.loads((run.base / "platform" / "config" / "teams.json").read_text())
+        group = teams.get(app) if isinstance(teams, dict) else None
+    except (OSError, ValueError):
+        return "Tools"
+    return group if isinstance(group, str) and group.strip() and len(group) <= 40 and "\n" not in group else "Tools"
+
+
 def compose_for(run: Run, m, image: str, release: int) -> dict:
     data_dir = str(run.base)
     url = run.url_for(m.name)
@@ -496,7 +508,7 @@ def compose_for(run: Run, m, image: str, release: int) -> dict:
         "com.kaldi.annex.release": str(release),
         "com.kaldi.annex.memory": f"{m.memory_mb}m",
         "com.kaldi.annex.alerts-to": ",".join(m.alerts_to),
-        "homepage.group": "Tools",
+        "homepage.group": tile_group(run, m.name),
         "homepage.name": m.name,
         "homepage.description": f"{m.description} · owner: {m.owner}" if m.description else f"owner: {m.owner}",
         "homepage.icon": "mdi-toolbox-outline",
