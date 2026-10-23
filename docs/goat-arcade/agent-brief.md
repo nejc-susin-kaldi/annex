@@ -58,7 +58,7 @@ What the gateway doesn't do:
 - **No GROUP BY or SUM.** The views are already aggregated where it matters: per machine per day (`daily_plays`, `machine_events_daily`) and per venue per week (`revenue_weekly`). Total them further in your code.
 - **No writes.** Everything is read-only. Your app's own data goes in its own database (`storage.postgres: true`, see the contract).
 
-Some views are big if read whole, so filter them: `daily_plays` has about 23,000 rows, `hourly_plays` about 17,000, `machine_events_daily` about 45,000.
+Some views are big if read whole, so filter them: `daily_plays` has about 23,000 rows, `hourly_plays` about 10,000, `machine_events_daily` about 45,000.
 
 ## Which view answers what
 | Question | View |
