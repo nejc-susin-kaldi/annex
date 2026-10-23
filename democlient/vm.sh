@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Runs ON THE VM (synced to /srv/annex/democlient by scripts/democlient.sh, which calls it). The client's side of
 # the demo (D77): Goat Arcade's database, and Annex's link to it. Prints no secret values.
-# Usage: vm.sh up | down | reseed [YYYY-MM-DD] | status | check | link | dictionary | psql
+# Usage: vm.sh up | down | reseed [YYYY-MM-DD] | status | check | link [--refresh t[,t]] | dictionary | psql
 set -euo pipefail
 D=${ANNEX_DATA_DIR:-/srv/annex}
 HERE=$D/democlient
-SECRETS=$D/secrets/democlient.env
+SECRETS=$D/secrets/democlient.env    # Annex's copy of the reader's password (archived like Annex's other credentials)
+CLIENT_ENV=$D/state/democlient.env   # the client's own file: its admin password and the reader login (never archived, D106)
 STATE=$D/state/democlient-db
 cd "$HERE"
 
@@ -16,11 +17,26 @@ product() { (cd "$D/platform" && docker compose exec -T -e PGOPTIONS='-c client_
                psql -q -X -v ON_ERROR_STOP=1 -U postgres -d product "$@"); }
 running() { [ "$(dc ps --status running -q arcade-db 2>/dev/null)" != "" ]; }
 
-# the client's passwords: its admin password, and the read-only login it gives Annex
+# The client's passwords live in the client's own file (state/, not in Annex's backups: D106): its admin password
+# and the read-only login it gives Annex. Annex keeps only the reader's password, in secrets/ like its other
+# credentials (product-db's user mapping holds it too). Before D106 one file in secrets/ held both: moved once.
 secrets() {
-  [ -s "$SECRETS" ] && return
-  (umask 077; printf 'POSTGRES_PASSWORD=%s\nANNEX_READER_PASSWORD=%s\n' "$(openssl rand -hex 24)" "$(openssl rand -hex 24)" > "$SECRETS")
-  echo "democlient: generated $SECRETS"
+  if [ ! -s "$CLIENT_ENV" ]; then
+    if [ -s "$SECRETS" ] && grep -q '^POSTGRES_PASSWORD=' "$SECRETS"; then
+      (umask 077; cp "$SECRETS" "$CLIENT_ENV")
+      echo "democlient: moved the client's passwords to $CLIENT_ENV"
+    else
+      (umask 077; printf 'POSTGRES_PASSWORD=%s\nANNEX_READER_PASSWORD=%s\n' "$(openssl rand -hex 24)" "$(openssl rand -hex 24)" > "$CLIENT_ENV")
+      echo "democlient: generated $CLIENT_ENV"
+    fi
+  fi
+  local reader
+  reader=$(sed -n 's/^ANNEX_READER_PASSWORD=//p' "$CLIENT_ENV")
+  [ -n "$reader" ] || die "$CLIENT_ENV has no ANNEX_READER_PASSWORD"
+  if [ "$(cat "$SECRETS" 2>/dev/null)" != "ANNEX_READER_PASSWORD=$reader" ]; then
+    (umask 077; printf 'ANNEX_READER_PASSWORD=%s\n' "$reader" > "$SECRETS.tmp" && mv "$SECRETS.tmp" "$SECRETS")
+    echo "democlient: wrote $SECRETS (the reader's password only)"
+  fi
 }
 
 up() {
@@ -32,7 +48,8 @@ up() {
   dc up -d --wait --wait-timeout 420 >/dev/null || {
     docker logs democlient-arcade-db-1 2>&1 | grep -E 'ERROR|FATAL|psql:' | tail -5 >&2
     die "arcade-db didn't become healthy (a failed seed isn't retried: fix it, then scripts/democlient.sh reseed)"; }
-  echo "democlient: arcade-db is up"
+  arcade < role.sql
+  echo "democlient: arcade-db is up (annex_reader's limits applied from role.sql)"
 }
 
 case "${1:-}" in
@@ -64,12 +81,32 @@ SQL
     arcade -F ' | ' -A -P footer=off < checks.sql ;;
   link)
     running || die "arcade-db is not running (scripts/democlient.sh up)"
+    # --refresh t[,t]: a client table changed shape (D106). The foreign table is renamed aside, the current
+    # definition imported, the views re-applied (CREATE OR REPLACE keeps every app's grants) and the old one
+    # dropped. If a view no longer fits, the old table stays as src_arcade.<t>__old and the message says so.
+    refresh=
+    if [ "${2:-}" = --refresh ]; then
+      refresh=${3:?--refresh needs a table name, or several separated by commas}
+      [[ "$refresh" =~ ^[a-z_][a-z0-9_]*(,[a-z_][a-z0-9_]*)*$ ]] || die "--refresh takes table names only, e.g. machines,games"
+    elif [ -n "${2:-}" ]; then
+      die "usage: vm.sh link [--refresh t[,t]]"
+    fi
     # shellcheck disable=SC1090
     . "$SECRETS"
+    for t in ${refresh//,/ }; do
+      product -c "DROP FOREIGN TABLE IF EXISTS src_arcade.${t}__old" -c "ALTER FOREIGN TABLE IF EXISTS src_arcade.$t RENAME TO ${t}__old"
+    done
     product -v reader_pw="$ANNEX_READER_PASSWORD" -f /docker-entrypoint-initdb.d/clientlink/link.sql
-    product -f /docker-entrypoint-initdb.d/clientlink/api_views_arcade.sql
-    echo "democlient: product-db linked; the Goat Arcade views are in annex_api" ;;
+    if ! product -f /docker-entrypoint-initdb.d/clientlink/api_views_arcade.sql; then
+      [ -n "$refresh" ] && echo "democlient: the views no longer fit the refreshed table(s); the old definition is kept as src_arcade.<t>__old." \
+        "Fix db/product/clientlink/api_views_arcade.sql, scripts/push.sh, then scripts/democlient.sh link (without --refresh)" >&2
+      exit 1
+    fi
+    for t in ${refresh//,/ }; do
+      product -c "DROP FOREIGN TABLE IF EXISTS src_arcade.${t}__old"
+    done
+    echo "democlient: product-db linked; the Goat Arcade views are in annex_api${refresh:+ (refreshed: $refresh)}" ;;
   dictionary) product -At < dictionary.sql ;;
   psql) dc exec arcade-db psql -U postgres -d arcade ;;
-  *) die "usage: vm.sh up | down | reseed [YYYY-MM-DD] | status | check | link | dictionary | psql" ;;
+  *) die "usage: vm.sh up | down | reseed [YYYY-MM-DD] | status | check | link [--refresh t[,t]] | dictionary | psql" ;;
 esac

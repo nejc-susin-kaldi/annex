@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The demo client's database (Goat Arcade, D77): a separate compose project on the VM (or the local stack, D99), outside the platform.
-# Usage: scripts/democlient.sh up | down | status | check | link | dictionary | psql | reseed [--anchor YYYY-MM-DD] [--yes]
-#   up      start arcade-db (seeds it on first start)    link        connect product-db to it and (re)apply the views
+# Usage: scripts/democlient.sh up | down | status | check | link [--refresh t[,t]] | dictionary | psql | reseed [--anchor YYYY-MM-DD] [--yes]
+#   up      start arcade-db (seeds it on first start)    link        connect product-db to it and (re)apply the views;
+#                                                                    --refresh t[,t] after a client table changed shape
 #   down    stop it, keep the data                       check       prove the seed's planted stories
 #   status  row counts, the anchor date, the link        dictionary  write docs/goat-arcade/data-dictionary.md
 #   psql    a psql shell on the client's database        reseed      wipe and seed again: the data then ends
@@ -13,7 +14,8 @@ log "Syncing democlient/ to $DATA/democlient on $WHERE"
 rsync -rlpt --delete "$ROOT/democlient/" "$(dest "$DATA/democlient/")"
 
 case "$cmd" in
-  up|down|status|check|link) vm "bash $DATA/democlient/vm.sh $cmd" ;;
+  up|down|status|check) vm "bash $DATA/democlient/vm.sh $cmd" ;;
+  link) vm "bash $DATA/democlient/vm.sh link $*" ;;
   psql) vm_tty "bash $DATA/democlient/vm.sh psql" ;;
   dictionary)
     out=$ROOT/docs/goat-arcade/data-dictionary.md

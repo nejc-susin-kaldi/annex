@@ -85,7 +85,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D74b | Tests don't notify people: test mode and one test channel | active |
 | D75 | One fixture for every platform suite: `annex-selftest` | active |
 | D76 | The console overhaul: one home per thing | active |
-| D77 | A client's own database behind the gateway: Goat Arcade | active |
+| D77 | A client's own database behind the gateway: Goat Arcade | active; revised by D106 (connection budget, the client's secret file, `link --refresh`) |
 | D78 | The Goat Arcade data | active |
 | D79 | App names validated at every entry point | active |
 | D80 | Small security items | active |
@@ -95,7 +95,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D84 | A connection pool in ops, appdata-db sized to its connections | active; revised in place 22 Oct (own pool, no psycopg-pool) |
 | D85 | Push stamp, one settings source, secrets from stdin, prerequisites | active |
 | D86 | Byte budgets and bounded queues in annex-ops | active |
-| D87 | Backups that restore a VM | active |
+| D87 | Backups that restore a VM | active; revised by D106 (the client's admin password is not archived) |
 | D88 | Per-app networks | active |
 | D89 | Log shipper: the cap before the parse, inserts only on the sink thread | active |
 | D90 | Alert engine robustness: an outbox, saved timers, a monotonic clock, one front-door incident | active |
@@ -1300,3 +1300,17 @@ The Goat Arcade database (`scripts/democlient.sh up`, `reseed`, `link`, `check`)
 **Resources, 23 Oct after the runs.**
 - **VM:** 2.1 GiB used of 3.9 GiB, 1.7 GiB available; disk 9.3 of 29 GB (33%). Platform containers about 1.4 GiB (Metabase 758 MiB; ops 88; appdata-db 130; Homepage 124; console 50; hooks 42), apps 18–45 MiB each, arcade-db 60 MiB: unchanged from D97 in substance.
 - **Local (Docker Desktop, 7.65 GiB, 12 CPUs, no extras):** the Annex containers about 0.9 GiB with two apps and arcade-db. The socket proxies take 30–36 MiB each (HAProxy starts a thread per CPU; under 3 on the VM), the gateway 94 MiB (under 15 on the VM), Authelia 87. `~/.annex/local` is 339 MB. Docker Desktop's image and build-cache totals include other projects and aren't Annex's alone.
+
+## D106. Goat Arcade after hardening: the FDW connection budget, the isolation probe, the client's secrets, refreshing a changed table (23 Oct)
+**What.** Four adjustments found by checking the finished `docs/plans/democlient.md` against hardening (D79–D97) and control-plane (D98–D105), done before the Goat Arcade demo plan starts (its §5 lists them).
+- **Connections.** Every product-db session that reads a Goat Arcade view keeps one postgres_fdw connection to arcade-db as `annex_reader` for as long as it lives. PostgREST's pool was its default (10), Metabase holds up to 15, and the reader's limit was 10 with arcade-db at `max_connections=20`: with Metabase open, the eleventh session would get "too many connections for role annex_reader". Now `PGRST_DB_POOL=6` with a 10 s acquisition timeout (`compose.yaml`), arcade-db `max_connections=30`, `annex_reader` `CONNECTION LIMIT 25` and `idle_session_timeout = '5min'`, so an idle FDW session is closed and postgres_fdw reconnects at its next transaction (PostgreSQL 14+; proven on the local lane by terminating the remote session and querying a view). The role's limits and settings live in `democlient/role.sql`, applied by `vm.sh up` every time, because `initdb/` runs only on the first start; `00-roles.sh` only creates the role and its grants.
+- **The isolation probe** in `scripts/test-platform.sh` now also runs from the app's own network: D88 moved apps off the platform networks the probe listed, and the gateway joins the app's network at runtime, so that is the vantage point that matters.
+- **The client's admin password is no longer in Annex's backups.** D87 archives `secrets/`, and `secrets/democlient.env` held `POSTGRES_PASSWORD` next to the reader's password. The client's file is now `state/democlient.env` (both passwords: it is the client's database, and `state/` is not archived); `secrets/democlient.env` holds only `ANNEX_READER_PASSWORD`, the one credential the client gave Annex, archived like Annex's other credentials. `vm.sh up` moves an existing file once.
+- **A changed client table:** `scripts/democlient.sh link --refresh <table>[,<table>]` renames the foreign table aside, imports the current definition, re-applies the views (`CREATE OR REPLACE` keeps every app's grants) and drops the old one. If a view no longer fits, the old table stays as `src_arcade.<t>__old` and the message says what to fix. D77's "drop and re-import by hand" is withdrawn.
+- **Not changed:** arcade-db is still not monitored (D77). An outage shows as error groups and health failures on the apps that read the views, which is where a client's outage belongs; no `platform:` signal names the link.
+
+**Why.** The demo plan (`docs/plans/goat-arcade-demo.md`) makes Metabase a heavy consumer of the views and Goat Arcade the only data set, so the connection budget would have been hit in its third step (the dashboards), on stage.
+
+**Alternatives.** A pool per schema in PostgREST (there is none); pgbouncer in front of arcade-db (a component for one link); dropping `src_arcade` on a refresh (loses every app's grants, D77); keeping both passwords in `secrets/` and accepting the archive holds the client's admin password (Annex never uses it, so it has no business there).
+
+**Tests.** `test-platform.sh` (the client-database block, now five networks probed), `test-smoke.sh`, on the local lane and the VM; `democlient.sh up` on a stack with the old single file (moved once, idempotent after); `link --refresh machines` on the local lane, then `check` and `status`.

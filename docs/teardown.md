@@ -100,7 +100,7 @@ virsh -c qemu:///system undefine annex --snapshots-metadata --remove-all-storage
   scripts/democlient.sh down
   ```
   ```bash
-  ssh annex 'rm -rf /srv/annex/democlient /srv/annex/state/democlient-db /srv/annex/secrets/democlient.env'
+  ssh annex 'rm -rf /srv/annex/democlient /srv/annex/state/democlient-db /srv/annex/state/democlient.env /srv/annex/secrets/democlient.env'
   ```
   The state directory belongs to the container's postgres user. If `rm` is refused for it, remove it as root from the same image:
   ```bash

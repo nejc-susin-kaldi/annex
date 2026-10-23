@@ -208,7 +208,7 @@ else
     "$(vm "docker exec democlient-arcade-db-1 psql -XAt -U annex_reader -d arcade -c 'CREATE TABLE arcade.annex_was_here (i int)'" 2>&1)"
   arc_ip=$(vm "docker inspect democlient-arcade-db-1 --format '{{(index .NetworkSettings.Networks \"annex-clientlink\").IPAddress}}'")
   expect "control: the link network reaches arcade-db" 0 "$(probe annex-clientlink arcade-db)"
-  for net in annex-edge annex-appdata annex-product; do
+  for net in annex-edge annex-appdata annex-product annex-app-$ARC; do  # the app's own network is where the gateway is (D88)
     expect "network $net cannot resolve arcade-db" 2 "$(probe "$net" arcade-db)"
     expect "network $net cannot reach arcade-db by IP" 2 "$(probe "$net" "$arc_ip")"
   done

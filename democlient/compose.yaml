@@ -12,7 +12,7 @@ services:
       - -c
       - shared_buffers=64MB
       - -c
-      - max_connections=20
+      - max_connections=30
       - -c
       - work_mem=8MB
       - -c
@@ -21,7 +21,8 @@ services:
       - effective_cache_size=128MB
       - -c
       - "log_line_prefix=%m [%p] %u@%d "
-    env_file: ../secrets/democlient.env
+    # the client's own passwords (D106): its admin password and the reader login it gives Annex; not in Annex's backups
+    env_file: ../state/democlient.env
     environment:
       POSTGRES_DB: arcade
       TZ: Europe/Ljubljana

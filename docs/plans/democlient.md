@@ -196,3 +196,12 @@ An "Goat Arcade" collection with four questions: plays per venue per week, reven
 - The company name: **Goat Arcade**.
 - View names have no prefix.
 - A reseed moves the dates so the data ends yesterday.
+
+## 5. Adjustments after hardening and control-plane (23 Oct, D106)
+Found by checking this finished plan against D79–D105; done before `docs/plans/goat-arcade-demo.md` starts.
+- **Connection budget** (DC.2's "10 connections at most" didn't say how they are spent): every product-db session that reads a view holds one FDW connection to `annex_reader`. The gateway's pool is now explicit (`PGRST_DB_POOL=6`), Metabase takes up to 15, the reader allows 25 with a 5-minute idle timeout (`democlient/role.sql`, applied on every `up`), arcade-db `max_connections=30`.
+- **DC.4 item 4** now reads "the app's own network" (D88): the probe runs from `annex-app-<app>` too.
+- **The client's secrets** (this plan's "Writes on the VM"): `state/democlient.env` is the client's file (both passwords, not in Annex's backups); `secrets/democlient.env` holds the reader's password only. D87 archives `secrets/`.
+- **A changed client table:** `democlient.sh link --refresh <t>` replaces the manual drop and re-import noted in D77.
+- **Monitoring:** unchanged (D77); an outage shows on the apps that read the views (D67, D73), not as a platform signal.
+- **Paths** in "Ground rules that bite here" are `$ANNEX_DATA_DIR/...`: on the local lane (D99) that is `~/.annex/local`, and `scripts/democlient.sh` runs there unchanged (D100).
