@@ -1,12 +1,12 @@
 {
-  "_comment": "Metabase groups and who is in them (D107). vm/metabase-setup.sh creates a Metabase account for every active Annex account that has a line in secrets/users.txt, with the name and email from the user directory, and puts it in the groups listed here under 'members'. Logins that are not listed get an account but no group; logins that do not exist (yet) are skipped. kaldi-admin is the Metabase admin.",
-  "groups": ["Management", "Venues", "Technical", "Finance", "Community"],
+  "_comment": "Metabase groups and who is in them (D107, D109). vm/metabase-setup.sh creates a Metabase account for every active Annex account that has a line in secrets/users.txt, with the name and email from the user directory, and puts it in the groups listed here under 'members'. Logins that are not listed get an account but no group; logins that do not exist (yet) are skipped. kaldi-admin is the Metabase admin. What the groups may do is config/metabase/goat-arcade/collections.json: the team groups edit their team's collection; Analysts get the SQL editor.",
+  "groups": ["Management", "Venues", "Technical", "Finance", "Community", "Analysts"],
   "members": {
     "tomaz": ["Management"],
     "maja": ["Venues"],
     "boris": ["Technical"],
     "petra": ["Finance"],
     "lena": ["Community"],
-    "sam": ["Management", "Technical"]
+    "sam": ["Management", "Technical", "Analysts"]
   }
 }

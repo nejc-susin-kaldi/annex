@@ -1,0 +1,16 @@
+{
+  "_comment": "Goat Arcade's Metabase collections and permissions (GA.3, D109), applied by vm/metabase_content.py. A 'Goat Arcade' parent collection with one collection per team: every Metabase user (All Users) can view all of them, each team's group can edit its own. Data: every group, All Users included, may query the Goat Arcade database with the query builder; only the groups in 'native_sql' (and Administrators, untouched) get the SQL editor. The groups and who is in them are config/metabase/people.json.",
+  "parent": {
+    "name": "Goat Arcade",
+    "description": "Goat Arcade's dashboards, one collection per team. The dashboards here are kept as code (config/metabase/goat-arcade in the Annex repo): changes made in Metabase to them are overwritten at the next platform push. Save your own questions next to them."
+  },
+  "teams": [
+    {"name": "Management", "group": "Management", "description": "For the managing director: the whole chain at a glance."},
+    {"name": "Venues", "group": "Venues", "description": "For venue managers: how one venue plays, hour by hour and machine by machine."},
+    {"name": "Technical", "group": "Technical", "description": "For the technicians: what is broken, what keeps breaking and how long fixes take."},
+    {"name": "Finance", "group": "Finance", "description": "For finance: counted cash, how it is paid and whether it matches the plays."},
+    {"name": "Community", "group": "Community", "description": "For community and tournaments: members, leaderboards and tournaments."}
+  ],
+  "query_builder": ["All Users", "Management", "Venues", "Technical", "Finance", "Community"],
+  "native_sql": ["Analysts"]
+}

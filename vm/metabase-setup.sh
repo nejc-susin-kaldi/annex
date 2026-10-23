@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Runs ON THE VM (called by scripts/push.sh when Metabase is running).
 # Idempotent: first-run setup with kaldi-admin as Metabase admin, the site name, an account for every Annex user with
-# a line in secrets/users.txt (their Annex password) in the groups of config/metabase/people.json (D107), the product
-# database connected read-only as metabase_ro (limited to the annex_api schema). The "Annex usage" dashboard is retired (M2.9): usage lives in the console;
+# a line in secrets/users.txt (their Annex password) in the groups of people.json (D107), accounts of people no longer
+# in Annex deactivated, and the "Goat Arcade" database (product-db's annex_api, read-only as metabase_ro, limited to
+# that schema). Then vm/metabase_content.py applies goat-arcade/: column types, collections, permissions and the five
+# dashboards (D109). The "Annex usage" dashboard is retired (M2.9): usage lives in the console;
 # vm/metabase-retire-usage.sh removes what an earlier setup created.
+# METABASE_SPEC_DIR: where people.json and goat-arcade/ are (default: the pushed config/metabase); METABASE_VERBOSE=1
+# prints every card's row count.
 set -euo pipefail
 D=${ANNEX_DATA_DIR:-/srv/annex}
+SPEC=${METABASE_SPEC_DIR:-$D/platform/config/metabase}
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$D/platform"
 # shellcheck disable=SC1091
 . "$D/secrets/master.env"
@@ -36,13 +42,22 @@ fi
 SESSION=$(jq -n --arg pw "$(pw kaldi-admin)" '{username: "admin@annex.example", password: $pw}' \
   | mb POST /api/session | jq -r .id)
 
-if ! mb GET /api/database | jq -e '.data[] | select(.name == "Product")' >/dev/null; then
-  jq -n --arg pw "$PRODUCT_DB_METABASE_RO_PASSWORD" '{
-    engine: "postgres", name: "Product", is_full_sync: true,
-    details: {host: "product-db", port: 5432, dbname: "product", user: "metabase_ro", password: $pw,
-              ssl: false, "schema-filters-type": "inclusion", "schema-filters-patterns": "annex_api"}
-  }' | mb POST /api/database >/dev/null
-  echo "metabase: connected Product (annex_api, read-only)"
+# The connection: "Goat Arcade" (D109; before GA.3 it was called "Product", and an existing one is renamed in place,
+# so its questions, field settings and permissions stay).
+dbs=$(mb GET /api/database)
+if ! jq -e '.data[] | select(.name == "Goat Arcade")' <<<"$dbs" >/dev/null; then
+  old=$(jq -r '.data[] | select(.name == "Product" and .details.host == "product-db") | .id' <<<"$dbs" | head -1)
+  if [ -n "$old" ]; then
+    printf '%s' '{"name": "Goat Arcade"}' | mb PUT "/api/database/$old" >/dev/null
+    echo "metabase: renamed the database Product to Goat Arcade"
+  else
+    jq -n --arg pw "$PRODUCT_DB_METABASE_RO_PASSWORD" '{
+      engine: "postgres", name: "Goat Arcade", is_full_sync: true,
+      details: {host: "product-db", port: 5432, dbname: "product", user: "metabase_ro", password: $pw,
+                ssl: false, "schema-filters-type": "inclusion", "schema-filters-patterns": "annex_api"}
+    }' | mb POST /api/database >/dev/null
+    echo "metabase: connected Goat Arcade (product-db annex_api, read-only)"
+  fi
 fi
 
 # The site name is a setting (not part of the first-run setup above), so an existing instance gets it too
@@ -54,7 +69,7 @@ printf '%s' '{"value": "Goat Arcade analytics"}' | mb PUT /api/setting/site-name
 # Memberships are only ever added. kaldi-admin is the Metabase admin made above. (Every mb call reads its body from a
 # pipe or /dev/null, so the loops' own input can't be swallowed by `docker compose exec`.)
 DIRECTORY=$D/state/directory/users.json
-PEOPLE=$D/platform/config/metabase/people.json
+PEOPLE=$SPEC/people.json
 group_id() { mb GET /api/permissions/group | jq -r --arg n "$1" '.[] | select(.name == $n) | .id' | head -1; }
 if [ -s "$DIRECTORY" ] && [ -s "$PEOPLE" ]; then
   while IFS= read -r g; do
@@ -66,7 +81,12 @@ if [ -s "$DIRECTORY" ] && [ -s "$PEOPLE" ]; then
     [ "$login" = kaldi-admin ] && continue
     password=$(pw "$login")
     [ -n "$password" ] || continue
-    uid=$(mb GET '/api/user?status=all' | jq -r --arg e "$email" '.data[] | select(.email == $e) | .id' | head -1)
+    found=$(mb GET '/api/user?status=all' | jq -r --arg e "$email" '.data[] | select(.email == $e) | "\(.id) \(.is_active)"' | head -1)
+    uid=${found% *}
+    if [ -n "$uid" ] && [ "${found#* }" = false ]; then  # back in Annex: reactivate (hygiene below deactivated it)
+      printf "{}" | mb PUT "/api/user/$uid/reactivate" >/dev/null
+      echo "metabase: reactivated $email"
+    fi
     if [ -z "$uid" ]; then
       first=${name%% *}
       last=${name#"$first"}; last=${last# }; [ -n "$last" ] || last=$first
@@ -83,6 +103,24 @@ if [ -s "$DIRECTORY" ] && [ -s "$PEOPLE" ]; then
       echo "metabase: $login joined $g"
     done < <(jq -r --arg l "$login" '(.members[$l] // [])[]' "$PEOPLE")
   done 3< <(jq -r 'to_entries[] | [.key, .value.name, .value.email] | @tsv' "$DIRECTORY")
+
+  # Hygiene (D109): an active Metabase account whose email is no active Annex account's (removed, or disabled, which
+  # takes it out of the directory) is deactivated, never deleted; its questions stay. Never the admin or a superuser.
+  # Only with a directory that lists someone, so a broken file can't lock everyone out.
+  if jq -e 'length > 0' "$DIRECTORY" >/dev/null; then
+    while IFS=$'\t' read -r uid email <&3; do
+      mb DELETE "/api/user/$uid" >/dev/null
+      echo "metabase: deactivated $email (no active Annex account)"
+    done 3< <(mb GET /api/user | jq -r --slurpfile dir "$DIRECTORY" '
+      ($dir[0] | [.[].email | ascii_downcase]) as $keep
+      | .data[] | select(.is_active and (.is_superuser | not) and .email != "admin@annex.example"
+                         and ((.email | ascii_downcase) as $e | $keep | any(. == $e) | not))
+      | [.id, .email] | @tsv')
+  fi
 fi
+
+# Goat Arcade's column types, collections, permissions and dashboards (D109)
+MB_CONTAINER=$(docker compose ps -q metabase) MB_SESSION=$SESSION METABASE_SPEC_DIR=$SPEC \
+  python3 "$HERE/metabase_content.py"
 
 echo "metabase: ready"

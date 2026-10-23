@@ -1,0 +1,115 @@
+{
+  "_comment": "Applied by vm/metabase_content.py (D109). Times are relative to the latest day in the data, not today: the data ends on the seed day.",
+  "key": "ga.glance",
+  "name": "Goat Arcade at a glance",
+  "collection": "Management",
+  "description": "The whole chain in one screen: last week's cash, games and members, cash per venue, what earns, and where the venues are. 'Last week' is the last full Monday-to-Sunday week in the data.",
+  "cards": [
+    {
+      "key": "cash",
+      "name": "Cash counted, last week",
+      "description": "Cash counted from all machines in the last full week, against the week before.",
+      "display": "smartscalar",
+      "pos": [0, 0, 8, 4],
+      "sql": [
+        "SELECT week_start AS week, sum(amount_eur) AS cash_eur",
+        "FROM annex_api.revenue_weekly",
+        "WHERE week_start >= (SELECT max(week_start) FROM annex_api.revenue_weekly) - 7",
+        "GROUP BY week_start ORDER BY week_start"
+      ],
+      "viz": {"scalar.field": "cash_eur"}
+    },
+    {
+      "key": "games",
+      "name": "Games played, last week",
+      "description": "Games on all machines in the last full week, against the week before.",
+      "display": "smartscalar",
+      "pos": [8, 0, 8, 4],
+      "sql": [
+        "WITH lw AS (SELECT (date_trunc('week', max(day) + 1) - interval '7 days')::date AS w FROM annex_api.daily_plays)",
+        "SELECT date_trunc('week', p.day)::date AS week, sum(p.games) AS games",
+        "FROM annex_api.daily_plays p, lw",
+        "WHERE p.day >= lw.w - 7 AND p.day < lw.w + 7",
+        "GROUP BY 1 ORDER BY 1"
+      ],
+      "viz": {"scalar.field": "games"}
+    },
+    {
+      "key": "members",
+      "name": "Active members, last 7 days",
+      "description": "Members (card holders) whose last game was in the 7 days up to the latest day in the data. The views keep only each member's last game, so there is no week-before comparison.",
+      "display": "scalar",
+      "pos": [16, 0, 8, 4],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.daily_plays)",
+        "SELECT count(*) AS active_members",
+        "FROM annex_api.player_profiles, l",
+        "WHERE (last_played_at AT TIME ZONE 'Europe/Ljubljana')::date > l.d - 7"
+      ]
+    },
+    {
+      "key": "weekly-cash",
+      "name": "Cash counted per venue, 26 weeks",
+      "description": "Weekly cash count per venue over the last 26 full weeks.",
+      "display": "line",
+      "pos": [0, 4, 16, 7],
+      "sql": [
+        "SELECT week_start AS week, venue_name AS venue, amount_eur AS cash_eur",
+        "FROM annex_api.revenue_weekly",
+        "WHERE week_start > (SELECT max(week_start) FROM annex_api.revenue_weekly) - 26 * 7",
+        "ORDER BY week_start, venue_name"
+      ],
+      "viz": {"graph.dimensions": ["week", "venue"], "graph.metrics": ["cash_eur"], "graph.x_axis.title_text": "Week", "graph.y_axis.title_text": "Cash counted"}
+    },
+    {
+      "key": "map",
+      "name": "Venues on the map",
+      "description": "Where the venues are, with the cash counted in the last 4 full weeks (click a pin).",
+      "display": "map",
+      "pos": [16, 4, 8, 7],
+      "sql": [
+        "SELECT v.venue_name AS venue, v.city, v.lat, v.lon, v.machines, coalesce(c.cash_eur, 0) AS cash_4_weeks_eur",
+        "FROM annex_api.venues v",
+        "LEFT JOIN (SELECT venue_code, sum(amount_eur) AS cash_eur FROM annex_api.revenue_weekly",
+        "           WHERE week_start > (SELECT max(week_start) FROM annex_api.revenue_weekly) - 28",
+        "           GROUP BY venue_code) c ON c.venue_code = v.venue_code",
+        "ORDER BY cash_4_weeks_eur DESC"
+      ],
+      "viz": {"map.type": "pin", "map.pin_type": "markers", "map.latitude_column": "lat", "map.longitude_column": "lon"}
+    },
+    {
+      "key": "era",
+      "name": "Estimated revenue by era, 90 days",
+      "description": "Estimated revenue (credits times price) of pinball machines by era, and of video and other machines, over the last 90 days.",
+      "display": "bar",
+      "pos": [0, 11, 10, 7],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.daily_plays)",
+        "SELECT coalesce(p.era, p.machine_type) AS era, sum(p.revenue_eur) AS revenue_eur",
+        "FROM annex_api.daily_plays p, l",
+        "WHERE p.day > l.d - 90",
+        "GROUP BY 1",
+        "ORDER BY array_position(ARRAY['EM', 'SS', 'DMD', 'LCD', 'video', 'other'], coalesce(p.era, p.machine_type))"
+      ],
+      "viz": {"graph.dimensions": ["era"], "graph.metrics": ["revenue_eur"], "graph.x_axis.title_text": "Era (pinball), or video and other", "graph.y_axis.title_text": "Estimated revenue"}
+    },
+    {
+      "key": "top-machines",
+      "name": "Top 10 machines by revenue, 30 days",
+      "description": "The ten machines with the most estimated revenue in the last 30 days, with the venue where they last played.",
+      "display": "row",
+      "pos": [10, 11, 14, 7],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.daily_plays)",
+        "SELECT p.title || ' #' || p.machine_id || ' (' || (array_agg(p.venue_code ORDER BY p.day DESC))[1] || ')' AS machine,",
+        "       sum(p.revenue_eur) AS revenue_eur, sum(p.games) AS games",
+        "FROM annex_api.daily_plays p, l",
+        "WHERE p.day > l.d - 30",
+        "GROUP BY p.machine_id, p.title",
+        "ORDER BY revenue_eur DESC",
+        "LIMIT 10"
+      ],
+      "viz": {"graph.dimensions": ["machine"], "graph.metrics": ["revenue_eur"], "graph.show_values": true}
+    }
+  ]
+}

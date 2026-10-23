@@ -1,0 +1,83 @@
+{
+  "_comment": "Applied by vm/metabase_content.py (D109). Times are relative to the latest day in the data, not today.",
+  "key": "ga.players",
+  "name": "Players and tournaments",
+  "collection": "Community",
+  "description": "Members and competition: sign-ups, who plays where, who holds the high scores, and the tournaments.",
+  "cards": [
+    {
+      "key": "signups",
+      "name": "Member sign-ups per month, 24 months",
+      "description": "New member cards per month over the last 24 months, by the venue they signed up at.",
+      "display": "bar",
+      "pos": [0, 0, 14, 7],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.daily_plays)",
+        "SELECT date_trunc('month', m.member_since)::date AS month, m.home_venue_code AS venue, count(*) AS sign_ups",
+        "FROM annex_api.player_profiles m, l",
+        "WHERE m.member_since > (date_trunc('month', l.d) - interval '24 months')",
+        "GROUP BY 1, 2 ORDER BY 1, 2"
+      ],
+      "viz": {"graph.dimensions": ["month", "venue"], "graph.metrics": ["sign_ups"], "stackable.stack_type": "stacked"}
+    },
+    {
+      "key": "active",
+      "name": "Active members per venue, 30 days",
+      "description": "Members whose last game was in the 30 days up to the latest day in the data, by home venue (where they signed up).",
+      "display": "bar",
+      "pos": [14, 0, 10, 7],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.daily_plays)",
+        "SELECT m.home_venue_code AS venue, count(*) AS active_members",
+        "FROM annex_api.player_profiles m, l",
+        "WHERE (m.last_played_at AT TIME ZONE 'Europe/Ljubljana')::date > l.d - 30",
+        "GROUP BY 1 ORDER BY active_members DESC"
+      ],
+      "viz": {"graph.dimensions": ["venue"], "graph.metrics": ["active_members"], "graph.show_values": true}
+    },
+    {
+      "key": "leaderboard",
+      "name": "Most leaderboard spots",
+      "description": "The 15 members in the most all-time top-10 tables, with their best place and rating.",
+      "display": "table",
+      "pos": [0, 7, 10, 9],
+      "sql": [
+        "SELECT m.nickname, m.handle, m.home_venue_code AS home_venue, m.leaderboard_spots, m.best_rank, m.rating, m.venues_played",
+        "FROM annex_api.player_profiles m",
+        "WHERE m.leaderboard_spots > 0",
+        "ORDER BY m.leaderboard_spots DESC, m.best_rank, m.rating DESC",
+        "LIMIT 15"
+      ],
+      "titles": {"handle": "Initials", "leaderboard_spots": "Top-10 spots", "best_rank": "Best place"}
+    },
+    {
+      "key": "entries",
+      "name": "Tournament entries over time",
+      "description": "Players entered per tournament against the places, including the upcoming one still taking registrations.",
+      "display": "bar",
+      "pos": [10, 7, 14, 9],
+      "sql": [
+        "SELECT t.starts_on, t.name || CASE WHEN t.status = 'registration' THEN ' (upcoming)' ELSE '' END AS tournament,",
+        "       t.entries, t.max_players AS places",
+        "FROM annex_api.tournaments t",
+        "ORDER BY t.starts_on"
+      ],
+      "viz": {"graph.dimensions": ["tournament"], "graph.metrics": ["entries", "places"], "graph.x_axis.axis_enabled": true}
+    },
+    {
+      "key": "standings",
+      "name": "The last tournament's standings",
+      "description": "Final standings of the most recent completed tournament.",
+      "display": "table",
+      "pos": [0, 16, 24, 8],
+      "sql": [
+        "SELECT s.position, s.nickname, s.handle, s.points, s.games_played, s.best_score, s.tournament_name AS tournament, s.starts_on",
+        "FROM annex_api.tournament_standings s",
+        "WHERE s.tournament_id = (SELECT t.tournament_id FROM annex_api.tournaments t WHERE t.status = 'completed'",
+        "                         ORDER BY t.starts_on DESC LIMIT 1)",
+        "ORDER BY s.position"
+      ],
+      "titles": {"handle": "Initials"}
+    }
+  ]
+}

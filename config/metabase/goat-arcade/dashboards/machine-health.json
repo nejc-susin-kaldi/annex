@@ -1,0 +1,118 @@
+{
+  "_comment": "Applied by vm/metabase_content.py (D109). Times are relative to the latest day in the data, not today.",
+  "key": "ga.machines",
+  "name": "Machine health",
+  "collection": "Technical",
+  "description": "For the technicians: what is broken now, what has waited longest, which faults are rising, and how long repairs take.",
+  "cards": [
+    {
+      "key": "out-of-order",
+      "name": "Out of order now",
+      "description": "Machines an open ticket took off the floor: nobody can play them.",
+      "display": "table",
+      "pos": [0, 0, 12, 6],
+      "sql": [
+        "SELECT f.venue_code AS venue, f.machine_id, f.title, t.status, t.symptom, t.technician,",
+        "       t.opened_at, t.downtime_hours",
+        "FROM annex_api.machine_floor f",
+        "LEFT JOIN annex_api.service_log t ON t.machine_id = f.machine_id AND t.status <> 'closed' AND t.took_machine_off_floor",
+        "WHERE f.out_of_order",
+        "ORDER BY t.opened_at"
+      ],
+      "titles": {"machine_id": "Machine ID", "opened_at": "Reported", "downtime_hours": "Down for (hours)"}
+    },
+    {
+      "key": "open-tickets",
+      "name": "Open tickets by age",
+      "description": "Every ticket not closed yet, oldest first. Age in days up to the latest day in the data.",
+      "display": "table",
+      "pos": [12, 0, 12, 6],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.daily_plays)",
+        "SELECT l.d - (t.opened_at AT TIME ZONE 'Europe/Ljubljana')::date AS age_days, t.ticket_id,",
+        "       t.current_venue_code AS venue, t.title, t.status, t.symptom, t.technician, t.took_machine_off_floor AS machine_down",
+        "FROM annex_api.service_log t, l",
+        "WHERE t.status <> 'closed'",
+        "ORDER BY t.opened_at"
+      ],
+      "titles": {"age_days": "Age (days)", "ticket_id": "Ticket"},
+      "viz": {"table.column_formatting": [
+        {"id": 0, "columns": ["age_days"], "type": "range", "colors": ["#FFFFFF", "#ED6E6E"], "min_type": null, "max_type": null, "highlight_row": false}
+      ]}
+    },
+    {
+      "key": "faults",
+      "name": "Coil and switch faults per day, 60 days",
+      "description": "Coil and switch faults the machines reported, per day, over the last 60 days. A rising line means a machine is about to need a technician.",
+      "display": "line",
+      "pos": [0, 6, 16, 7],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.machine_events_daily)",
+        "SELECT e.day, replace(e.event_type, '_', ' ') AS fault, sum(e.events) AS faults",
+        "FROM annex_api.machine_events_daily e, l",
+        "WHERE e.day > l.d - 60 AND e.event_type IN ('coil_fault', 'switch_fault')",
+        "GROUP BY e.day, e.event_type ORDER BY e.day"
+      ],
+      "viz": {"graph.dimensions": ["day", "fault"], "graph.metrics": ["faults"]}
+    },
+    {
+      "key": "downtime",
+      "name": "Downtime hours by venue, 90 days",
+      "description": "Hours machines were off the floor, by the venue where they stand now, for tickets opened in the last 90 days.",
+      "display": "bar",
+      "pos": [16, 6, 8, 7],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.daily_plays)",
+        "SELECT coalesce(t.current_venue_code, 'storage') AS venue, sum(t.downtime_hours) AS downtime_hours",
+        "FROM annex_api.service_log t, l",
+        "WHERE (t.opened_at AT TIME ZONE 'Europe/Ljubljana')::date > l.d - 90 AND t.downtime_hours IS NOT NULL",
+        "GROUP BY 1 ORDER BY downtime_hours DESC"
+      ],
+      "titles": {"downtime_hours": "Downtime (hours)"},
+      "viz": {"graph.dimensions": ["venue"], "graph.metrics": ["downtime_hours"]}
+    },
+    {
+      "key": "mttr",
+      "name": "Mean time to repair by technician, 180 days",
+      "description": "Average hours from report to closed, for tickets closed in the data (180 days), per technician, with how many they closed.",
+      "display": "row",
+      "pos": [0, 13, 8, 8],
+      "sql": [
+        "SELECT t.technician, round(avg(extract(epoch FROM (t.closed_at - t.opened_at)) / 3600)::numeric, 1) AS mean_hours_to_repair,",
+        "       count(*) AS tickets",
+        "FROM annex_api.service_log t",
+        "WHERE t.closed_at IS NOT NULL",
+        "GROUP BY t.technician ORDER BY mean_hours_to_repair"
+      ],
+      "titles": {"mean_hours_to_repair": "Mean time to repair (hours)"},
+      "viz": {"graph.dimensions": ["technician"], "graph.metrics": ["mean_hours_to_repair"], "graph.show_values": true}
+    },
+    {
+      "key": "symptoms",
+      "name": "Tickets by symptom, 180 days",
+      "description": "The 15 symptoms reported most often, over all tickets in the data (180 days).",
+      "display": "row",
+      "pos": [8, 13, 8, 8],
+      "sql": [
+        "SELECT t.symptom, count(*) AS tickets",
+        "FROM annex_api.service_log t",
+        "GROUP BY t.symptom ORDER BY tickets DESC, t.symptom",
+        "LIMIT 15"
+      ],
+      "viz": {"graph.dimensions": ["symptom"], "graph.metrics": ["tickets"], "graph.show_values": true}
+    },
+    {
+      "key": "parts",
+      "name": "Parts cost per month",
+      "description": "Cost of the parts used on tickets, by the month they were opened. The first and the last month are partial.",
+      "display": "bar",
+      "pos": [16, 13, 8, 8],
+      "sql": [
+        "SELECT date_trunc('month', t.opened_at AT TIME ZONE 'Europe/Ljubljana')::date AS month, sum(t.parts_cost_eur) AS parts_cost_eur",
+        "FROM annex_api.service_log t",
+        "GROUP BY 1 ORDER BY 1"
+      ],
+      "viz": {"graph.dimensions": ["month"], "graph.metrics": ["parts_cost_eur"]}
+    }
+  ]
+}
