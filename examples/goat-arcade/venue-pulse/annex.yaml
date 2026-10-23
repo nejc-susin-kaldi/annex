@@ -1,0 +1,18 @@
+# Annex manifest. Full contract: `annex contract`
+name: venue-pulse
+owner: maja
+description: My venue this week against last, per machine; idle machines and rotation candidates
+type: web
+port: 8080
+healthcheck: /healthz
+access: internal
+storage:
+  postgres: true    # each login's chosen venue
+  files: false
+data:
+  views: [venues, machine_floor, daily_plays]
+env:
+  HOME_VENUES: "maja=LJ1,boris=MB,lena=GZ"   # login=venue_code: the venue a person sees first
+  IDLE_GAMES_7D: "20"                        # fewer games than this in 7 days is idle
+secrets: []
+egress: []
