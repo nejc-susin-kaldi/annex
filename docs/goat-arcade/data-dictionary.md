@@ -213,3 +213,14 @@ Play per venue per day and hour: games and credits. One row per day, hour and ve
 | `games` | bigint | Games started in that hour. |
 | `credits` | bigint | Credits used (a game is one credit, sometimes two). |
 
+## `tournament_entries`
+Who is entered in each tournament in the club system (past and upcoming), by nickname; erased players are left out, so a tournament can list fewer rows than tournaments.entries.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `tournament_id` | integer | Tournament (tournaments.tournament_id). |
+| `nickname` | text | Nickname of the entered member (unique; players.nickname). |
+| `handle` | character(3) | Three-letter initials (not unique). |
+| `seed` | integer | Seed number; NULL until seeding is done. |
+| `entered_at` | timestamp with time zone | When the entry was made. |
+
