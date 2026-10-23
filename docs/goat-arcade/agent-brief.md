@@ -58,7 +58,7 @@ What the gateway doesn't do:
 - **No GROUP BY or SUM.** The views are already aggregated where it matters: per machine per day (`daily_plays`, `machine_events_daily`) and per venue per week (`revenue_weekly`). Total them further in your code.
 - **No writes.** Everything is read-only. Your app's own data goes in its own database (`storage.postgres: true`, see the contract).
 
-Some views are big if read whole, so filter them: `daily_plays` has about 23,000 rows, `machine_events_daily` about 45,000.
+Some views are big if read whole, so filter them: `daily_plays` has about 23,000 rows, `hourly_plays` about 17,000, `machine_events_daily` about 45,000.
 
 ## Which view answers what
 | Question | View |
@@ -68,7 +68,8 @@ Some views are big if read whole, so filter them: `daily_plays` has about 23,000
 | What stands where right now; what's broken, idle or busy? | `machine_floor` |
 | High scores, a high-score wall | `leaderboard` (top 10 per model, members only) |
 | Who are the regulars and the best players? | `player_profiles` (public profile: nickname, rating, activity) |
-| Busy days and hours, earnings per machine, trends | `daily_plays` |
+| Busy days, earnings per machine, trends | `daily_plays` |
+| Busiest hours and weekdays (a weekday-by-hour heatmap) | `hourly_plays` (per venue, day and hour; `weekday` 1 = Monday) |
 | Tilts, faults, jackpots | `machine_events_daily` |
 | What broke, how fast it got fixed, what it cost | `service_log` |
 | Cash per venue per week | `revenue_weekly` |

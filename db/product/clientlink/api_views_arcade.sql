@@ -90,6 +90,14 @@ JOIN src_arcade.venues v ON v.id = d.venue_id
 JOIN src_arcade.machines m ON m.id = d.machine_id
 JOIN src_arcade.machine_models mm ON mm.id = m.model_id;
 
+CREATE OR REPLACE VIEW annex_api.hourly_plays AS
+SELECT h.day, extract(isodow FROM h.day)::int AS weekday, h.hour, v.code AS venue_code, h.games, h.credits
+FROM (SELECT (started_at AT TIME ZONE 'Europe/Ljubljana')::date AS day,
+             extract(hour FROM started_at AT TIME ZONE 'Europe/Ljubljana')::int AS hour, venue_id,
+             count(*) AS games, sum(credits_used) AS credits
+      FROM src_arcade.games GROUP BY 1, 2, 3) h
+JOIN src_arcade.venues v ON v.id = h.venue_id;
+
 CREATE OR REPLACE VIEW annex_api.machine_events_daily AS
 SELECT e.day, e.machine_id, mm.title, v.code AS current_venue_code, e.event_type, e.events
 FROM (SELECT (occurred_at AT TIME ZONE 'Europe/Ljubljana')::date AS day, machine_id, event_type, count(*) AS events
@@ -234,6 +242,14 @@ COMMENT ON COLUMN annex_api.daily_plays.revenue_eur IS 'Credits times the machin
 COMMENT ON COLUMN annex_api.daily_plays.avg_duration_s IS 'Average game length in seconds.';
 COMMENT ON COLUMN annex_api.daily_plays.tilts IS 'Games that ended in a tilt (the player shook the machine too hard).';
 COMMENT ON COLUMN annex_api.daily_plays.members IS 'Distinct members who played (anonymous games not counted).';
+
+COMMENT ON VIEW annex_api.hourly_plays IS 'Goat Arcade: play per venue per day and hour: games and credits. One row per day, hour and venue with at least one game. For busiest-hours and weekday-by-hour heatmaps; days and hours are local (Central European) time.';
+COMMENT ON COLUMN annex_api.hourly_plays.day IS 'Local date.';
+COMMENT ON COLUMN annex_api.hourly_plays.weekday IS 'Day of the week of day: 1 = Monday ... 7 = Sunday.';
+COMMENT ON COLUMN annex_api.hourly_plays.hour IS 'Local hour of the day the games started, 0-23 (14 = 14:00 to 14:59).';
+COMMENT ON COLUMN annex_api.hourly_plays.venue_code IS 'Venue where the games were played.';
+COMMENT ON COLUMN annex_api.hourly_plays.games IS 'Games started in that hour.';
+COMMENT ON COLUMN annex_api.hourly_plays.credits IS 'Credits used (a game is one credit, sometimes two).';
 
 COMMENT ON VIEW annex_api.machine_events_daily IS 'Goat Arcade: what the machines reported, per machine, day and event type. Faults hint at a machine that needs a technician.';
 COMMENT ON COLUMN annex_api.machine_events_daily.day IS 'Local date.';
