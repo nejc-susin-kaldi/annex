@@ -1,18 +1,18 @@
 <?php
 // The repair board's content, from Goat Arcade's data through the Annex gateway, written with Kanboard's
-// JSON-RPC API (as the app user "jsonrpc", with the KANBOARD_API_TOKEN secret).
+// JSON-RPC API as its app user "jsonrpc". The API token is Kanboard's own, read from its settings table through the
+// app's DATABASE_URL (kbdb.php); it is never printed or logged.
 //
-//   php /opt/annex/seed.php seed     (annex run kanboard seed; by hand, once, and safe to repeat)
+//   php /opt/annex/seed.php    (annex run kanboard seed; by hand, once, and safe to repeat)
 //     a project per open venue, "Parts to order" (and "Workshop" for machines in storage), each with the columns
 //     Reported, Diagnosing, Waiting for parts, Fixed; a card per open service ticket in its venue's project, in
-//     the column for its status; a card in "Parts to order" per ticket waiting for parts; then the members sync.
+//     the column for its status; a card in "Parts to order" per ticket waiting for parts. Everyone who has signed
+//     in to Kanboard so far becomes a member of these projects; people who sign in later are added by an admin.
 //     Cards carry the reference ticket-<id> (parts-<id>): a rerun adds only what's missing and never moves or
 //     changes a card people have worked on.
-//   php /opt/annex/seed.php members  (every 15 minutes)
-//     makes everyone who has signed in to Kanboard a member of the Goat Arcade projects (Kanboard creates a user
-//     on their first visit, with no projects).
 //
-// Exit 0 on success, 1 on failure (Annex alerts the owner), 2 when the API token isn't set yet.
+// Exit 0 on success, 1 on failure (Annex alerts the owner).
+require __DIR__ . '/kbdb.php';
 
 const COLUMNS = ['Reported', 'Diagnosing', 'Waiting for parts', 'Fixed'];
 const STATUS_COLUMN = ['open' => 'Reported', 'in_progress' => 'Diagnosing', 'waiting_parts' => 'Waiting for parts'];
@@ -20,12 +20,6 @@ const PARTS = ['identifier' => 'PARTS', 'name' => 'Parts to order',
                'description' => 'Parts to order for machines waiting on them, one card per service ticket.'];
 const WORKSHOP = ['identifier' => 'WORKSHOP', 'name' => 'Workshop (machines in storage)',
                   'description' => 'Repairs on machines that are not on a venue floor.'];
-
-function log_line(string $level, string $msg, array $fields = []): void
-{
-    echo json_encode(['ts' => gmdate('Y-m-d\TH:i:s\Z'), 'level' => $level, 'msg' => $msg] + $fields,
-                     JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), "\n";
-}
 
 function http_json(string $url, array $headers, ?string $body = null, ?string $basicAuth = null)
 {
@@ -194,33 +188,14 @@ function goat_identifiers(Kanboard $kb): array
     return $ids;
 }
 
-$mode = $argv[1] ?? 'seed';
-if (!in_array($mode, ['seed', 'members'], true)) {
-    fwrite(STDERR, "usage: php seed.php seed|members\n");
-    exit(1);
-}
 $started = microtime(true);
-$token = (string) getenv('KANBOARD_API_TOKEN');
-if (strlen($token) < 32) {
-    $how = 'openssl rand -hex 32 | annex secret set kanboard KANBOARD_API_TOKEN';
-    if ($mode === 'members') {
-        // not configured yet is not a failure of this scheduled job: say so, don't alert every 15 minutes
-        log_line('warn', 'members sync skipped: the KANBOARD_API_TOKEN secret is not set', ['fix' => $how]);
-        exit(0);
-    }
-    log_line('error', 'the KANBOARD_API_TOKEN secret is not set (32+ characters); a human sets it', ['fix' => $how]);
-    exit(2);
-}
-$kb = new Kanboard('http://127.0.0.1:' . (getenv('PORT') ?: '8080') . '/jsonrpc.php', $token);
 $stats = ['projects_created' => 0, 'cards_created' => 0, 'cards_existing' => 0, 'memberships_added' => 0];
-log_line('info', "$mode started");
+log_line('info', 'seed started');
 
 try {
-    if ($mode === 'members') {
-        sync_members($kb, goat_identifiers($kb), $stats);
-        log_line('info', 'members finished', ['memberships_added' => $stats['memberships_added'], 'ms' => (int) ((microtime(true) - $started) * 1000)]);
-        exit(0);
-    }
+    [$token] = kanboard_api_token(kanboard_db());
+    $kb = new Kanboard('http://127.0.0.1:' . (getenv('PORT') ?: '8080') . '/jsonrpc.php', $token);
+    unset($token);
 
     $today = date('Y-m-d');
     $venues = [];
@@ -274,6 +249,6 @@ try {
     log_line('info', 'seed finished', $stats + ['venues' => count($venues), 'open_tickets' => count($tickets),
              'skipped_closed_venue' => $skipped, 'ms' => (int) ((microtime(true) - $started) * 1000)]);
 } catch (Throwable $e) {
-    log_line('error', "$mode failed", ['error' => $e->getMessage()] + $stats);
+    log_line('error', 'seed failed', ['error' => $e->getMessage()] + $stats);
     exit(1);
 }
