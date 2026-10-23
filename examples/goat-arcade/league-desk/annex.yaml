@@ -1,0 +1,19 @@
+# Annex manifest. Full contract: `annex contract`
+name: league-desk
+owner: lena
+description: Tournament desk - past standings, the next tournament and its entries, desk sign-ups, player lookup
+type: web
+port: 8080
+healthcheck: /healthz
+access: internal
+storage:
+  postgres: true    # desk sign-ups the club system doesn't have yet (the gateway is read-only)
+  files: false
+data:
+  views: [tournaments, tournament_standings, player_profiles, leaderboard, venues]
+notify:
+  slack: ["#ga-community"]   # one line per desk sign-up
+env:
+  SLACK_CHANNEL: "#ga-community"
+secrets: []
+egress: []
