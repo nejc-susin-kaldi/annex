@@ -1536,18 +1536,46 @@ def send_reset_email(login: str) -> None:
                    "Use --print-password instead, and check: docker logs annex-authelia-1")
 
 
-def update_demo_password(login: str, password: str) -> bool:
-    """users.txt holds the demo users' passwords (a demo convenience, D12): keep it right when one is reset."""
+def _write_users_txt(path: Path, lines: list[str]) -> None:
+    tmp = path.with_name(".users.txt.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("".join(line + "\n" for line in lines))
+        f.flush()
+        os.fsync(f.fileno())
+    tmp.replace(path)
+
+
+def update_demo_password(login: str, password: str, add: bool = False) -> bool:
+    """users.txt holds the demo users' passwords (`login password` lines, a demo convenience, D12): keep it right
+    when one is reset. With add=True (`--demo`, D107) a login without a line gets one, and the file is created if
+    missing. Written atomically with mode 0600 like the other secrets; returns whether the file now has a line."""
+    path = SECRETS / "users.txt"
+    if not path.exists() and not add:
+        return False
+    lines = path.read_text().splitlines() if path.exists() else []
+    hit = [i for i, line in enumerate(lines) if line.split(" ", 1)[0] == login]
+    for i in hit:
+        lines[i] = f"{login} {password}"
+    if not hit and add:
+        lines.append(f"{login} {password}")
+        hit = [len(lines) - 1]
+    if hit:
+        _write_users_txt(path, lines)
+    return bool(hit)
+
+
+def drop_demo_password(login: str) -> bool:
+    """Remove the login's line from users.txt when the account is removed (D107)."""
     path = SECRETS / "users.txt"
     if not path.exists():
         return False
     lines = path.read_text().splitlines()
-    hit = [i for i, line in enumerate(lines) if line.split(" ", 1)[0] == login]
-    for i in hit:
-        lines[i] = f"{login} {password}"
-    if hit:
-        path.write_text("\n".join(lines) + "\n")
-    return bool(hit)
+    keep = [line for line in lines if line.split(" ", 1)[0] != login]
+    if len(keep) == len(lines):
+        return False
+    _write_users_txt(path, keep)
+    return True
 
 
 def email_outside_domains(email: str) -> bool:
@@ -1579,9 +1607,13 @@ def cmd_users_add(a: argparse.Namespace) -> None:
         users[a.login] = {"disabled": False, "displayname": a.name, "email": a.email, "password": digest,
                           "groups": groups}
         save_users(users)
-    audit("user.added", a.actor, None, {"login": a.login, "groups": groups, "invited": not a.print_password})
+    demo = bool(getattr(a, "demo", False))
+    print_pw = a.print_password or demo  # a demo account's password is for a human to see, once
+    audit("user.added", a.actor, None, {"login": a.login, "groups": groups, "invited": not print_pw, "demo": demo})
     res = {"ok": True, "user": public_user(a.login, users[a.login])}
-    if a.print_password:
+    if demo:
+        res["demo_password_stored"] = update_demo_password(a.login, password, add=True)
+    if print_pw:
         res["password"] = password  # human-only, printed once by the CLI (the only secret this script prints)
     else:
         send_reset_email(a.login)
@@ -1626,6 +1658,7 @@ def cmd_users_remove(a: argparse.Namespace) -> None:
             raise Fail(f"no user {a.login!r}. See: annex users list")
         del users[a.login]
         save_users(users)
+    drop_demo_password(a.login)
     audit("user.removed", a.actor, None, {"login": a.login})
     out({"ok": True, "removed": a.login,
          "note": "apps they own keep running; give them a new owner in annex.yaml and deploy again"})
@@ -1639,10 +1672,10 @@ def cmd_users_reset(a: argparse.Namespace) -> None:
             raise Fail(f"no user {a.login!r}. See: annex users list")
         if u.get("disabled"):
             raise Fail(f"{a.login} is disabled. Enable it first: annex users set {a.login} --enable")
-        if a.print_password:
+        if a.print_password or getattr(a, "demo", False):
             password, u["password"] = random_password()
             save_users(users)
-            demo = update_demo_password(a.login, password)
+            demo = update_demo_password(a.login, password, add=bool(getattr(a, "demo", False)))
             audit("user.reset", a.actor, None, {"login": a.login, "how": "password printed once"})
             out({"ok": True, "login": a.login, "password": password, "demo_password_updated": demo})
             return
@@ -1769,6 +1802,8 @@ def main() -> None:
     s.add_argument("--email", required=True)
     s.add_argument("--groups", default="users")
     s.add_argument("--print-password", action="store_true")
+    s.add_argument("--demo", action="store_true",
+                   help="also keep the password in secrets/users.txt (suites, Metabase setup); implies --print-password")
     s.set_defaults(fn=cmd_users_add)
     s = sub.add_parser("users-set")
     s.add_argument("login")
@@ -1787,6 +1822,8 @@ def main() -> None:
     s.add_argument("login")
     s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
     s.add_argument("--print-password", action="store_true")
+    s.add_argument("--demo", action="store_true",
+                   help="print a new password and keep it in secrets/users.txt (adds the line if missing)")
     s.set_defaults(fn=cmd_users_reset)
     a = p.parse_args()
     if getattr(a, "app", None) is not None and not NAME_RE.fullmatch(a.app):  # fullmatch: '$' lets a newline through

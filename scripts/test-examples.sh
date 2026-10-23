@@ -10,7 +10,7 @@ ANNEX="$ROOT/annex"
 url() { echo "https://$(setting ANNEX_HOST_PATTERN | sed "s/{name}/$1/")$(setting ANNEX_PORT_SUFFIX)"; }
 text() { sed 's/<[^>]*>/ /g' | tr -s ' '; }
 expect "sam signs in" 200 "$(login sam)"
-expect "cm signs in" 200 "$(login cm)"
+expect "maja signs in" 200 "$(login maja)"
 
 echo "client-lookup"
 out=$("$ANNEX" deploy "$ROOT/examples/client-lookup" 2>&1) && ok "deploys ($(grep -o 'r[0-9]* is live' <<<"$out" | head -1))" || bad "deploy client-lookup" "$(tail -3 <<<"$out")"
@@ -19,12 +19,12 @@ page=$(as sam "$(url client-lookup)/" | text)
 has "greets the signed-in user" "Hello, Sam Novak" "$page"
 has "reads its granted views" "client_summary : allowed" "$page"
 has "is refused the ungranted one" "advisor_book : denied" "$page"
-has "a search returns clients" "Novak" "$(as cm "$(url client-lookup)/?q=novak" | text)"
+has "a search returns clients" "Novak" "$(as maja "$(url client-lookup)/?q=novak" | text)"
 expect "annex status: health check up" up "$("$ANNEX" --json status client-lookup | python3 -c 'import json,sys; print(json.load(sys.stdin)["health_check"]["state"])')"
 
 echo "monthly-report"
 out=$("$ANNEX" deploy "$ROOT/examples/monthly-report" 2>&1) && ok "deploys ($(grep -o 'r[0-9]* is live' <<<"$out" | head -1))" || bad "deploy monthly-report" "$(tail -3 <<<"$out")"
-has "its page answers" "Monthly positions" "$(as cm "$(url monthly-report)/" | text)"
+has "its page answers" "Monthly positions" "$(as maja "$(url monthly-report)/" | text)"
 jobs=$(vm "docker logs annex-ofelia-1 2>&1 | sed 's/\x1b\[[0-9;]*m//g'")
 has "its monthly job is scheduled (and is not run here)" 'registered "monthly-report-monthly"' "$jobs"
 has "so is the demo's refresh job" 'registered "monthly-report-refresh"' "$jobs"

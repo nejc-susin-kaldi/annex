@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # M1.2 acceptance checks for annex-ops, run from the Mac through the SSH tunnel:
-# the grant follows annex.yaml, `annex run annex-selftest notify` emails cm (caught by Mailpit) and posts to #annex-selftest,
+# the grant follows annex.yaml, `annex run annex-selftest notify` emails maja (caught by Mailpit) and posts to #annex-selftest,
 # outside recipients and other Slack channels are refused, every attempt is in `annex sends`
 # without a body, and Mailpit's UI is for admins only.
 # Deploys annex-selftest (notify: email + Slack) and annex-selftest-bare (the same without notify).
@@ -32,9 +32,9 @@ expect "kaldi-admin logs in (for Mailpit)" 200 "$(login kaldi-admin)"
 c -o /dev/null -X DELETE -b "$TMP/kaldi-admin.jar" "$MAIL_URL/api/v1/messages"
 expect "Mailpit is empty before the run" 0 "$(mail_count)"
 out=$("$ROOT/annex" run "$APP" notify 2>&1) && ok "annex run $APP notify exits 0" || bad "annex run $APP notify exits 0" "$out"
-has "the job logs that it emailed (logins, not addresses)" '"msg": "notify emailed", "to": ["cm"]' "$out"
-hits=$(as kaldi-admin "$MAIL_URL/api/v1/search?query=to:cm@annex.example")
-expect "Mailpit has exactly one message to cm@annex.example" 1 "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["messages_count"])' <<<"$hits")"
+has "the job logs that it emailed (logins, not addresses)" '"msg": "notify emailed", "to": ["maja"]' "$out"
+hits=$(as kaldi-admin "$MAIL_URL/api/v1/search?query=to:maja@goat-arcade.example")
+expect "Mailpit has exactly one message to maja@goat-arcade.example" 1 "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["messages_count"])' <<<"$hits")"
 id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["messages"][0]["ID"])' <<<"$hits" 2>/dev/null || true)
 msg=$(as kaldi-admin "$MAIL_URL/api/v1/message/$id")
 field() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" <<<"$msg"; }
@@ -67,11 +67,11 @@ def raw(path, body):
         return str(e.code), json.load(e).get("error", "")
 
 show("external", lambda: send_email("someone@gmail.com", "Hi", text="hello"))
-show("mixed", lambda: send_email(["cm", "someone@gmail.com"], "Hi", text="hello"))
+show("mixed", lambda: send_email(["maja", "someone@gmail.com"], "Hi", text="hello"))
 show("unknown_login", lambda: send_email("nobody", "Hi", text="hello"))
-status, msg = raw("/v1/email", {"to": "cm", "subject": "Hi", "text": "hello", "attachments": [{"name": "a.csv"}]})
+status, msg = raw("/v1/email", {"to": "maja", "subject": "Hi", "text": "hello", "attachments": [{"name": "a.csv"}]})
 print(f"attachments|{status}|{msg}")
-show("two_bodies", lambda: send_email("cm", "Hi", text="a", html="<p>b</p>"))
+show("two_bodies", lambda: send_email("maja", "Hi", text="a", html="<p>b</p>"))
 show("slack_other", lambda: post_slack("#other", "hello"))
 show("slack_granted", lambda: post_slack("#annex-selftest", "hello from test-notify"))
 PY
@@ -79,7 +79,7 @@ probe=$(vm "docker exec -i annex-app-$APP python -" < "$TMP/probe.py" 2>&1)
 row() { grep "^$1|" <<<"$probe" | head -1; }
 r=$(row external);       has "external address: 403 naming annex.example" "403|" "$r"; has "  ...says it is outside" "annex.example" "$r"
 r=$(row mixed);          has "one bad recipient refuses the whole email (403)" "403|" "$r"
-r=$(row unknown_login);  has "unknown login: 400 listing the logins" "400|" "$r"; has "  ...names a known login" "cm" "$r"
+r=$(row unknown_login);  has "unknown login: 400 listing the logins" "400|" "$r"; has "  ...names a known login" "maja" "$r"
 r=$(row attachments);    has "attachments: 400 with the link advice" "400|" "$r"; has "  ...says to email a link" "email a link" "$r"
 r=$(row two_bodies);     has "text and html together: 400" "400|" "$r"
 r=$(row slack_other);    has "Slack to #other: 403" "403|" "$r"; has "  ...names $CHANNEL" "$CHANNEL" "$r"
@@ -99,7 +99,7 @@ cat > "$TMP/anon.py" <<'PY'
 import json, urllib.request, urllib.error
 for name, headers in (("no_token", {}), ("made_up", {"Authorization": "Bearer not-a-real-token"})):
     req = urllib.request.Request("http://ops:8000/v1/email", method="POST", headers={"Content-Type": "application/json", **headers},
-                                 data=json.dumps({"to": "cm", "subject": "x", "text": "x"}).encode())
+                                 data=json.dumps({"to": "maja", "subject": "x", "text": "x"}).encode())
     try:
         urllib.request.urlopen(req, timeout=10)
         print(name, 200)
@@ -115,7 +115,7 @@ expect "no email was sent by the unauthenticated calls" "$before" "$(mail_count)
 echo "Send log"
 sends=$("$ROOT/annex" --json sends "$APP" 2>&1)
 check() { python3 -c "import json,sys; rows=json.load(sys.stdin); $1" <<<"$sends"; }
-expect "the email is logged as sent to cm@annex.example" True "$(check 'print(any(r["channel"]=="email" and r["status"]=="sent" and r["recipients"]==["cm@annex.example"] and "notification check" in r["subject"] for r in rows))')"
+expect "the email is logged as sent to maja@goat-arcade.example" True "$(check 'print(any(r["channel"]=="email" and r["status"]=="sent" and r["recipients"]==["maja@goat-arcade.example"] and "notification check" in r["subject"] for r in rows))')"
 expect "the refused external send is logged as rejected, with the reason" True "$(check 'print(any(r["status"]=="rejected" and r["recipients"]==["someone@gmail.com"] and "annex.example" in r["error"] for r in rows))')"
 expect "the unknown login is logged as rejected" True "$(check 'print(any(r["status"]=="rejected" and r["recipients"]==["nobody"] and "unknown login" in r["error"] for r in rows))')"
 expect "the attachments attempt is logged as rejected" True "$(check 'print(any(r["status"]=="rejected" and "Attachments" in (r["error"] or "") for r in rows))')"

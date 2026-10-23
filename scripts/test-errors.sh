@@ -19,7 +19,7 @@ TUNING=$DATA/state/ops/tuning.json
 WORK=$ROOT/.build/test-errors
 SAM=sam@annex.example
 ADMIN=admin@annex.example
-CM=cm@annex.example
+CM=maja@goat-arcade.example
 mkdir -p "${WORK:?}" && find "${WORK:?}" -mindepth 1 -delete
 py() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 cleanup() {
@@ -69,7 +69,7 @@ mail_wait $SAM "$P: RuntimeError in handle_raise" 1 60 && ok "the owner got an e
 sleep 16
 expect "exactly one email to the owner" 1 "$(emails $SAM "$P")"
 expect "one to the admin (the same message)" 1 "$(emails $ADMIN "$P")"
-expect "none to anyone else (cm)" 0 "$(emails $CM "[Annex]")"
+expect "none to anyone else (maja)" 0 "$(emails $CM "[Annex]")"
 g=$(errs annex-selftest)
 expect "one group" 1 "$(py 'len(d)' <<<"$g")"
 expect "  ...seen 50 times" 50 "$(py 'd[0]["count"]' <<<"$g")"

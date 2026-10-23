@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # M1.4 acceptance checks for usage stats, run from the Mac through the SSH tunnel:
-# a scripted session with `sam` and `cm` across three apps (two static ones and annex-selftest) must show up with the same numbers in `annex usage`,
+# a scripted session with `sam` and `maja` across three apps (two static ones and annex-selftest) must show up with the same numbers in `annex usage`,
 # the discovery tiles and the console's Usage tab, and match the script; requests that must not count don't;
 # nothing personal leaks; raw rows are deleted after 30 days; a restart neither loses nor repeats rows; the
 # weekly digest flags a dormant app. Deploys two throwaway static apps (usage-probe, usage-idle) and annex-selftest, and removes them.
@@ -42,20 +42,20 @@ selftest_build "$WORK/$LOOKUP" --drop webhooks,notify
 selftest_deploy "$WORK/$LOOKUP" >/dev/null && ok "$LOOKUP deployed (the self-test app: the one with real pages and a gateway view)" || bad "$LOOKUP deployed" "failed"
 on_exit "selftest_remove $LOOKUP"
 expect "sam logs in" 200 "$(login sam)"
-expect "cm logs in" 200 "$(login cm)"
+expect "maja logs in" 200 "$(login maja)"
 expect "kaldi-admin logs in" 200 "$(login kaldi-admin)"
 ctl rollup >/dev/null
 # the apps must carry the health-path label, or their health checks would count
 expect "$PROBE carries the health-path label" "/healthz" "$(vm "docker inspect -f '{{index .Config.Labels \"com.kaldi.annex.healthcheck\"}}' annex-app-$PROBE")"
 BEFORE_L_REQ=$(field $LOOKUP requests_7d); BEFORE_P_REQ=$(field $PROBE requests_7d); BEFORE_I_REQ=$(field $IDLE requests_7d)
-B_L_ROOT=$(sql "SELECT count(*) FROM annex_ops.requests WHERE app = '$LOOKUP' AND login = 'cm' AND path = '/'")
-B_L_SAM=$(count_of $LOOKUP sam); B_L_CM=$(count_of $LOOKUP cm); B_P_SAM=$(count_of $PROBE sam); B_P_CM=$(count_of $PROBE cm)
+B_L_ROOT=$(sql "SELECT count(*) FROM annex_ops.requests WHERE app = '$LOOKUP' AND login = 'maja' AND path = '/'")
+B_L_SAM=$(count_of $LOOKUP sam); B_L_CM=$(count_of $LOOKUP maja); B_P_SAM=$(count_of $PROBE sam); B_P_CM=$(count_of $PROBE maja)
 sleep 3
 
 echo "Scripted session"
 hits sam $LOOKUP "/" 5
-hits cm $LOOKUP "/?q=novak" 2
-hits cm $PROBE "/" 3
+hits maja $LOOKUP "/?q=novak" 2
+hits maja $PROBE "/" 3
 hits sam $PROBE "/" 4
 # must NOT count: health paths, static assets, anonymous requests (they get a login redirect)
 hits sam $LOOKUP "/healthz" 2
@@ -64,9 +64,9 @@ hits sam $PROBE "/favicon.ico" 2
 hits sam $PROBE "/style.css" 1
 for _ in 1 2; do code "$(url $LOOKUP)/" >/dev/null; done
 expect "an anonymous request gets the login redirect" 302 "$(code "$(url $LOOKUP)/")"
-ok "session sent: sam 5+4, cm 2+3 counted; health paths, assets and anonymous requests not"
+ok "session sent: sam 5+4, maja 2+3 counted; health paths, assets and anonymous requests not"
 end=$((SECONDS + 60))
-until [ "$(count_of $LOOKUP sam)" -ge $((B_L_SAM + 5)) ] && [ "$(count_of $PROBE sam)" -ge $((B_P_SAM + 4)) ] && [ "$(count_of $PROBE cm)" -ge $((B_P_CM + 3)) ]; do
+until [ "$(count_of $LOOKUP sam)" -ge $((B_L_SAM + 5)) ] && [ "$(count_of $PROBE sam)" -ge $((B_P_SAM + 4)) ] && [ "$(count_of $PROBE maja)" -ge $((B_P_CM + 3)) ]; do
   [ $SECONDS -ge $end ] && break; sleep 3
 done
 sleep 7  # let anything counted by mistake arrive too
@@ -74,14 +74,14 @@ ctl rollup >/dev/null
 
 echo "Numbers"
 expect "$LOOKUP: sam's requests increased by 5" 5 $(( $(count_of $LOOKUP sam) - B_L_SAM ))
-expect "$LOOKUP: cm's requests increased by 2" 2 $(( $(count_of $LOOKUP cm) - B_L_CM ))
+expect "$LOOKUP: maja's requests increased by 2" 2 $(( $(count_of $LOOKUP maja) - B_L_CM ))
 expect "$PROBE: sam's requests increased by 4" 4 $(( $(count_of $PROBE sam) - B_P_SAM ))
-expect "$PROBE: cm's requests increased by 3" 3 $(( $(count_of $PROBE cm) - B_P_CM ))
+expect "$PROBE: maja's requests increased by 3" 3 $(( $(count_of $PROBE maja) - B_P_CM ))
 expect "$LOOKUP: requests_7d increased by 7" 7 $(( $(field $LOOKUP requests_7d) - BEFORE_L_REQ ))
 expect "$PROBE: requests_7d increased by 7" 7 $(( $(field $PROBE requests_7d) - BEFORE_P_REQ ))
 expect "$IDLE: requests_7d did not change" "$BEFORE_I_REQ" "$(field $IDLE requests_7d)"
-expect "$LOOKUP is used by sam and cm (--by-user)" "cm sam" "$(by_user $LOOKUP | tr ' ' '\n' | cut -d= -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
-expect "$PROBE is used by sam and cm (--by-user)" "cm sam" "$(by_user $PROBE | tr ' ' '\n' | cut -d= -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
+expect "$LOOKUP is used by sam and maja (--by-user)" "maja sam" "$(by_user $LOOKUP | tr ' ' '\n' | cut -d= -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
+expect "$PROBE is used by sam and maja (--by-user)" "maja sam" "$(by_user $PROBE | tr ' ' '\n' | cut -d= -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
 expect "$IDLE has no users" 0 "$(field $IDLE users_7d)"
 usage_json=$(ctl usage)
 tile_json() { vm "docker exec annex-ops-1 python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/tiles/$1').read().decode())\""; }
@@ -94,10 +94,10 @@ print(r["users_7d"], r["trend"], r["requests_7d"])' "$usage_json" "$app")
   got=$(python3 -c 'import json,sys; t=json.loads(sys.argv[1]); print(t["users_7d"], t["trend"], t["requests_7d"])' "$t")
   expect "tile of $app equals annex usage (users, trend, requests)" "$want" "$got"
 done
-services=$(as cm "$HOME_URL/api/services")
+services=$(as maja "$HOME_URL/api/services")
 has "Homepage lists the customapi widget for $LOOKUP" "\"service_name\":\"$LOOKUP\"" "$services"
 has "  ...with the 'Users 7d' mapping" '"label":"Users 7d"' "$services"
-proxied=$(as cm "$HOME_URL/api/services/proxy?type=customapi&group=Tools&service=$LOOKUP&index=0")
+proxied=$(as maja "$HOME_URL/api/services/proxy?type=customapi&group=Tools&service=$LOOKUP&index=0")
 expect "Homepage serves the tile data (users_7d)" "$(field $LOOKUP users_7d)" "$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["users_7d"])' "$proxied")"
 hasnt "the retired Usage tile (M2.9) is not on the discovery page" '"name":"Usage"' "$services"
 
@@ -111,15 +111,15 @@ has "  ...and draws its charts (inline SVG, no script)" '<svg class="chart"' "$(
 
 echo "Privacy"
 expect "no stored path has a query string" 0 "$(sql "SELECT count(*) FROM annex_ops.requests WHERE path LIKE '%?%'")"
-expect "cm's 2 requests for /?q=novak are stored as plain /" "$((B_L_ROOT + 2))" "$(sql "SELECT count(*) FROM annex_ops.requests WHERE app = '$LOOKUP' AND login = 'cm' AND path = '/'")"
-if grep -qE '"(login|logins)"' <<<"$usage_json" || grep -qE '"(sam|cm|kaldi-admin)"' <<<"$usage_json"; then bad "annex usage (no --by-user) shows no logins" "found one"; else ok "annex usage (no --by-user) shows no logins"; fi
+expect "maja's 2 requests for /?q=novak are stored as plain /" "$((B_L_ROOT + 2))" "$(sql "SELECT count(*) FROM annex_ops.requests WHERE app = '$LOOKUP' AND login = 'maja' AND path = '/'")"
+if grep -qE '"(login|logins)"' <<<"$usage_json" || grep -qE '"(sam|maja|kaldi-admin)"' <<<"$usage_json"; then bad "annex usage (no --by-user) shows no logins" "found one"; else ok "annex usage (no --by-user) shows no logins"; fi
 all_tiles="$(tile_json $LOOKUP)$(tile_json $PROBE)$(tile_json $IDLE)"
-if grep -qE '(sam|cm|kaldi-admin)' <<<"$all_tiles"; then bad "tile JSON shows no logins" "$all_tiles"; else ok "tile JSON shows no logins"; fi
+if grep -qE '(sam|maja|kaldi-admin)' <<<"$all_tiles"; then bad "tile JSON shows no logins" "$all_tiles"; else ok "tile JSON shows no logins"; fi
 has "--by-user needs an app" "needs an app" "$("$ROOT/annex" usage --by-user 2>&1 || true)"
 has "annex usage <app> --by-user prints the personal-data reminder" "personal data" "$("$ROOT/annex" usage $LOOKUP --by-user 2>&1)"
 
 echo "Retention"
-sql "INSERT INTO annex_ops.requests VALUES (now() - interval '31 days', '$PROBE', 'cm', 'GET', '/old', 200, 5)" >/dev/null
+sql "INSERT INTO annex_ops.requests VALUES (now() - interval '31 days', '$PROBE', 'maja', 'GET', '/old', 200, 5)" >/dev/null
 expect "a 31-day-old row exists before the rollup" 1 "$(sql "SELECT count(*) FROM annex_ops.requests WHERE path = '/old'")"
 ctl rollup >/dev/null
 expect "the rollup deleted it" 0 "$(sql "SELECT count(*) FROM annex_ops.requests WHERE path = '/old'")"
@@ -154,7 +154,7 @@ dormant_line=$(grep -E '^Dormant' <<<"$body")
 has "the digest lists $IDLE under Dormant" "$IDLE" "$dormant_line"
 if grep -qF "$LOOKUP" <<<"$dormant_line"; then bad "$LOOKUP is not listed as dormant" "$dormant_line"; else ok "$LOOKUP is not listed as dormant"; fi
 has "the digest has the app's line with its trend" "$LOOKUP" "$body"
-if grep -qiE '\b(sam|cm|kaldi-admin)\b' <<<"$body"; then bad "the digest contains no login" "$(grep -iE '\b(sam|cm|kaldi-admin)\b' <<<"$body" | head -2)"; else ok "the digest contains no login"; fi
+if grep -qiE '\b(sam|maja|kaldi-admin)\b' <<<"$body"; then bad "the digest contains no login" "$(grep -iE '\b(sam|maja|kaldi-admin)\b' <<<"$body" | head -2)"; else ok "the digest contains no login"; fi
 
 echo "Teardown"
 for app in $PROBE $IDLE; do "$ROOT/annex" remove "$app" --yes >/dev/null 2>&1 && ok "removed $app" || bad "removed $app" "failed"; done

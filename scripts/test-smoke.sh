@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test: is everything up and wired together? Run it after every push (under a minute).
 # It touches each part once, cheaply, and changes nothing that matters: one deploy of Annex's own test app
-# (annex-selftest, removed again at the end), two runs of its jobs (one email to cm in Mailpit, one Slack post on #annex-selftest).
+# (annex-selftest, removed again at the end), two runs of its jobs (one email to maja in Mailpit, one Slack post on #annex-selftest).
 # It doesn't prove timings, retries or "exactly one alert": that's what the full suites are for
 # (scripts/test-all.sh, 30+ minutes: run them only when you changed those parts).
 source "$(dirname "$0")/lib.sh"
@@ -34,11 +34,11 @@ left=$(vm "docker ps --filter label=com.kaldi.annex=true --format '{{.Names}} {{
 expect "every platform container is healthy" "" "$left"
 ports=$(vm "docker ps --filter publish=1-65535 --format '{{.Names}}'" | grep -v '^annex-traefik-1$' || true)
 expect "only Traefik publishes ports" "" "$ports"
-for u in sam cm kaldi-admin; do expect "$u signs in" 200 "$(login "$u")"; done
-expect "the discovery page" 200 "$(code -b "$TMP/cm.jar" "$HOME_URL/")"
+for u in sam maja kaldi-admin; do expect "$u signs in" 200 "$(login "$u")"; done
+expect "the discovery page" 200 "$(code -b "$TMP/maja.jar" "$HOME_URL/")"
 expect "anonymous is sent to login" 302 "$(code "$HOME_URL/")"
-expect "the status page (the console's /status)" 200 "$(code -b "$TMP/cm.jar" "$(setting ANNEX_URL_CONSOLE)/status")"
-expect "Mailpit is admins only" "403 200" "$(code -b "$TMP/cm.jar" "$(setting ANNEX_URL_MAIL)/") $(code -b "$TMP/kaldi-admin.jar" "$(setting ANNEX_URL_MAIL)/")"
+expect "the status page (the console's /status)" 200 "$(code -b "$TMP/maja.jar" "$(setting ANNEX_URL_CONSOLE)/status")"
+expect "Mailpit is admins only" "403 200" "$(code -b "$TMP/maja.jar" "$(setting ANNEX_URL_MAIL)/") $(code -b "$TMP/kaldi-admin.jar" "$(setting ANNEX_URL_MAIL)/")"
 has "annex users lists the accounts" "kaldi-admin" "$("$ANNEX" users list 2>&1)"
 # the demo client's database (Goat Arcade, D77), when it runs and product-db is linked to it
 if [ -n "$(vm "docker ps -q --filter name=^democlient-arcade-db-1\$ --filter health=healthy")" ] \
@@ -53,14 +53,14 @@ echo "Deploy, identity, gateway"
 selftest_build "$ROOT/.build/selftest-smoke"
 out=$(selftest_deploy "$ROOT/.build/selftest-smoke") && ok "annex deploy annex-selftest ($(grep -o 'r[0-9]* is live' <<<"$out" | head -1))" \
   || bad "annex deploy annex-selftest" "$(tail -3 <<<"$out")"
-page=$(c -b "$TMP/cm.jar" "$(url $APP)/" | sed 's/<[^>]*>/ /g' | tr -s ' ')
+page=$(c -b "$TMP/maja.jar" "$(url $APP)/" | sed 's/<[^>]*>/ /g' | tr -s ' ')
 has "it greets the signed-in user" "Hello, Maja Horvat" "$page"
 has "a granted view is readable" "client_summary : allowed" "$page"
 has "an ungranted view is denied" "advisor_book : denied" "$page"
 has "a deploy of a conforming app has no logging warning" "is live" "$out"
 hasnt "  ...(logs are structured)" "logs aren't structured" "$out"
 # the logging convention (M2.1): one request carries one id in its response header, its log lines and Traefik's access log
-rid_headers=$(c -D - -o /dev/null -b "$TMP/cm.jar" "$(url $APP)/?q=novak")
+rid_headers=$(c -D - -o /dev/null -b "$TMP/maja.jar" "$(url $APP)/?q=novak")
 rid=$(tr -d '\r' <<<"$rid_headers" | sed -n 's/^[Xx]-[Rr]equest-[Ii]d: //p')
 expect "the response carries an X-Request-Id" 16 "${#rid}"
 sleep 2
@@ -77,7 +77,7 @@ has "annex logs --request finds the request in the stored logs" " r$(py 'd["rele
 expect "annex audit shows this deploy of $APP" True "$("$ANNEX" --json audit --app $APP --action deploy --since 15m | py 'len(d) >= 1 and bool(d[0]["actor"])')"
 # error groups (M2.3): the list answers, and the app serves the browser error script
 expect "annex errors answers (a list)" list "$("$ANNEX" --json errors $APP | py 'type(d).__name__')"
-has "the app serves /annex-errors.js" "unhandledrejection" "$(c -b "$TMP/cm.jar" "$(url $APP)/annex-errors.js")"
+has "the app serves /annex-errors.js" "unhandledrejection" "$(c -b "$TMP/maja.jar" "$(url $APP)/annex-errors.js")"
 st=$("$ANNEX" --json status $APP)
 expect "annex status: health check up" up "$(py '(d.get("health_check") or {}).get("state")' <<<"$st")"
 expect "annex status: no open incident" None "$(py 'd.get("incident")' <<<"$st")"
@@ -85,9 +85,9 @@ expect "annex status: no open incident" None "$(py 'd.get("incident")' <<<"$st")
 echo "Jobs and email"
 out=$("$ANNEX" run $APP work 2>&1) && ok "annex run $APP work (the scheduler's exec path: gateway, database, files)" || bad "annex run work" "$(tail -3 <<<"$out")"
 has "  ...it read the gateway and wrote its run" '"msg": "job finished"' "$out"
-mail_before=$(mail_count cm@annex.example "annex-selftest: notification check")
+mail_before=$(mail_count maja@goat-arcade.example "annex-selftest: notification check")
 out=$("$ANNEX" run $APP notify 2>&1) && ok "annex run $APP notify (email, and Slack on the test channel)" || bad "annex run notify" "$(tail -3 <<<"$out")"
-mail_wait cm@annex.example "annex-selftest: notification check" $((mail_before + 1)) 30 && ok "cm got the email (Mailpit)" \
+mail_wait maja@goat-arcade.example "annex-selftest: notification check" $((mail_before + 1)) 30 && ok "maja got the email (Mailpit)" \
   || bad "notify email" "none in Mailpit"
 
 echo "annex-ops"
@@ -105,10 +105,10 @@ has "the discovery page's Status tile has counts" '"down"' "$(vm "docker exec an
 
 echo "Console (M2.4)"
 CONSOLE=$(setting ANNEX_URL_CONSOLE)
-expect "the console shows sam his app, and gives cm a 403 on it (and cm /status)" "200 403 200" \
-  "$(code -b "$TMP/sam.jar" "$CONSOLE/apps/$APP") $(code -b "$TMP/cm.jar" "$CONSOLE/apps/$APP") $(code -b "$TMP/cm.jar" "$CONSOLE/status")"
+expect "the console shows sam his app, and gives maja a 403 on it (and maja /status)" "200 403 200" \
+  "$(code -b "$TMP/sam.jar" "$CONSOLE/apps/$APP") $(code -b "$TMP/maja.jar" "$CONSOLE/apps/$APP") $(code -b "$TMP/maja.jar" "$CONSOLE/status")"
 expect "the console is on no network apps are on" "annex-console annex-platform " "$(vm "docker inspect annex-console-1 -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}} {{end}}'" | tr ' ' '\n' | grep . | sort | tr '\n' ' ')"
-has "Homepage lists the Console and Status tiles (its services.yaml parses)" "$CONSOLE/status" "$(c -b "$TMP/cm.jar" "$HOME_URL/api/services")"
+has "Homepage lists the Console and Status tiles (its services.yaml parses)" "$CONSOLE/status" "$(c -b "$TMP/maja.jar" "$HOME_URL/api/services")"
 
 echo "Webhooks (the receiver)"
 HOOKS=$(setting ANNEX_URL_HOOKS)

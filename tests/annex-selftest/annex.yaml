@@ -38,7 +38,7 @@ schedule:
     cron: "0 0 30 2 *"
     command: ["python", "main.py", "job", "notify"]
 env:
-  SELFTEST_RECIPIENT: cm
+  SELFTEST_RECIPIENT: maja
   SELFTEST_MARKER: boot-default
   SELFTEST_SECRET: not-a-secret-just-a-default      # logged on purpose by /emit, to prove it never reaches the stored logs
 secrets: [TRELLO_SECRET, GH_SECRET, PLAIN_SECRET]
