@@ -1,4 +1,4 @@
--- The gateway allowlist for Goat Arcade, the demo client's own database (D77, D78). Same rules as api_views.sql:
+-- The gateway allowlist for Goat Arcade, the demo client's own database (D77, D78; annex_api.sql holds the schema). Rules:
 -- apps and Metabase see only these views, adding one is a reviewed change, and every view and column has a
 -- comment (PostgREST puts them in its OpenAPI description, which is the data dictionary builders' agents read;
 -- scripts/democlient.sh dictionary writes them to docs/goat-arcade/data-dictionary.md).
