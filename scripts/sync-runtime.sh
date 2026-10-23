@@ -12,14 +12,14 @@ for name in annex_runtime.py annex_runtime.js; do
       if [ -n "$check" ]; then echo "differs from runtime/$name: ${copy#"$ROOT"/}"; stale=1
       else cp "$ROOT/runtime/$name" "$copy"; echo "updated ${copy#"$ROOT"/}"; fi
     fi
-  done < <(find "$ROOT/templates" "$ROOT/examples" "$ROOT/tests" -name "$name" -not -path '*/node_modules/*')
+  done < <(find "$ROOT/templates" "$ROOT/examples" "$ROOT/tests" -name "$name" -not -path '*/node_modules/*' -not -path '*/examples/archive/*')
 done
 # the browser error script (M2.3) goes next to the runtime in every web app folder, and into the static template's public/
 copies=()
 while IFS= read -r rt; do
   dir=$(dirname "$rt")
   if [ -f "$dir/main.py" ] || [ -f "$dir/server.js" ]; then copies+=("$dir/annex-errors.js"); fi
-done < <(find "$ROOT/templates" "$ROOT/examples" "$ROOT/tests" \( -name annex_runtime.py -o -name annex_runtime.js \) -not -path '*/node_modules/*')
+done < <(find "$ROOT/templates" "$ROOT/examples" "$ROOT/tests" \( -name annex_runtime.py -o -name annex_runtime.js \) -not -path '*/node_modules/*' -not -path '*/examples/archive/*')
 copies+=("$ROOT/templates/static/public/annex-errors.js")
 for copy in "${copies[@]}"; do
   if ! cmp -s "$ROOT/runtime/annex-errors.js" "$copy"; then
