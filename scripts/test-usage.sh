@@ -28,6 +28,13 @@ print(' '.join(u['login'] + '=' + str(u['requests']) for u in json.load(sys.stdi
 count_of() { # count_of APP LOGIN (from the by-user list)
   by_user "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -1 | grep . || echo 0
 }
+grew() { # grew APP "login=count ..." -> the logins whose count went up since that snapshot (earlier runs' users don't count)
+  python3 -c '
+import sys
+before = dict(x.split("=") for x in sys.argv[1].split())
+now = dict(x.split("=") for x in sys.argv[2].split())
+print(" ".join(sorted(l for l, n in now.items() if int(n) > int(before.get(l, 0)))))' "$2" "$(by_user "$1")"
+}
 field() { # field APP FIELD -> a value of that app's `annex usage` row
   ctl usage | python3 -c 'import json,sys; print(next(r for r in json.load(sys.stdin) if r["app"] == sys.argv[1])[sys.argv[2]])' "$1" "$2"
 }
@@ -49,6 +56,7 @@ ctl rollup >/dev/null
 expect "$PROBE carries the health-path label" "/healthz" "$(vm "docker inspect -f '{{index .Config.Labels \"com.kaldi.annex.healthcheck\"}}' annex-app-$PROBE")"
 BEFORE_L_REQ=$(field $LOOKUP requests_7d); BEFORE_P_REQ=$(field $PROBE requests_7d); BEFORE_I_REQ=$(field $IDLE requests_7d)
 B_L_ROOT=$(sql "SELECT count(*) FROM annex_ops.requests WHERE app = '$LOOKUP' AND login = 'maja' AND path = '/'")
+B_L_ALL=$(by_user $LOOKUP); B_P_ALL=$(by_user $PROBE)
 B_L_SAM=$(count_of $LOOKUP sam); B_L_CM=$(count_of $LOOKUP maja); B_P_SAM=$(count_of $PROBE sam); B_P_CM=$(count_of $PROBE maja)
 sleep 3
 
@@ -80,8 +88,8 @@ expect "$PROBE: maja's requests increased by 3" 3 $(( $(count_of $PROBE maja) - 
 expect "$LOOKUP: requests_7d increased by 7" 7 $(( $(field $LOOKUP requests_7d) - BEFORE_L_REQ ))
 expect "$PROBE: requests_7d increased by 7" 7 $(( $(field $PROBE requests_7d) - BEFORE_P_REQ ))
 expect "$IDLE: requests_7d did not change" "$BEFORE_I_REQ" "$(field $IDLE requests_7d)"
-expect "$LOOKUP is used by sam and maja (--by-user)" "maja sam" "$(by_user $LOOKUP | tr ' ' '\n' | cut -d= -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
-expect "$PROBE is used by sam and maja (--by-user)" "maja sam" "$(by_user $PROBE | tr ' ' '\n' | cut -d= -f1 | sort | tr '\n' ' ' | sed 's/ $//')"
+expect "$LOOKUP: this session's users are sam and maja (--by-user)" "maja sam" "$(grew $LOOKUP "$B_L_ALL")"
+expect "$PROBE: this session's users are sam and maja (--by-user)" "maja sam" "$(grew $PROBE "$B_P_ALL")"
 expect "$IDLE has no users" 0 "$(field $IDLE users_7d)"
 usage_json=$(ctl usage)
 tile_json() { vm "docker exec annex-ops-1 python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/tiles/$1').read().decode())\""; }
