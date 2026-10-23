@@ -1,0 +1,28 @@
+# Annex manifest. Full contract: `annex contract`
+name: tech-board
+owner: sam
+description: "Technicians' morning list: out of order, open tickets by age, rising faults; \"I'm on it\" claims"
+type: web+job
+port: 8080
+healthcheck: /healthz
+access: internal
+storage:
+  postgres: true       # claims and the watch job's last state
+  files: false
+data:
+  views: [machine_floor, service_log, machine_events_daily]
+notify:
+  email: true          # the 07:30 morning list
+  slack: ["#ga-tech"]  # a machine newly out of order
+schedule:
+  - name: morning
+    cron: "30 7 * * 1-6"         # 07:30 Monday to Saturday, Europe/Ljubljana
+    command: ["python", "jobs.py", "morning"]
+  - name: watch
+    cron: "*/15 * * * *"         # every 15 minutes
+    command: ["python", "jobs.py", "watch"]
+env:
+  TECH_RECIPIENTS: boris          # logins or company addresses, comma-separated
+  TECH_SLACK_CHANNEL: "#ga-tech"
+secrets: []
+egress: []
