@@ -35,10 +35,5 @@ define('DISABLE_LOGOUT', true);
 // Email only through Annex: Kanboard has no mail server to talk to, so its mail settings are hidden
 define('MAIL_CONFIGURATION', false);
 
-// The JSON-RPC token for this container's own jobs (seed.php) is an Annex secret. Without it Kanboard falls
-// back to the random token in its settings table, which nobody outside Kanboard's admin page knows.
-$annexApiToken = (string) getenv('KANBOARD_API_TOKEN');
-if (strlen($annexApiToken) >= 32) {
-    define('API_AUTHENTICATION_TOKEN', $annexApiToken);
-}
-unset($annexApiToken);
+// The JSON-RPC API token is Kanboard's own, in its settings table (no API_AUTHENTICATION_TOKEN here): the seed job
+// reads it from there (annex/kbdb.php), and the API answers only on 127.0.0.1 (nginx.conf.tmpl).

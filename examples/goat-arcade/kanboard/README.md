@@ -32,7 +32,7 @@ get the same login, backups, health checks, alerts, logs and console as everythi
 - **Backups for free.** Annex backs up the app's database and `/data` every night, and `annex rollback
   --with-data` (human only) restores both.
 - **The console and alerts.** Health is Kanboard's own `/healthcheck.php` (200 when the database answers). Usage is
-  counted at the front door. Logs are searchable with `annex logs kanboard`, and the three jobs show up in
+  counted at the front door. Logs are searchable with `annex logs kanboard`, and the two jobs show up in
   `annex status kanboard`.
 
 ## What was adapted to the contract, and why
@@ -87,13 +87,15 @@ What Kanboard itself can't meet fully:
   while it still has that password (`annex/lockdown.php`).
 - The JSON-RPC API (`/jsonrpc.php`) answers only on `127.0.0.1`, which means the container's own jobs; through the
   front door it returns 403.
+- On every start, the entrypoint also checks Kanboard's API token in its settings table. If the token is missing, or
+  is the fixed one in Kanboard's published schema dump, a new one is made the way Kanboard makes it (30 random
+  bytes as hex).
 
 ## Jobs
 
 | Job | When | What |
 |---|---|---|
-| `seed` | by hand: `annex run kanboard seed` (its cron, 30 February, never fires) | reads `venues` and `service_log` through the gateway and creates the content listed below; then runs the members sync |
-| `members` | every 15 minutes | makes everyone who has signed in to Kanboard a member of the Goat Arcade projects. Kanboard creates a user on their first visit, with no projects. Projects people create themselves are left alone |
+| `seed` | by hand: `annex run kanboard seed` (its cron, 30 February, never fires) | reads `venues` and `service_log` through the gateway and creates the content listed below |
 | `cronjob` | 06:00 daily | Kanboard's own housekeeping (`cli cronjob`: recurring tasks, daily statistics) |
 
 What `seed` creates, through Kanboard's JSON-RPC API:
@@ -106,27 +108,36 @@ What `seed` creates, through Kanboard's JSON-RPC API:
   - project: the venue's;
   - column: by status (open: Reported, in_progress: Diagnosing, waiting_parts: Waiting for parts);
   - colour: red when the machine is off the floor;
-- for a `waiting_parts` ticket, a second card in "Parts to order".
+- for a `waiting_parts` ticket, a second card in "Parts to order";
+- everyone who has signed in to Kanboard so far becomes a member of these projects.
 
 Cards carry Kanboard's `reference` field: `ticket-<id>`, and `parts-<id>` for the parts cards. A rerun only adds
 what's missing (new tickets, a deleted project or column). It never moves or edits a card people have worked on.
 The job logs one start line and one end line with counts.
 
-Both API jobs need the **`KANBOARD_API_TOKEN`** secret, 32 characters or more. `config.php` gives it to Kanboard as
-`API_AUTHENTICATION_TOKEN`, and the jobs call the API as the `jsonrpc` app user. Without it:
+The job calls the API as Kanboard's app user `jsonrpc`, with **Kanboard's own API token**. It reads the token from
+Kanboard's settings table through the app's `DATABASE_URL` (`annex/kbdb.php`); it never prints or logs it. So there
+is no Annex secret to set and no human step. Kanboard admins see the token under Settings > API. Regenerating it
+there is harmless: the next run reads the new one.
 
-- `seed` exits 2 with the command to run;
-- `members` logs a warning and exits 0, so the owner isn't alerted every 15 minutes about a step a human hasn't
-  done yet.
+### How people get onto the boards
 
-## Human-only commands
+Kanboard creates a person's account on their first visit, as a normal user with no projects. They can't see a
+project until they're a member of it.
+
+- At seed time, everyone who has signed in so far is added to the Goat Arcade projects as a project member. A rerun
+  of `seed` adds anyone who has signed in since, and creates no cards twice.
+- After that, a Kanboard admin (`kaldi-admin`) adds people in Kanboard: Project > Settings > Permissions, per
+  project, or once through a Kanboard group given access to the projects.
+- Projects people create themselves are private to them, as usual in Kanboard.
+
+## Commands
+
+Nothing on this app is human-only beyond the platform's usual ones (`annex remove`, `rollback --with-data`).
 
 ```bash
-# 1. the API token (before the first deploy: annex.yaml declares it, so a deploy without it is refused)
-openssl rand -hex 32 | annex secret set kanboard KANBOARD_API_TOKEN
-# 2. deploy, then fill the board once
 annex deploy examples/goat-arcade/kanboard
-annex run kanboard seed
+annex run kanboard seed        # fills the boards; safe to repeat
 ```
 
 To make another login a Kanboard admin, change `KANBOARD_DEFAULT_ADMIN` and redeploy. That covers one login; for

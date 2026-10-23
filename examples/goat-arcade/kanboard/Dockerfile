@@ -20,7 +20,7 @@ ENV HOME=/tmp \
 # Annex's settings for Kanboard, nginx and php-fpm (all temporary files go to /tmp, all data to /data).
 # The upstream config.php is replaced: ours sets the same two values and the rest of the contract.
 COPY annex/config.php /var/www/app/config.php
-COPY annex/nginx.conf.tmpl annex/php-fpm.conf annex/entrypoint.sh annex/lockdown.php annex/seed.php annex/cronjob.sh /opt/annex/
+COPY annex/nginx.conf.tmpl annex/php-fpm.conf annex/entrypoint.sh annex/kbdb.php annex/lockdown.php annex/seed.php annex/cronjob.sh /opt/annex/
 RUN chmod 0755 /opt/annex/entrypoint.sh /opt/annex/cronjob.sh \
  && rm -rf /var/www/app/data /etc/nginx/ssl \
  && adduser -D -H -u 10001 -s /sbin/nologin app
