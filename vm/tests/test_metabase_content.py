@@ -37,9 +37,12 @@ class Specs(unittest.TestCase):
         for c in d["cards"]:
             self.assertIn("{{venue}}", mc.sql_text(c["sql"]), c["key"])
 
-    def test_the_twelve_views(self):
-        self.assertEqual(len(VIEWS), 12)
-        self.assertIn("hourly_plays", VIEWS)
+    def test_the_model_lists_exactly_the_goat_arcade_views(self):
+        # the views Metabase waits for and may read are the ones api_views_arcade.sql defines (a new view goes in both)
+        import re
+        sql = (ROOT / "db" / "product" / "clientlink" / "api_views_arcade.sql").read_text()
+        defined = set(re.findall(r"CREATE OR REPLACE VIEW annex_api\.(\w+)", sql))
+        self.assertEqual(VIEWS, defined)
 
     def test_groups_exist_and_sam_is_the_analyst(self):
         groups = set(PEOPLE["groups"]) | {"All Users"}
