@@ -4,7 +4,7 @@
   "schema": "annex_api",
   "views": ["venues", "machine_models", "machine_floor", "leaderboard", "player_profiles", "daily_plays",
             "hourly_plays", "machine_events_daily", "service_log", "revenue_weekly", "tournaments",
-            "tournament_standings"],
+            "tournament_entries", "tournament_standings"],
   "keys": {
     "venue_code": "venues",
     "machine_id": "machine_floor",
@@ -28,6 +28,7 @@
     "revenue_weekly": "Cash Counted per Week",
     "machine_floor": "Machine Floor",
     "service_log": "Service Tickets",
+    "tournament_entries": "Tournament Entries",
     "tournament_standings": "Tournament Standings",
     "player_profiles": "Members"
   },
