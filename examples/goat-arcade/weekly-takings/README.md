@@ -1,6 +1,6 @@
 # weekly-takings
 
-Goat Arcade's Monday takings report, for finance (Petra). Owner: `sam`. Replaces the old `monthly-report` example.
+Goat Arcade's Monday takings report, for finance (Petra). Owner: `sam`.
 
 - **Job `weekly`** (Monday 07:00): takes the last complete Monday-to-Sunday week in the data (`revenue_weekly`; the
   latest day in `daily_plays` says which weeks are complete), writes `/data/takings/weekly-takings-<monday>.csv`

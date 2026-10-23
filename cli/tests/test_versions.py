@@ -11,9 +11,9 @@ except ImportError as e:  # the CLI's dependencies (PyYAML) aren't in this Pytho
 
 class Versions(unittest.TestCase):
     def test_contract_version_line(self):
-        self.assertEqual(ops.contract_version(), 1)
-        self.assertIn("ANNEX_CONTRACT_VERSION: 1", ops.contract())
-        self.assertIn("ANNEX_CONTRACT_VERSION: 1", ops.contract("all"))
+        self.assertEqual(ops.contract_version(), 2)
+        self.assertIn("ANNEX_CONTRACT_VERSION: 2", ops.contract())
+        self.assertIn("ANNEX_CONTRACT_VERSION: 2", ops.contract("all"))
 
     def test_topics_and_core_unchanged(self):
         self.assertEqual(list(ops.CONTRACT_TOPICS), ["notify", "webhooks", "logging", "stack"])

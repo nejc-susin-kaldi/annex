@@ -10,7 +10,7 @@ storage:
   postgres: false
   files: false
 data:
-  views: [top_clients_by_aum]
+  views: [machine_floor]
 env: {}
 secrets: []
 egress: []

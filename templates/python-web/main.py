@@ -56,11 +56,11 @@ def healthz():
 def index(request: Request):
     user = current_user(request.headers)
     try:
-        rows = gateway("top_clients_by_aum", limit=5)
-        items = "".join(f"<li>{html.escape(r['client_name'])}: {r['aum_eur']:,.0f} EUR</li>" for r in rows)
-        data = f"<h2>Top clients</h2><ol>{items}</ol>"
+        rows = gateway("machine_floor", order="games_30d.desc", limit=5)
+        items = "".join(f"<li>{html.escape(r['title'])} at {html.escape(r['venue_name'])}: {r['games_30d']:,} games</li>" for r in rows)
+        data = f"<h2>Busiest machines (30 days)</h2><ol>{items}</ol>"
     except GatewayError as e:
-        log.warn("gateway read failed", view="top_clients_by_aum", status=e.status)
+        log.warn("gateway read failed", view="machine_floor", status=e.status)
         data = f"<p>Gateway: {html.escape(str(e))}</p>"
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>__APP_NAME__</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"></head>

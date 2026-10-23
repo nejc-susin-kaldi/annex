@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 // Helpers for the Annex app contract: identity, logging, the data gateway, email, Slack and incoming webhooks.
 // Keep this file as is.
 
-export const __version__ = 1; // raised when a helper is added or changed; a deploy tells you when your copy is older
+export const __version__ = 2; // raised when a helper is added or changed; a deploy tells you when your copy is older
 
 /**
  * The signed-in user, from the headers Annex's front door sets (and strips from clients). Trustworthy only on the
@@ -147,7 +147,7 @@ export class GatewayError extends Error {
   }
 }
 
-/** Read a gateway view, e.g. gateway("client_summary", { client_name: "ilike.*novak*", limit: 20 }). */
+/** Read a gateway view, e.g. gateway("machine_floor", { venue_code: "eq.LJ1", order: "games_30d.desc", limit: 20 }). */
 export async function gateway(view, params = {}) {
   const base = process.env.ANNEX_GATEWAY_URL;
   if (!base) throw new GatewayError(0, "no gateway access: add the view under data.views in annex.yaml");

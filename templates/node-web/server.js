@@ -17,11 +17,11 @@ app.get("/", async (req, res) => {
   const user = currentUser(req);
   let data;
   try {
-    const rows = await gateway("top_clients_by_aum", { limit: 5 });
-    data = "<h2>Top clients</h2><ol>" +
-      rows.map((r) => `<li>${esc(r.client_name)}: ${Math.round(r.aum_eur).toLocaleString()} EUR</li>`).join("") + "</ol>";
+    const rows = await gateway("machine_floor", { order: "games_30d.desc", limit: 5 });
+    data = "<h2>Busiest machines (30 days)</h2><ol>" +
+      rows.map((r) => `<li>${esc(r.title)} at ${esc(r.venue_name)}: ${r.games_30d.toLocaleString()} games</li>`).join("") + "</ol>";
   } catch (e) {
-    log.warn("gateway read failed", { view: "top_clients_by_aum", status: e instanceof GatewayError ? e.status : 0 });
+    log.warn("gateway read failed", { view: "machine_floor", status: e instanceof GatewayError ? e.status : 0 });
     data = `<p>Gateway: ${esc(e instanceof GatewayError ? e.message : "unavailable")}</p>`;
   }
   res.send(`<!doctype html><html><head><meta charset="utf-8"><title>__APP_NAME__</title>

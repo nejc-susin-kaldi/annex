@@ -1,6 +1,6 @@
 # Annex app contract
 
-ANNEX_CONTRACT_VERSION: 1
+ANNEX_CONTRACT_VERSION: 2
 
 You write a small folder. Annex does the rest: routing and login, the discovery page entry, schedules, storage, backups and data access. **Never write Docker labels, login code or database credentials.** A deploy refuses an image that carries Traefik, Ofelia, Homepage, backup or `com.kaldi.annex` labels (no `LABEL` lines for those in the Dockerfile).
 
@@ -15,9 +15,9 @@ Start from a template: `annex init <template> <name> --owner <login>`. Templates
 
 ## annex.yaml
 ```yaml
-name: monthly-report          # 2-32 chars: a-z, 0-9, '-'; starts with a letter. Becomes the hostname
+name: weekly-takings          # 2-32 chars: a-z, 0-9, '-'; starts with a letter. Becomes the hostname
 owner: sam                    # required; the builder's login, shown on the discovery page
-description: Monthly positions report
+description: Weekly takings report
 type: web                     # web | job | web+job
 port: 8080                    # web: listen on 0.0.0.0:$PORT (internal only; never published)
 healthcheck: /healthz         # web: returns 200 when ready
@@ -26,23 +26,23 @@ storage:
   postgres: true              # dedicated database, injected as DATABASE_URL
   files: true                 # persistent directory at /data (DATA_DIR), backed up nightly
 data:
-  views: [monthly_positions]  # gateway views to read; must be in the allowlist
+  views: [revenue_weekly]     # gateway views to read; must be in the allowlist
 notify:                       # optional: what the app may send, through ANNEX_OPS_URL
   email: true                 # may send email (to company addresses only)
-  slack: ["#finance-reports"] # Slack channels it may post to
+  slack: ["#ga-finance"]      # Slack channels it may post to
 webhooks:                     # optional, web apps only, at most 10: calls from outside services (see Webhooks)
   - name: trello              # part of the public URL
     path: /hooks/trello       # the app's own endpoint (POST)
     verify: trello            # trello | stripe | github | slack | shared-secret
     secret: TRELLO_SECRET     # a name from secrets:
 alerts:                       # optional: who hears when the app has a problem (default: the owner)
-  to: [owner, cm, "#finance-alerts"]  # 'owner', logins and Slack channels; admins always hear too
+  to: [owner, petra, "#ga-finance"]  # 'owner', logins and Slack channels; admins always hear too
 schedule:                     # job and web+job only
-  - name: monthly
-    cron: "0 6 1 * *"         # minute hour day month weekday, Europe/Ljubljana; or @daily, @hourly
-    command: ["python", "report.py"]
+  - name: weekly
+    cron: "0 7 * * 1"         # minute hour day month weekday, Europe/Ljubljana; or @daily, @hourly
+    command: ["python", "job.py"]
 env:                          # non-secret config only
-  REPORT_TITLE: Monthly positions
+  REPORT_TITLE: Weekly takings
 secrets: [SMTP_PASSWORD]      # names only; a human sets values with `annex secret set`
 egress: []                    # hostnames the app calls on the internet; [] = no internet access at all
 resources:
@@ -62,7 +62,7 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `mail`, `ops`, `s
   - `Remote-Groups`: comma-separated, e.g. `builders` or `admins,builders`
 
   Annex strips client-sent copies of these headers, so they can be trusted **on requests that come through the front door**, which is the only way a person's request reaches the app. They are trustworthy only there: never call another app directly (apps can't reach each other; each app is on its own network), and never accept these headers from a service your app calls.
-- **Product data only through the gateway**, never directly from a database. Call `GET $ANNEX_GATEWAY_URL/<view>` with `Authorization: Bearer $ANNEX_GATEWAY_TOKEN`. The gateway is PostgREST, so filters work as query parameters, e.g. `/client_summary?client_name=ilike.*novak*&order=aum_eur.desc&limit=20`. Requesting a view you didn't declare returns 401/403. Every call is logged with your app's identity.
+- **Product data only through the gateway**, never directly from a database. Call `GET $ANNEX_GATEWAY_URL/<view>` with `Authorization: Bearer $ANNEX_GATEWAY_TOKEN`. The gateway is PostgREST, so filters work as query parameters, e.g. `/machine_floor?venue_code=eq.LJ1&order=games_30d.desc&limit=20`. Requesting a view you didn't declare returns 401/403. Every call is logged with your app's identity.
 - **Email and Slack only through Annex.** Never run an SMTP client or hold a Slack token: declare `notify:` in `annex.yaml` and use the template helpers (`send_email`, `post_slack`). Recipients are logins or company addresses; no attachments. Details: `annex contract notify`.
 - **Incoming webhooks** (Trello, Stripe, GitHub, Slack, a shared secret) reach a tool that stays behind login: `annex contract webhooks`.
 - **Alerts.** Annex watches every app, and the owner (plus every admin, plus anyone in `alerts.to`) gets one email when:
@@ -85,10 +85,10 @@ One session cookie serves every app, so a page of another app, or any website, c
 
 ## Email and Slack
 Never run an SMTP client or hold a Slack token. Declare `notify:` in `annex.yaml`; Annex injects `ANNEX_OPS_URL` and an `ANNEX_OPS_TOKEN` that can do exactly what you declared. The python and node templates ship helpers (`send_email`, `post_slack` / `sendEmail`, `postSlack`); the raw API is below.
-- `POST $ANNEX_OPS_URL/v1/email` with `Authorization: Bearer $ANNEX_OPS_TOKEN` and JSON `{"to": ["cm", "sam@annex.example"], "subject": "Report ready", "template": "notice", "data": {"title": "...", "body": "...", "link": "https://...", "link_text": "Open"}}`. Instead of `template`+`data`, give `text` or `html` (exactly one of the three). Answers `{"id", "to": [resolved addresses]}`.
-- `POST $ANNEX_OPS_URL/v1/slack` with `{"channel": "#finance-reports", "text": "...", "blocks": [...]}`. The channel must be one you declared; `text` is required (it's also the notification fallback when `blocks` is set). Answers `{"id", "channel", "ts"}`.
+- `POST $ANNEX_OPS_URL/v1/email` with `Authorization: Bearer $ANNEX_OPS_TOKEN` and JSON `{"to": ["petra", "sam@annex.example"], "subject": "Report ready", "template": "notice", "data": {"title": "...", "body": "...", "link": "https://...", "link_text": "Open"}}`. Instead of `template`+`data`, give `text` or `html` (exactly one of the three). Answers `{"id", "to": [resolved addresses]}`.
+- `POST $ANNEX_OPS_URL/v1/slack` with `{"channel": "#ga-finance", "text": "...", "blocks": [...]}`. The channel must be one you declared; `text` is required (it's also the notification fallback when `blocks` is set). Answers `{"id", "channel", "ts"}`.
 - `GET $ANNEX_OPS_URL/v1/me` shows what your token may do and whether Slack is connected.
-- **Recipients** are logins (`"cm"`, as in `Remote-User`) or company addresses. Anything outside the client's domains is refused (403), and if one recipient is refused, **nothing is sent**. 1-20 recipients; subject 1-200 characters on one line; body up to 256 KB.
+- **Recipients** are logins (`"petra"`, as in `Remote-User`) or company addresses. Anything outside the client's domains is refused (403), and if one recipient is refused, **nothing is sent**. 1-20 recipients; subject 1-200 characters on one line; body up to 256 KB.
 - **No attachments** (400). Save the file under `/data` and email a link to it in your app: it stays behind login and downloads are logged.
 - **Limits:** 60 emails and 60 Slack posts per hour per app (429 when exceeded). Slack answers 503 if the platform team hasn't connected a workspace yet.
 - Every attempt is logged (app, recipients, subject, time, result), never the body: `annex sends <app>`.
@@ -141,7 +141,7 @@ Common stacks:
 
 | Stack | What to do |
 |---|---|
-| Vite / React / Vue single-page app (also Lovable exports) | Build to `dist/` and serve it with the `static` template's server: copy the build output into `public/`. You get `api/me` and `api/data/<view>` for free. Supabase calls must be replaced with those. The server has no fallback to `index.html`, so use hash routing (`/#/clients/42`) or a reload on a deep link returns 404. |
+| Vite / React / Vue single-page app (also Lovable exports) | Build to `dist/` and serve it with the `static` template's server: copy the build output into `public/`. You get `api/me` and `api/data/<view>` for free. Supabase calls must be replaced with those. The server has no fallback to `index.html`, so use hash routing (`/#/machines/42`) or a reload on a deep link returns 404. |
 | Next.js | `output: "standalone"`, `next build` in the Dockerfile, run `node server.js`, `NEXT_TELEMETRY_DISABLED=1`. Runtime caches (image optimisation, ISR) write to `.next/cache`, which is read-only: turn them off (`images: {unoptimized: true}`). Usually needs `memory: 384m` or more. |
 | Streamlit | `ENV HOME=/tmp`; run `streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false`; `healthcheck: /_stcore/health`. Read `Remote-User` with `st.context.headers`. |
 | Django / Flask | Run with gunicorn on `0.0.0.0:$PORT`. Run `collectstatic` in the Dockerfile, and serve static files with WhiteNoise. Set `PYTHONDONTWRITEBYTECODE=1`. |
@@ -164,16 +164,7 @@ If the deploy rejects something, the error says what to change.
 | each declared secret | `secrets` |
 
 ## Gateway views (allowlist)
-Two synthetic data sets. `GET $ANNEX_GATEWAY_URL/` with your token returns an OpenAPI description of your app's views, with every column explained (Goat Arcade's views have one).
-
-**Wealth management** (the product database):
-
-| View | Columns |
-|---|---|
-| `client_summary` | client_id, client_name, segment, risk_profile, country, advisor_name, account_count, aum_eur, onboarded_on |
-| `top_clients_by_aum` | rank, client_id, client_name, segment, advisor_name, aum_eur (top 25) |
-| `monthly_positions` | month_end, client_id, client_name, account_id, symbol, instrument_name, asset_class, quantity, price, market_value_eur |
-| `advisor_book` | advisor_name, clients, aum_eur, avg_client_aum_eur |
+One synthetic data set, Goat Arcade's. `GET $ANNEX_GATEWAY_URL/` with your token returns an OpenAPI description of your app's views, with every column explained.
 
 **Goat Arcade** (a chain of pinball and retro arcades; the client's own database, read through the gateway; the data covers the last 180 days):
 
@@ -195,7 +186,7 @@ Two synthetic data sets. `GET $ANNEX_GATEWAY_URL/` with your token returns an Op
 
 Views can't be joined on the gateway: read each one and join in your code, on venue_code, machine_id, model_id or nickname. The gateway doesn't group or sum either, so the views come pre-aggregated (per day, per week); filter them (`?day=gte.2026-10-01`) rather than reading everything.
 
-All data is synthetic. Adding a view is a reviewed change by the platform team, in `db/product/api_views.sql` (wealth) or `db/product/clientlink/api_views_arcade.sql` (Goat Arcade).
+All data is synthetic. Adding a view is a reviewed change by the platform team, in `db/product/clientlink/api_views_arcade.sql`.
 
 ## Commands
 | Command | Does |

@@ -8,7 +8,7 @@ storage:
   postgres: false
   files: true
 data:
-  views: [client_summary]
+  views: [revenue_weekly]
 schedule:
   - name: daily
     cron: "0 6 * * *"
