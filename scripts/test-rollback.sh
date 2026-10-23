@@ -114,6 +114,9 @@ set -m  # the deploy gets its own process group, so Ctrl-C (SIGINT to the group)
 selftest_deploy "$WORK/slow" >"$WORK/slow.out" & p=$!
 set +m
 wait_step gate && ok "the deploy reached its health gate (deploy-state says so)" || bad "deploy reached the gate" "$(deploy_state)"
+# the VM can be in the gate before its progress line reaches the CLI (seen on the faster local lane): the CLI names the
+# last step it has heard of, so wait until it has printed the gate's line
+for _ in $(seq 1 20); do grep -q "Health gate" "$WORK/slow.out" && break; sleep 0.5; done
 kill -INT -- -"$p" 2>/dev/null || kill -INT "$p" 2>/dev/null || true
 wait "$p" 2>/dev/null || true
 has "the CLI says the deploy continues on the VM" "continues on the VM" "$(cat "$WORK/slow.out")"
