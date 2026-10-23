@@ -701,9 +701,23 @@ def _status(c: str) -> str:
     return (r.stdout or "").strip() if r.returncode == 0 else ""
 
 
+HEAD_LINES = 10  # a gate failure shows how the container started (its first lines) as well as how it ended
+
+
+def head_and_tail(text: str, n: int, head: int = HEAD_LINES) -> str:
+    """The first `head` and last `n` lines of a log (pure). The startup lines say why an app can't serve; the health
+    checks' own request lines can push them out of a plain tail (seen on the faster local lane)."""
+    lines = text.splitlines()
+    if len(lines) <= head + n:
+        return text
+    skipped = len(lines) - head - n
+    return "\n".join([*lines[:head], f"... ({skipped} line(s) skipped) ...", *lines[-n:]]) + "\n"
+
+
 def _logs(c: str, n: int) -> str:
-    r = vm.run(["docker", "logs", "--tail", str(n), c], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    return r.stdout or ""
+    # the whole log: the new container has only lived through the gate, so it is short
+    r = vm.run(["docker", "logs", c], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    return head_and_tail(r.stdout or "", n)
 
 
 def gate(run: Run, m) -> tuple[str, str] | None:
@@ -831,7 +845,7 @@ def reload_scheduler(run: Run, *schedules: object) -> None:
 def gate_error(app: str, release: int, failed: tuple[str, str], outcome: str) -> vm.Fail:
     reason, logs = failed
     return vm.Fail(f"{app} r{release} failed the health gate: {reason}.\n{outcome}\n"
-                   f"Last log lines of r{release}:\n{logs}")
+                   f"First and last log lines of r{release}:\n{logs}")
 
 
 # --- cleanup -----------------------------------------------------------------------------------------------------

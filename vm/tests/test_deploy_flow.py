@@ -197,3 +197,12 @@ class Rollback(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HeadAndTail(unittest.TestCase):
+    def test_short_logs_are_whole_and_long_ones_keep_the_start(self):
+        import annex_deploy as d
+        self.assertEqual(d.head_and_tail("a\nb\n", 40), "a\nb\n")
+        text = "\n".join(f"l{i}" for i in range(100)) + "\n"
+        out = d.head_and_tail(text, 5, head=3)
+        self.assertEqual(out.splitlines(), ["l0", "l1", "l2", "... (92 line(s) skipped) ...", "l95", "l96", "l97", "l98", "l99"])
