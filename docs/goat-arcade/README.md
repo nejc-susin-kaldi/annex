@@ -14,6 +14,19 @@ You build a small internal tool (a web page, a dashboard or a scheduled job) wit
 
 Something to start with: "a high-score wall for the Metelkova arcade", "a technician's morning list of broken and failing machines, emailed at 8", "which tables earn their floor space?". The data has stories hidden in it (the brief hints at them).
 
+## Dashboards
+Goat Arcade's staff also have **Metabase** ("Goat Arcade analytics", `metabase.` host, its own sign-in with their Annex password). In the "Goat Arcade" collection, one dashboard per team:
+
+| Dashboard | Team collection | Shows |
+|---|---|---|
+| Goat Arcade at a glance | Management | last week's cash and games against the week before, active members, cash per venue over 26 weeks, revenue by era, the top 10 machines, a map of the venues |
+| Venue performance | Venues | this week against last, games per day, a weekday-by-hour heatmap, machine earnings, idle machines; a **venue** filter on every card |
+| Machine health | Technical | out of order now, open tickets by age, coil and switch faults, downtime by venue, time to repair by technician, tickets by symptom, parts cost |
+| Cash and collections | Finance | weekly cash by venue, coins, tokens and card, takings per machine by era, counted cash against estimated plays |
+| Players and tournaments | Community | sign-ups, active members per venue, most leaderboard spots, tournament entries, the last standings |
+
+Everyone can open all of them and explore the views with the query builder (the keys between views are set, so it joins them). Each team edits its own collection; only analysts (`sam`) and admins write SQL. Periods count back from the latest day in the data, not today. The dashboards are kept as code (`config/metabase/goat-arcade/`, D109): changes made in Metabase to them are overwritten at the next push, so save your own questions next to them. How to change one: [operations](../operations.md), "Metabase".
+
 ## For the platform team
 | What | Where |
 |---|---|
@@ -22,6 +35,7 @@ Something to start with: "a high-score wall for the Metelkova arcade", "a techni
 | The link | `db/product/clientlink/link.sql`: postgres_fdw from product-db, the client's read-only login `annex_reader` |
 | The views (the allowlist) | `db/product/clientlink/api_views_arcade.sql`, with a comment on every column; after a change, `scripts/push.sh`, then `scripts/democlient.sh dictionary` |
 | The people (Goat Arcade's staff) | [plan](../plans/goat-arcade-demo.md) 2.1; accounts: `annex users add ... --demo` ([setup](../setup.md) section 10, [operations](../operations.md) Accounts); Metabase groups: `config/metabase/people.json`; tiles by team: `config/teams.json` (D107) |
+| Metabase: connection, permissions, dashboards | `config/metabase/goat-arcade/` (`model.json`, `collections.json`, `dashboards/`), applied by `vm/metabase-setup.sh` on every push (D109) |
 | Tests | `scripts/test-platform.sh` ("Demo client database"); one check in `scripts/test-smoke.sh` |
 | Why it's built this way | [decisions](../decisions.md) D77 (the link), D78 (the data); [plan](../plans/democlient.md) |
 | A real client's side of it | [connect-your-database.md](connect-your-database.md) |
