@@ -88,7 +88,7 @@ Each tool is built the way a staff member would build it. Claude Code gets the `
 | `weekly-takings` | sam (for petra) | web+job | Monday 07:00: last week's cash per venue as CSV and a summary email to finance, Slack `#ga-finance`; run history page | jobs, files and backups, run history. **Replaces monthly-report** |
 | `league-desk` | lena | web | tournaments: past standings, the upcoming Masters with its entries (gateway), and **new sign-ups stored in the app's own database**; Slack `#ga-community` on a sign-up | read-only gateway plus app-owned writes |
 | `high-score-wall` | lena | web (static/node) | full-screen TV mode per venue: top scores of the machines on the floor, rotating every 15 s | a builder's second app; the kiosk look |
-| `party-bookings` | cm | web | birthday-party requests arrive **by webhook** from the (fictional) public website form; staff confirm, pick a venue and slot, and the requester gets an email. Based on vibe-leads | webhooks (the only route from outside), email, own database |
+| `party-bookings` | cm | web | birthday-party requests arrive **by webhook** from the (fictional) public website form; staff confirm, pick a venue and slot, and the venue's manager gets a summary to forward (Annex never emails outside addresses, so the customer isn't emailed by the app). Based on vibe-leads | webhooks (the only route from outside), email, own database |
 
 Plus a script, `scripts/demo-booking.sh`: it posts a signed test booking, as the website would.
 
