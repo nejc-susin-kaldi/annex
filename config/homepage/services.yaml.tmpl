@@ -1,9 +1,9 @@
-# Platform services and add-on placeholders. Deployed apps appear in "Tools"
-# through Docker labels written by the annex CLI.
+# Platform services and add-on placeholders. Deployed apps appear through Docker labels written by the deploy, in
+# their team's group (config/teams.json: Venues, Technical, Finance, Community) or "Tools" (D107).
 - Platform:
     - Metabase:
         href: "{{ANNEX_URL_METABASE}}"
-        description: Analytics on curated product data
+        description: Analytics on Goat Arcade's curated data
         icon: metabase.png
         server: annex
         container: annex-metabase-1
@@ -15,7 +15,7 @@
         container: annex-dozzle-1
     - Data gateway:
         href: "{{ANNEX_URL_GATEWAY}}"
-        description: Read-only API over curated product views (admins only)
+        description: Read-only API over Goat Arcade's curated views (admins only)
         icon: mdi-api
         server: annex
         container: annex-gateway-1

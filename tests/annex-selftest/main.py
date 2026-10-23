@@ -118,7 +118,7 @@ def job_work() -> int:
 
 
 def job_notify() -> int:
-    recipients = [r.strip() for r in os.environ.get("SELFTEST_RECIPIENT", "cm").split(",") if r.strip()]
+    recipients = [r.strip() for r in os.environ.get("SELFTEST_RECIPIENT", "maja").split(",") if r.strip()]
     channel = os.environ.get("SELFTEST_SLACK_CHANNEL", "#annex-selftest")
     say("info", "job started", job="notify")
     try:
@@ -310,7 +310,7 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(500, "boom")
 
     def handle_email(self) -> None:
-        to = [t for t in self.q.get("to", os.environ.get("SELFTEST_RECIPIENT", "cm")).split(",") if t]
+        to = [t for t in self.q.get("to", os.environ.get("SELFTEST_RECIPIENT", "maja")).split(",") if t]
         try:
             r = rt.send_email(to, self.q.get("subject", "annex-selftest"), text=self.q.get("text", "hello from annex-selftest"))
             self.json(200, {"status": 200, "to": r["to"]})

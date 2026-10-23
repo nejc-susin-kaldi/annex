@@ -21,6 +21,7 @@ Something to start with: "a high-score wall for the Metelkova arcade", "a techni
 | Run it | `scripts/democlient.sh up`, then `link`. Also `status`, `check` (the planted stories), `reseed` (data ends yesterday again), `psql`, `down` |
 | The link | `db/product/clientlink/link.sql`: postgres_fdw from product-db, the client's read-only login `annex_reader` |
 | The views (the allowlist) | `db/product/clientlink/api_views_arcade.sql`, with a comment on every column; after a change, `scripts/push.sh`, then `scripts/democlient.sh dictionary` |
+| The people (Goat Arcade's staff) | [plan](../plans/goat-arcade-demo.md) 2.1; accounts: `annex users add ... --demo` ([setup](../setup.md) section 10, [operations](../operations.md) Accounts); Metabase groups: `config/metabase/people.json`; tiles by team: `config/teams.json` (D107) |
 | Tests | `scripts/test-platform.sh` ("Demo client database"); one check in `scripts/test-smoke.sh` |
 | Why it's built this way | [decisions](../decisions.md) D77 (the link), D78 (the data); [plan](../plans/democlient.md) |
 | A real client's side of it | [connect-your-database.md](connect-your-database.md) |

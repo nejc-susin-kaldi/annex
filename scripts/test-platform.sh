@@ -33,12 +33,12 @@ loc=$(c -o /dev/null -w '%{redirect_url}' "$HOME_URL/")
 case "$loc" in "$AUTH_URL"/*) ok "anonymous request to home redirects to login" ;; *) bad "anonymous redirect" "$loc" ;; esac
 expect "wrong password is rejected" 401 "$(c -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
   --data '{"username":"sam","password":"nope","keepMeLoggedIn":false}' "$AUTH_URL/api/firstfactor")"
-for u in sam cm kaldi-admin; do
+for u in sam maja kaldi-admin; do
   expect "$u logs in" 200 "$(login "$u")"
   expect "$u reaches the discovery page" 200 "$(code -b "$TMP/$u.jar" "$HOME_URL/")"
 done
 # Homepage renders its tiles client-side from /api/services
-services=$(as cm "$HOME_URL/api/services")
+services=$(as maja "$HOME_URL/api/services")
 for s in Metabase Logs "Data gateway" Mail Status "Goat Mailer" Bekafon; do
   if grep -q "\"name\":\"$s\"" <<<"$services"; then ok "discovery page lists $s"; else bad "discovery page lists $s" "missing"; fi
 done
@@ -47,16 +47,16 @@ echo "Access rules"
 expect "gateway: sam is forbidden" 403 "$(code -b "$TMP/sam.jar" "$GW_URL/")"
 expect "gateway: kaldi-admin passes the front door (PostgREST rejects a call without JWT)" 401 "$(code -b "$TMP/kaldi-admin.jar" "$GW_URL/")"
 expect "status: anonymous is sent to login" 302 "$(code "$STATUS_URL")"
-expect "status: cm sees the status page" 200 "$(code -b "$TMP/cm.jar" "$STATUS_URL")"
+expect "status: maja sees the status page" 200 "$(code -b "$TMP/maja.jar" "$STATUS_URL")"
 expect "mail: sam is forbidden" 403 "$(code -b "$TMP/sam.jar" "$MAIL_URL/")"
-expect "mail: cm is forbidden" 403 "$(code -b "$TMP/cm.jar" "$MAIL_URL/")"
+expect "mail: maja is forbidden" 403 "$(code -b "$TMP/maja.jar" "$MAIL_URL/")"
 expect "mail: kaldi-admin gets Mailpit" 200 "$(code -b "$TMP/kaldi-admin.jar" "$MAIL_URL/")"
 if [ "$extras" -ge 2 ]; then
   expect "logs: sam is forbidden" 403 "$(code -b "$TMP/sam.jar" "$LOGS_URL/")"
-  expect "logs: cm is forbidden" 403 "$(code -b "$TMP/cm.jar" "$LOGS_URL/")"
+  expect "logs: maja is forbidden" 403 "$(code -b "$TMP/maja.jar" "$LOGS_URL/")"
   expect "logs: kaldi-admin gets Dozzle" 200 "$(code -b "$TMP/kaldi-admin.jar" "$LOGS_URL/")"
   expect "metabase: anonymous is sent to login" 302 "$(code "$MB_URL/")"
-  expect "metabase: cm reaches Metabase" 200 "$(code -b "$TMP/cm.jar" "$MB_URL/api/health")"
+  expect "metabase: maja reaches Metabase" 200 "$(code -b "$TMP/maja.jar" "$MB_URL/api/health")"
   mbpw=$(password kaldi-admin)
   mbs=$(as kaldi-admin -H 'Content-Type: application/json' --data "{\"username\":\"admin@annex.example\",\"password\":\"$mbpw\"}" "$MB_URL/api/session" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
   dbs=$(as kaldi-admin -H "X-Metabase-Session: $mbs" "$MB_URL/api/database")
@@ -189,7 +189,7 @@ else
   out=$(selftest_deploy "$ROOT/.build/selftest-arcade") && ok "deploy $ARC with views leaderboard, machine_floor" \
     || bad "deploy $ARC" "$(tail -3 <<<"$out")"
   ARC_URL="https://${PATTERN//\{name\}/$ARC}$(setting ANNEX_PORT_SUFFIX)"
-  gw() { c -b "$TMP/cm.jar" "$ARC_URL/gateway/$1"; }
+  gw() { c -b "$TMP/maja.jar" "$ARC_URL/gateway/$1"; }
   has "a granted view reads the client's data: leaderboard" '"rows": 5' "$(gw leaderboard)"
   has "a granted view reads the client's data: machine_floor" '"rows": 5' "$(gw machine_floor)"
   has_re "a view the app didn't request is denied: player_profiles" '"status": 40[13]' "$(gw player_profiles)"

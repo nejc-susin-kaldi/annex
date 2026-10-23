@@ -149,7 +149,7 @@ def derive(env: dict[str, str], name: str = "vm", root: Path = ROOT) -> dict[str
         "ANNEX_HOST_REGEX": "^" + re.escape(prefix) + "[a-z0-9-]+" + re.escape(suffix) + "$",
         "ANNEX_CERT_NAMES": f"*.{rest} {rest}",
         "TZ": env.get("TZ", "Europe/Ljubljana"),
-        "ANNEX_EMAIL_DOMAINS": env.get("ANNEX_EMAIL_DOMAINS", "annex.example"),
+        "ANNEX_EMAIL_DOMAINS": env.get("ANNEX_EMAIL_DOMAINS", "annex.example,goat-arcade.example"),
         "ANNEX_EMAIL_ALLOW": env.get("ANNEX_EMAIL_ALLOW", ""),
         "ANNEX_EMAIL_FROM": env.get("ANNEX_EMAIL_FROM", "noreply@annex.example"),
         "ANNEX_ALERT_SLACK_CHANNEL": env.get("ANNEX_ALERT_SLACK_CHANNEL", "#annex-alerts"),

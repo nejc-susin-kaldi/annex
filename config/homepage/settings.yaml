@@ -1,10 +1,22 @@
-title: Annex
-description: Internal tools for this client
+title: Goat Arcade · internal tools
+description: Goat Arcade's internal tools, behind one login
 headerStyle: clean
 statusStyle: dot
 hideVersion: true
 disableUpdateCheck: true
 layout:
+  Venues:
+    style: row
+    columns: 3
+  Technical:
+    style: row
+    columns: 3
+  Finance:
+    style: row
+    columns: 3
+  Community:
+    style: row
+    columns: 3
   Tools:
     style: row
     columns: 3

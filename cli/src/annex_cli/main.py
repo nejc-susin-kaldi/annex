@@ -87,7 +87,7 @@ def _users(a: argparse.Namespace, emit) -> None:
     if c == "remove" and not a.yes:
         if input(f"Remove the account {a.login}? They can't sign in any more. Type the login to confirm: ") != a.login:
             sys.exit("Aborted.")
-    opts = {k: getattr(a, k) for k in ("name", "email", "groups", "print_password", "disable", "enable") if hasattr(a, k)}
+    opts = {k: getattr(a, k) for k in ("name", "email", "groups", "print_password", "demo", "disable", "enable") if hasattr(a, k)}
     res = ops.users(c, a.login, **opts)
     if emit:
         return emit(res)
@@ -98,7 +98,10 @@ def _users(a: argparse.Namespace, emit) -> None:
             print(f"password (shown once; give it to them privately): {res['password']}")
         else:
             print(f"invitation sent to {res['invited']}: the link lets them set their own password (valid 24 hours)")
-        print("Metabase has its own accounts (D9): add one there too if they need it.")
+        if res.get("demo_password_stored"):
+            print("the password is also in secrets/users.txt (scripts/show-users.sh); a push with --extras creates their Metabase account from it")
+        else:
+            print("Metabase has its own accounts (D9): add one there too if they need it.")
     elif c == "set":
         u = res["user"]
         print(f"{u['login']}: {u['name']}, {u['email']}, groups: {', '.join(u['groups'])}"
@@ -209,6 +212,9 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--groups", default="users", help="comma-separated: users, builders, admins (default users)")
     s.add_argument("--print-password", action="store_true",
                    help="print a random password once instead of emailing an invitation")
+    s.add_argument("--demo", action="store_true",
+                   help="a demo account: also keep the password in secrets/users.txt for the test suites and the Metabase "
+                        "setup (implies --print-password)")
     s = us.add_parser("set", help="change name, email or groups, or disable/enable an account")
     s.add_argument("login")
     s.add_argument("--name")
@@ -223,6 +229,7 @@ def main(argv: list[str] | None = None) -> None:
     s = us.add_parser("reset", help="email the person a link to set a new password (or --print-password)")
     s.add_argument("login")
     s.add_argument("--print-password", action="store_true")
+    s.add_argument("--demo", action="store_true", help="print a new password and keep it in secrets/users.txt (adds the line if missing)")
     s = sub.add_parser("contract", help="print the app contract: the core, or one topic (for agents)")
     s.add_argument("topic", nargs="?", help="notify, webhooks, logging, stack, or all")
 

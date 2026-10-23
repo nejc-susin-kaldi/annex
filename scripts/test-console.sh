@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # M2.4 acceptance checks, reshaped by M2.7-M2.9: the console (about 5 minutes).
-#   1. who sees what: sam his apps, kaldi-admin the fleet, cm /status and a 403 on app pages, anonymous the login;
+#   1. who sees what: sam his apps, kaldi-admin the fleet, maja /status and a 403 on app pages, anonymous the login;
 #   2. a forged Remote-User or Remote-Groups from the browser changes nothing;
 #   3. the console is on no network an app is on, and an app can't reach it (tested from an app with Postgres);
 #   4. its container and database role hold nothing they shouldn't: no Docker access, tokens, grants or bodies, read-only;
@@ -31,7 +31,7 @@ cleanup() {
 on_exit cleanup
 
 echo "Setup"
-for u in sam cm kaldi-admin; do expect "$u signs in" 200 "$(login $u)"; done
+for u in sam maja kaldi-admin; do expect "$u signs in" 200 "$(login $u)"; done
 vm "printf '%s' '{\"errors_scan_s\": 4, \"errors_settle_s\": 4}' > $TUNING && chmod 644 $TUNING"; ops_state_seen
 sleep 6
 A=annex-selftest; B=annex-selftest-other
@@ -59,11 +59,11 @@ home=$(as sam "$CON/" | text)
 has "sam's overview has his apps" "annex-selftest" "$home"
 hasnt "  ...and not the others'" "annex-selftest-other" "$home"
 hasnt "  ...and no platform section" "Platform" "$home"
-for p in /status / /apps; do expect "cm $p" 200 "$(code -b "$TMP/cm.jar" "$CON$p")"; done
-for p in /audit /platform; do expect "cm is refused $p (admins only)" 403 "$(code -b "$TMP/cm.jar" "$CON$p")"; done
-for a in annex-selftest annex-selftest-other; do expect "cm is refused /apps/$a (403)" 403 "$(code -b "$TMP/cm.jar" "$CON/apps/$a")"; done
-has "cm's overview points at the status page" "don't own any apps" "$(as cm "$CON/" | text)"
-st=$(as cm "$CON/status" | text)
+for p in /status / /apps; do expect "maja $p" 200 "$(code -b "$TMP/maja.jar" "$CON$p")"; done
+for p in /audit /platform; do expect "maja is refused $p (admins only)" 403 "$(code -b "$TMP/maja.jar" "$CON$p")"; done
+for a in annex-selftest annex-selftest-other; do expect "maja is refused /apps/$a (403)" 403 "$(code -b "$TMP/maja.jar" "$CON/apps/$a")"; done
+has "maja's overview points at the status page" "don't own any apps" "$(as maja "$CON/" | text)"
+st=$(as maja "$CON/status" | text)
 has "the status page lists apps by name and state for everyone" "annex-selftest" "$st"
 has "  ...and the platform's front door" "front door" "$st"
 admin=$(as kaldi-admin "$CON/apps" | text)
@@ -87,7 +87,7 @@ echo "2. Forged identity changes nothing"
 expect "sam with a forged Remote-User: kaldi-admin" 403 "$(code -b "$TMP/sam.jar" -H 'Remote-User: kaldi-admin' -H 'Remote-Groups: admins' "$CON/apps/annex-selftest-other")"
 expect "  ...and a forged groups header alone" 403 "$(code -b "$TMP/sam.jar" -H 'Remote-Groups: admins' "$CON/apps/annex-selftest-other")"
 expect "  ...and the underscore spelling" 403 "$(code -b "$TMP/sam.jar" -H 'Remote_User: kaldi-admin' -H 'Remote_Groups: admins' "$CON/apps/annex-selftest-other")"
-expect "cm forging sam" 403 "$(code -b "$TMP/cm.jar" -H 'Remote-User: sam' "$CON/apps/annex-selftest")"
+expect "maja forging sam" 403 "$(code -b "$TMP/maja.jar" -H 'Remote-User: sam' "$CON/apps/annex-selftest")"
 has "the page still says who really signed in" "sam (signed in)" "$(as sam -H 'Remote-User: kaldi-admin' -H 'Remote-Groups: admins' "$CON/" | text)"
 expect "with no session, the headers alone get the login redirect" 302 "$(code -H 'Remote-User: kaldi-admin' -H 'Remote-Groups: admins' "$CON/apps/annex-selftest-other")"
 

@@ -75,7 +75,7 @@ chmod 755 "$D/state/ops"
 # Demo users, created on the first run only: login, display name, email, groups. More users: `annex users add`.
 USERS=(
   "sam|Sam Novak|sam@annex.example|builders"
-  "cm|Maja Horvat|cm@annex.example|users"
+  "maja|Maja Horvat|maja@goat-arcade.example|users"
   "kaldi-admin|Kaldi Admin|admin@annex.example|admins,builders"
 )
 wrote_users=

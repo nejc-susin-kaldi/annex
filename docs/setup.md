@@ -235,3 +235,38 @@ rm -rf ~/.annex/local
 unset DOCKER_CONTEXT
 ```
 `ANNEX_ENV=local scripts/bootstrap.sh && ANNEX_ENV=local scripts/push.sh` brings it back with new secrets and passwords. The pinned platform images stay in Docker Desktop's cache; `docker --context desktop-linux image rm <image>` removes one if you want the space.
+
+## 10. Goat Arcade's people (GA.1, D107)
+Human-only commands: they create accounts and print passwords. Run them from the repo on the Mac. For the local stack put `ANNEX_ENV=local` in front of every `./annex` and `scripts/` command (per command, never exported).
+
+**Before the first command**, `.env` (and `.env.local`) must list the new address domain, or Annex's emails to these people are refused:
+```
+ANNEX_EMAIL_DOMAINS=annex.example,goat-arcade.example
+```
+Then `scripts/push.sh --extras` (it brings the new config to the instance and recreates Homepage and Authelia for the branding).
+
+**Add the people.** `--demo` prints a random password once and keeps it in `secrets/users.txt` (`scripts/show-users.sh` prints that file; the test suites and the Metabase setup read it). No invitation email is sent.
+```bash
+./annex users add maja   --name 'Maja Horvat'   --email maja@goat-arcade.example   --groups users --demo
+./annex users add boris  --name 'Boris Zajc'    --email boris@goat-arcade.example  --groups users --demo
+./annex users add petra  --name 'Petra Kralj'   --email petra@goat-arcade.example  --groups users --demo
+./annex users add lena   --name 'Lena Gruber'   --email lena@goat-arcade.example   --groups builders --demo
+./annex users add tomaz  --name 'Tomaž Vidmar'  --email tomaz@goat-arcade.example  --groups users --demo
+```
+`sam` and `kaldi-admin` stay as they are. An account added earlier without `--demo` gets its line with `./annex users reset <login> --demo` (new password, printed once).
+
+**Create their Metabase accounts and groups** (Metabase must be running): `scripts/push.sh --extras` again, or only the setup script on the VM:
+```bash
+ssh annex 'ANNEX_DATA_DIR=/srv/annex bash /srv/annex/platform/vm/metabase-setup.sh'
+```
+It is idempotent and skips anyone without a line in `users.txt`.
+
+**Remove `cm` last**, after the suites pass with `maja` (it also drops `cm`'s line from `users.txt`):
+```bash
+./annex users remove cm --yes
+```
+Then deactivate the old Metabase account `cm@annex.example` (Metabase, Admin, People). Apps that name `cm` as a recipient or alert target (`monthly-report`'s `REPORT_RECIPIENTS`) need `maja` first.
+
+Undo: `./annex users remove <login> --yes` for each new account (the Metabase accounts stay until deactivated in Admin, People); to bring `cm` back, `./annex users add cm --name 'Maja Horvat' --email cm@annex.example --groups users --demo`.
+
+The branding (Homepage title, logo and groups; Authelia's logo and favicon) needs nothing from you beyond the push. Homepage groups an app's tile from `config/teams.json` when the app is next deployed.

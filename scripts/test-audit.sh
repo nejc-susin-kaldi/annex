@@ -33,7 +33,7 @@ variant() { # variant DIR [broken]: annex-selftest with one secret of its own (A
 }
 
 echo "Setup"
-for u in sam kaldi-admin cm; do expect "$u signs in" 200 "$(login $u)"; done
+for u in sam kaldi-admin maja; do expect "$u signs in" 200 "$(login $u)"; done
 vm "printf '%s' '{\"audit_scan_s\": 5, \"audit_bucket_s\": 20}' > $TUNING && chmod 644 $TUNING"; ops_state_seen
 sleep 8
 START=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%S"))')   # the trail keeps earlier runs: look only at this one
@@ -87,14 +87,14 @@ expect "  ...and the number of reads is the number of gateway lines the app caus
 expect "  ...by the app, not by a person" "app:annex-selftest" "$(py '[x for x in d if x["action"] == "gateway.reads"][0]["actor"]' <<<"$mine")"
 mails=$("$ANNEX" --json audit --action email --app $APP --since "$(( $(date +%s) - START_EPOCH + 5 ))s" | py 'len(d)')
 expect "an email sent by an app is in the trail, once (no body)" 1 "$mails"
-has "  ...with its recipients" "cm@annex.example" "$("$ANNEX" --json audit --action email --app $APP --since 5m)"
+has "  ...with its recipients" "maja@goat-arcade.example" "$("$ANNEX" --json audit --action email --app $APP --since 5m)"
 order=$(py '" ".join(x["action"] for x in sorted([y for y in d if y["actor"] == "audit-tester" or (y["actor"] == "sam" and y["action"].startswith("signin"))], key=lambda y: y["ts"]) if x["action"] not in ("gateway.reads",))' <<<"$all")
 expect "in order, once each (the actor's steps)" "secret.set deploy deploy.failed deploy rollback user.added user.changed user.removed signin.failed signin app.removed" "$(tr -s ' ' <<<"$order" | sed 's/^ //')"
 secrets=$(trail | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))')
 hasnt "the secret's value is nowhere in the trail" "$SECRET" "$secrets"
 [ -n "$PW" ] && hasnt "  ...nor the new account's password" "$PW" "$secrets" || ok "(no password captured to look for)"
 hasnt "  ...nor a webhook body or a token" "token_sha256" "$secrets"
-expect "no raw password was typed as a username into the trail" 0 "$(py 'len([x for x in d if x["action"] == "signin.failed" and x["actor"] not in (None, "sam", "cm", "kaldi-admin") and not x["actor"].startswith("nobody") and not x["actor"].startswith("tst")])' <<<"$all")"
+expect "no raw password was typed as a username into the trail" 0 "$(py 'len([x for x in d if x["action"] == "signin.failed" and x["actor"] not in (None, "sam", "maja", "kaldi-admin") and not x["actor"].startswith("nobody") and not x["actor"].startswith("tst")])' <<<"$all")"
 
 echo "Filters"
 expect "--action deploy finds deploy and deploy.failed only" "deploy deploy.failed" "$(trail --app $APP --action deploy | py '" ".join(sorted({x["action"] for x in d}))')"
@@ -106,7 +106,7 @@ has "annex audit prints a table for humans" "ACTION" "$("$ANNEX" audit --app $AP
 echo "The console's Audit page (admins only)"
 expect "kaldi-admin opens /audit" 200 "$(code -b "$TMP/kaldi-admin.jar" "$CON/audit")"
 expect "sam gets a 403" 403 "$(code -b "$TMP/sam.jar" "$CON/audit")"
-expect "cm gets a 403" 403 "$(code -b "$TMP/cm.jar" "$CON/audit")"
+expect "maja gets a 403" 403 "$(code -b "$TMP/maja.jar" "$CON/audit")"
 expect "forged admin headers from sam change nothing" 403 "$(code -b "$TMP/sam.jar" -H 'Remote-User: kaldi-admin' -H 'Remote-Groups: admins' "$CON/audit")"
 page=$(as kaldi-admin "$CON/audit?app=$APP" | sed 's/<style>.*<\/style>//; s/<[^>]*>/ /g' | tr -s ' \n')
 for a in secret.set deploy deploy.failed rollback gateway.reads app.removed; do has "the page shows $a" "$a" "$page"; done

@@ -17,11 +17,11 @@ selftest_build "$DIR" --drop webhooks,notify
 if out=$(selftest_deploy "$DIR"); then ok "annex deploy annex-selftest"; else bad "annex deploy" "$out"; fi
 
 echo "Login and identity"
-login sam >/dev/null; login cm >/dev/null
+login sam >/dev/null; login maja >/dev/null
 [ "$(c -o /dev/null -w '%{http_code}' "$APP_URL/")" = 302 ] && ok "anonymous is sent to login" || bad "anonymous is sent to login" "no redirect"
 page=$(c -b "$TMP/sam.jar" "$APP_URL/" | text)
 has "greets sam by name" "Hello, Sam Novak" "$page"
-has "greets cm by name" "Hello, Maja Horvat" "$(c -b "$TMP/cm.jar" "$APP_URL/" | text)"
+has "greets maja by name" "Hello, Maja Horvat" "$(c -b "$TMP/maja.jar" "$APP_URL/" | text)"
 
 echo "Cross-site requests (A4: the runtime refuses state-changing requests from other sites)"
 # /csrf-probe doesn't exist: 404 means the request got past the check, 403 means the check refused it
@@ -38,11 +38,11 @@ has "granted view client_summary is readable" "client_summary : allowed" "$page"
 has "granted view top_clients_by_aum is readable" "top_clients_by_aum : allowed" "$page"
 has "monthly_positions is denied (403)" '"status": 403' "$(c -b "$TMP/sam.jar" "$APP_URL/gateway/monthly_positions")"
 has "advisor_book is denied" "advisor_book : denied" "$page"
-has "a read through the gateway returns rows" '"rows": 5' "$(c -b "$TMP/cm.jar" "$APP_URL/gateway/client_summary")"
+has "a read through the gateway returns rows" '"rows": 5' "$(c -b "$TMP/maja.jar" "$APP_URL/gateway/client_summary")"
 has "gateway logs the app's role" "role=app_annex_selftest" "$(vm "docker logs --since 5m annex-product-db-1 2>&1 | grep annex-gateway")"
 
 echo "Discovery page"
-services=$(c -b "$TMP/cm.jar" "$HOME_URL/api/services")
+services=$(c -b "$TMP/maja.jar" "$HOME_URL/api/services")
 has "annex-selftest is listed" '"name":"annex-selftest"' "$services"
 has "with its owner" 'owner: sam' "$services"
 
