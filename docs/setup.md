@@ -191,6 +191,7 @@ ANNEX_ENV=local scripts/bootstrap.sh && ANNEX_ENV=local scripts/push.sh && ANNEX
 ```bash
 ANNEX_ENV=local ./annex list
 ```
+The push also brings up Goat Arcade's database (compose project `democlient`) and links product-db to it, as on the VM (D112); on a fresh stack its first start seeds it, about a minute more.
 
 **Prerequisites** (on top of the Mac list at the top):
 - Docker Desktop running, with the context `desktop-linux` (`docker --context desktop-linux info` answers). The scripts and the CLI set `DOCKER_CONTEXT=desktop-linux` for their own commands only; your current context is never switched, and a context that points at the VM is refused.
@@ -217,9 +218,12 @@ echo 'nameserver 127.0.0.1' | sudo tee /etc/resolver/annex-local.home.arpa
 ```
 Undo: `sudo rm /etc/resolver/annex-local.home.arpa`; the dnsmasq line goes with section 3's undo (it carries the `# annex` tag).
 
-**Stop it** (keeps the data; `ANNEX_ENV=local scripts/push.sh` starts it again):
+**Stop it** (keeps the data; `ANNEX_ENV=local scripts/push.sh` starts it again, Goat Arcade's database too):
 ```bash
 cd ~/.annex/local/platform && DOCKER_CONTEXT=desktop-linux docker compose --profile extras stop
+```
+```bash
+ANNEX_ENV=local scripts/democlient.sh down
 ```
 
 **Wipe it** (everything of the local stack: containers, networks, volumes, Annex's images, data and secrets; nothing of the VM, and none of your other Docker images). `scripts/wipe-vm.sh` refuses a local target, because it prunes every image.
@@ -234,7 +238,7 @@ docker image ls -q --filter label=com.kaldi.annex=true | xargs docker rmi -f 2>/
 rm -rf ~/.annex/local
 unset DOCKER_CONTEXT
 ```
-`ANNEX_ENV=local scripts/bootstrap.sh && ANNEX_ENV=local scripts/push.sh` brings it back with new secrets and passwords. The pinned platform images stay in Docker Desktop's cache; `docker --context desktop-linux image rm <image>` removes one if you want the space.
+`ANNEX_ENV=local scripts/bootstrap.sh && ANNEX_ENV=local scripts/push.sh` brings it back with new secrets and passwords, and Goat Arcade's database seeded afresh. The pinned platform images stay in Docker Desktop's cache; `docker --context desktop-linux image rm <image>` removes one if you want the space.
 
 ## 10. Goat Arcade's people (GA.1, D107)
 Human-only commands: they create accounts and print passwords. Run them from the repo on the Mac. For the local stack put `ANNEX_ENV=local` in front of every `./annex` and `scripts/` command (per command, never exported).

@@ -35,7 +35,7 @@ Compose project `annex` (`compose.yaml`; container names `annex-<service>-1`). M
 | traefik | Traefik v3 | 128m | front door, TLS (mkcert) or plain behind an upstream proxy; routes from labels; forward-auth and `strip-identity` | edge, platform, socket-ro (+ each web app's network at runtime) |
 | authelia | Authelia | 256m | login, groups; file backend (`secrets/authelia/users.yml`) | platform |
 | homepage | Homepage | 256m | discovery page; tiles from app labels; config mounted `:ro` | platform, socket-ro |
-| product-db | Postgres 16 | 384m | synthetic product data; `annex_api` views; reads the client's DB through postgres_fdw | product, clientlink |
+| product-db | Postgres 16 | 384m | the gateway's database: the `annex_api` views over the client's DB (Goat Arcade), read through postgres_fdw; no data of its own (D112) | product, clientlink |
 | gateway | PostgREST | 128m | the data gateway: per-app JWT roles over `annex_api` views | edge, product (+ app networks at runtime) |
 | appdata-db | Postgres 16 | 640m | one database per app, plus `annex_ops` and Metabase's; `max_connections=60` (D84) | appdata, console (+ app networks at runtime) |
 | ops | `annex-ops:local` (built on the VM) | 128m | email, Slack, send log, alert engine, health checks, usage, logs, errors, audit, host monitoring, webhook delivery; `/healthz` | edge, platform, appdata, socket-ro (+ app networks at runtime, as `ops`) |
@@ -44,12 +44,12 @@ Compose project `annex` (`compose.yaml`; container names `annex-<service>-1`). M
 | mailpit | Mailpit | 64m | catches all mail (SMTP on `platform`) | platform |
 | ofelia | Ofelia | 64m | runs each app's `schedule` entries by `exec` in the app's container | socket-exec |
 | backup | offen/docker-volume-backup | 128m | nightly archive at 02:00 of `apps/`, `dumps/`, `secrets/`, `state/directory/`; 7 days | socket-exec |
-| metabase (extras) | Metabase | 1536m | curated product data; its own login | platform, product, appdata |
+| metabase (extras) | Metabase | 1536m | Goat Arcade's dashboards on the `annex_api` views; its own login | platform, product, appdata |
 | dozzle (extras) | Dozzle | 64m | live logs of platform containers, admins | platform, socket-ro |
 
 The extras profile is off by default (`scripts/push.sh --extras`). Per-container hardening: every platform container has a healthcheck; ops, hooks and console run as uid 10001, read-only root, no capabilities. The Docker socket is never mounted into anything that serves requests: the two proxies are the only holders, and only read-only access reaches ops.
 
-Outside the platform: `democlient/` is a separate Compose project (`democlient`, unlabelled) standing for a client's own database; its only network is `annex-clientlink`, shared with product-db (D77).
+Outside the platform: `democlient/` is a separate Compose project (`democlient`, unlabelled) standing for a client's own database; its only network is `annex-clientlink`, shared with product-db (D77). `scripts/push.sh` brings it up and links it after the platform starts (D112).
 
 Apps are separate containers, one per app, named `annex-app-<name>`: uid 10001, read-only root, `/tmp` as a 64 MB tmpfs, `cap_drop: ALL`, `no-new-privileges`, `pids_limit: 256`, 0.5 CPU, memory from `resources.memory` (default 256 MiB) (D16, D95). An app has no platform labels of its own: Annex writes them, and a deploy refuses an image that carries any (D83).
 
