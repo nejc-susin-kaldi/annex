@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>High-score wall · Goat Arcade</title>
+  <link rel="stylesheet" href="wall.css">
+</head>
+<body>
+  <!-- Chooser: shown without ?venue= -->
+  <main id="chooser" class="chooser" hidden>
+    <h1><span class="goat">Goat Arcade</span> High-score wall</h1>
+    <p class="hint">Pick the venue for this screen. Bookmark the page it opens (e.g. <code>?venue=LJ1</code>) on the venue's TV;
+      add <code>&amp;seconds=30</code> for a slower rotation. Press <kbd>F</kbd> for full screen, <kbd>←</kbd> <kbd>→</kbd> to step.</p>
+    <ul id="venue-list" class="venue-list"></ul>
+  </main>
+
+  <!-- TV mode: shown with ?venue= -->
+  <main id="wall" class="wall" hidden>
+    <header class="top">
+      <div class="venue" id="venue-name"></div>
+      <div id="counter" class="counter"></div>
+    </header>
+
+    <section id="slide" class="slide" aria-live="polite">
+      <div class="machine">
+        <h1 id="title" class="title"></h1>
+        <div class="meta"><span id="meta"></span> <span id="badge" class="badge" hidden>Out of order</span></div>
+      </div>
+      <table class="scores">
+        <thead><tr><th class="rank">#</th><th class="handle">Initials</th><th>Player</th><th class="score">Score</th><th class="date">Date</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+
+    <footer class="bottom">
+      <div class="progress"><div id="bar" class="bar"></div></div>
+      <div id="status" class="status"></div>
+    </footer>
+  </main>
+
+  <div id="message" class="message" hidden></div>
+  <button id="fullscreen" class="fullscreen" type="button" hidden>Full screen</button>
+
+  <script src="annex-errors.js"></script>
+  <script src="wall.js"></script>
+</body>
+</html>
