@@ -1,0 +1,196 @@
+# nginx for Kanboard on Annex. Rendered by entrypoint.sh into /tmp/nginx.conf (__PORT__, __CSRF__).
+# Based on the upstream image's nginx.conf (v1.2.54): same PHP front controllers and the same blocked paths;
+# plain HTTP on $PORT only (TLS ends at Annex's front door), everything writable under /tmp, JSON logs on stdout.
+worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr warn;
+
+events {
+    worker_connections 256;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    client_body_temp_path /tmp/nginx/body;
+    proxy_temp_path       /tmp/nginx/proxy;
+    fastcgi_temp_path     /tmp/nginx/fastcgi;
+    uwsgi_temp_path       /tmp/nginx/uwsgi;
+    scgi_temp_path        /tmp/nginx/scgi;
+
+    sendfile           on;
+    tcp_nopush         on;
+    tcp_nodelay        on;
+    keepalive_timeout  65;
+    server_tokens      off;
+
+    fastcgi_buffers 16 16k;
+    fastcgi_buffer_size 32k;
+
+    # --- request ids (Annex logging convention): reuse the front door's X-Request-Id, or make one (16 hex) ---
+    map $request_id $annex_new_rid {
+        "~^(?<r>.{16})" $r;
+        default $request_id;
+    }
+    map $http_x_request_id $annex_rid {
+        "~^[A-Za-z0-9._-]{1,64}$" $http_x_request_id;
+        default $annex_new_rid;
+    }
+
+    # --- cross-site requests (contract "Cross-site requests", D91): the runtime's csrf_violation, in nginx ---
+    # A POST/PUT/PATCH/DELETE is refused when Sec-Fetch-Site is set and isn't same-origin or none, or when Origin
+    # is set and its host isn't this app's (Host, or the first X-Forwarded-Host). Requests with neither header
+    # (curl, the seed job on 127.0.0.1) pass. ANNEX_CSRF=off in annex.yaml turns it off (__CSRF__ = 0).
+    map $request_method $annex_unsafe_method {
+        default 0;
+        POST 1; PUT 1; PATCH 1; DELETE 1;
+    }
+    map $http_sec_fetch_site $annex_bad_site {
+        "" 0;
+        "~*^(same-origin|none)$" 0;
+        default 1;
+    }
+    map $http_origin $annex_has_origin {
+        "" 0;
+        default 1;
+    }
+    map $http_origin $annex_origin_host {
+        "~*^[a-z][a-z0-9+.-]*://(?<oh>[^/?#]+)" $oh;
+        default "!";
+    }
+    map "$annex_origin_host|$http_host|$http_x_forwarded_host" $annex_bad_origin {
+        "~*^([^|]+)\|\1\|" 0;
+        "~*^([^|]+)\|[^|]*\|\1(,|$)" 0;
+        default 1;
+    }
+    map "__CSRF__:$annex_unsafe_method:$annex_bad_site:$annex_has_origin:$annex_bad_origin" $annex_csrf_refuse {
+        "~^1:1:1:" 1;
+        "~^1:1:0:1:1$" 1;
+        default 0;
+    }
+
+    # --- one JSON line per request on stdout, without query strings, health checks, static files or the seed job's
+    # own API calls (it logs its own summary) ---
+    map "$annex_csrf_refuse:$status" $annex_level {
+        "~^1:" warn;
+        "~:5" error;
+        default info;
+    }
+    map $annex_csrf_refuse $annex_msg {
+        1 "cross-site request refused";
+        default "request";
+    }
+    map "$remote_addr $uri" $annex_loggable {
+        "~ /healthcheck\.php$" 0;
+        "~^127\.0\.0\.1 /jsonrpc\.php$" 0;
+        "~*\.(ico|jpg|gif|png|css|js|svg|eot|ttf|woff|woff2|otf|map)$" 0;
+        default 1;
+    }
+    log_format annex escape=json '{"ts":"$time_iso8601","level":"$annex_level","msg":"$annex_msg",'
+        '"request_id":"$annex_rid","user":"$http_remote_user","method":"$request_method","path":"$uri",'
+        '"status":$status,"duration_s":$request_time,"bytes":$body_bytes_sent}';
+    access_log /dev/stdout annex if=$annex_loggable;
+
+    server {
+        listen                    __PORT__;
+        server_name               _;
+        index                     index.php;
+        root                      /var/www/app;
+        client_max_body_size      16M;
+
+        add_header X-Request-Id $annex_rid always;
+
+        if ($annex_csrf_refuse) {
+            return 403 "Cross-site request refused\n";
+        }
+
+        location / {
+            try_files $uri $uri/ /index.php$is_args$args;
+        }
+
+        # Health check for Annex (no login; checks the database): Kanboard's own healthcheck.php
+        location = /healthcheck.php {
+            fastcgi_pass unix:/tmp/php-fpm.sock;
+            fastcgi_param SCRIPT_FILENAME $document_root/healthcheck.php;
+            include /etc/nginx/fastcgi_params;
+        }
+
+        # The JSON-RPC API is for this container's own jobs (the seed job) only, never through the front door
+        location = /jsonrpc.php {
+            allow 127.0.0.1;
+            deny all;
+            error_log /dev/stderr crit;   # a refusal is in the access log already (403)
+            fastcgi_pass unix:/tmp/php-fpm.sock;
+            fastcgi_param SCRIPT_FILENAME $document_root/jsonrpc.php;
+            include /etc/nginx/fastcgi_params;
+        }
+
+        # Sign-in is Annex's: Kanboard's own login form, password check and password reset are never served
+        location ~ ^/(login|forgot-password)(/|$) {
+            return 404;
+        }
+
+        # Only the front controller runs PHP
+        location ~ ^/index\.php(/|$) {
+            if ($arg_controller ~* "^(AuthController|PasswordResetController)$") {
+                return 404;
+            }
+            try_files $uri =404;
+            fastcgi_split_path_info ^(.+\.php)(/.+)$;
+            fastcgi_pass unix:/tmp/php-fpm.sock;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_index index.php;
+            include /etc/nginx/fastcgi_params;
+            fastcgi_param SERVER_NAME $host;
+        }
+
+        # Plugins live in /data/plugins; only their static assets are served
+        location ~ ^/plugins/([A-Za-z0-9_]+/Assets/.+\.(css|js|png|jpg|gif|svg|woff2?|ttf|eot))$ {
+            alias /data/plugins/$1;
+        }
+        location ~ ^/plugins/ {
+            return 404;
+        }
+
+        # Source code and private data are never served
+        location ~ ^/(app|libs|vendor|data)/ {
+            return 404;
+        }
+
+        location ~ ^/cli$ {
+            return 404;
+        }
+
+        location ~ \.php$ {
+            return 404;
+        }
+
+        location ~* \.(log|sqlite)$ {
+            return 404;
+        }
+
+        location ~ /\. {
+            return 404;
+        }
+
+        location ~* ^.+\.(ico|jpg|gif|png|css|js|svg|eot|ttf|woff|woff2|otf)$ {
+            log_not_found off;
+            expires 7d;
+            etag on;
+        }
+
+        gzip on;
+        gzip_comp_level 3;
+        gzip_vary on;
+        gzip_types
+            text/javascript
+            application/javascript
+            application/json
+            text/xml
+            application/xml
+            application/rss+xml
+            text/css
+            text/plain;
+    }
+}
