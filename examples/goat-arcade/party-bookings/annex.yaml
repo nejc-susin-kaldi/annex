@@ -1,0 +1,25 @@
+# Annex manifest. Full contract: `annex contract`
+name: party-bookings
+owner: maja
+description: Birthday-party requests from the website; staff confirm a venue and slot, decline or mark as contacted
+type: web
+port: 8080
+healthcheck: /healthz
+access: internal
+storage:
+  postgres: true    # the requests and who did what
+  files: false
+data:
+  views: [venues]   # venue names and opening hours
+notify:
+  email: true       # the venue's manager: new requests and confirmation summaries (never the customer)
+webhooks:
+  - name: website              # public URL: https://hooks.<domain>/h/party-bookings/website
+    path: /hooks/website
+    verify: shared-secret      # the website sends the header X-Annex-Hook-Secret
+    secret: BOOKING_HOOK_SECRET
+env:
+  VENUE_MANAGERS: "LJ1=maja,*=maja"   # venue_code=login of who hears about requests for it; * = every other venue
+  PARTY_HOURS: "2"                    # how long a party lasts, for the opening-hours check
+secrets: [BOOKING_HOOK_SECRET]
+egress: []
