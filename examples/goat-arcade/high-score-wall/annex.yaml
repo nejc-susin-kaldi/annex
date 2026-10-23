@@ -1,0 +1,16 @@
+# Annex manifest. Full contract: `annex contract`
+name: high-score-wall
+owner: lena
+description: TV mode for a venue's screen, the all-time top 10 of each machine on the floor, rotating
+type: web
+port: 8080
+healthcheck: /healthz
+access: internal
+storage:
+  postgres: false
+  files: false
+data:
+  views: [venues, machine_floor, leaderboard]
+env: {}
+secrets: []
+egress: []
