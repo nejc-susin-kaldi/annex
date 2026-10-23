@@ -108,7 +108,8 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D97 | Hardening: final run and resource record | active (the ops pool size it set is D84's second revision) |
 | D98 | The platform on Docker Desktop: spike results | active (the image verdicts; L2 built on them, D99) |
 | D99 | A local stack on Docker Desktop (`ANNEX_ENV=local`) | active; revises D1 for the local case |
-| D101 | The deploy runs as one process on the VM | active; revises D17, D30, D64 and D92 (D100 was not used) |
+| D100 | Every suite on the local lane | active (written after D101–D104: the number was reserved for L3) |
+| D101 | The deploy runs as one process on the VM | active; revises D17, D30, D64 and D92 |
 | D102 | Secret set, remove, migrate-networks and run on the VM | active; extends D101 and D64 to those commands |
 | D103 | Version coupling and one manifest module | active |
 | D104 | CI: unit tests on every push, the local stack on pull requests | active (written, not run: no remote yet) |
@@ -1246,3 +1247,43 @@ No image is missing arm64, so **no `platform: linux/amd64` emulation and no `com
 **Alternatives.** mkcert as a pinned release binary with a checksum: no checksum of a release was available to this change, so the signed Ubuntu package is used; swap it if a pinned binary is wanted. A flag on `test-smoke.sh` to tolerate a missing backup: changes suite semantics for the VM, where a missing backup is a real failure. `/etc/hosts` lines on the runner: not needed, see above. Pinning actions to commit SHAs: stronger, but the SHAs could not be looked up here; do it (or Dependabot) once there is a remote. `platform` on every push: 15 minutes or more for each push; pull requests only. A self-hosted runner on the VM: it would touch the shared VM, which the local lane exists to avoid.
 
 **Prod:** none; CI is a development tool. A change to platform code still gets `scripts/push.sh` and `test-smoke.sh` on the VM before a demo (control-plane plan, production item 4).
+
+## D100. Every suite on the local lane (22 Oct, control-plane L3)
+**What.** Every suite of `scripts/test-all.sh` was run on the local stack (D99) on the Mac, one at a time, each to a file under `.build/l3/`, and passed, after the fixes below. A single `ANNEX_ENV=local scripts/test-all.sh --slow` did **not** complete: the Mac went to sleep twice during it (on battery, lid closed; `caffeinate -i` doesn't stop that), which paused Docker Desktop's VM mid-suite. The table is therefore the separate runs; `test-all.sh --slow` locally is still to be done once on a Mac that stays awake.
+
+| Suite | Local (s) | VM (s, D97 run) | Local result |
+|---|---|---|---|
+| smoke | ~60 | 75 | 52/52 |
+| platform | 92 | 260 | 70/70 (Metabase and Dozzle checks skipped: no extras, its 650 MB image didn't download in time) |
+| apps | 45 | 110 | 34/34 |
+| jobs | 27 | 76 | 9/9 |
+| restore | 22 | 69 | 12/12 |
+| rollback | 299 | 423 | 58/58 |
+| notify | 30 | 54 | 47/47 (Slack: no token, as in CI) |
+| users | 25 | 28 | 39/39 |
+| usage | 94 | 155 | 50/50 |
+| hooks | 169 | 824 | 91/91 |
+| logs | 336 | 426 | 78/78 |
+| errors | 225 | 124 | 49/49 |
+| console | 46 | 79 | 127/127 |
+| audit | 149 | 206 | 61/61 |
+| host | 121 | 116 | 21/21 |
+| examples | 32 | 30 | 16/16 |
+| alerts | 827 | 834 | 38/40 before the engine fix below; not rerun after it |
+| unit, vm-unit, cli-unit, runtime-unit, runtime, contract | under 10 each | under 10 each | pass (ops 416, cli 120) |
+
+The Goat Arcade database (`scripts/democlient.sh up`, `reseed`, `link`, `check`) works locally too: seeded, linked to product-db, all seven planted stories true.
+
+**What changed.**
+- **Platform: ops reaches appdata-db as `appdata-db-platform`** (`compose.yaml`: an alias on `annex-appdata` only; `OPS_DATABASE_HOST` on ops; `db.dsn()` swaps the URL's host). ops is also on every app network, where `appdata-db` is that app's alias (D88), and Docker answered with the app network's address (checked: `getaddrinfo('appdata-db')` in ops gave `10.213.0.5` while an app with Postgres was deployed). When the app was removed and its network went, those connections hung until libpq's timeout and filled the pool: "the pool is full", a hook not delivered in 30 s, the auditor and digest failing. Not local-only: it can happen on the VM whenever an app with Postgres is removed, and may be part of D97's pool exhaustion under the full run. The secrets files keep `appdata-db` (no bootstrap rerun needed); the console and the receiver aren't on app networks and are unchanged.
+- **Platform: a job run for a removed app opens no incident** (`engine.py`, `gone_apps`). A `tick` that fired between `annex remove`'s `compose down` and Ofelia's restart failed with "No such container" and opened a `job:` incident nothing would close (alerts: "no message after the removal", "its incident is closed"). The engine now remembers an app whose last container went, until a container of it comes back. A race on either lane (one minute boundary in the few seconds of a removal).
+- **Scripts, kept identical on both lanes:** `ssh annex` in `test-audit.sh` and `test-console.sh` → `vm`; `democlient.sh` rsyncs to `dest`, its `psql` uses the new `vm_tty` (`ssh -t` on the VM, plain `bash -c` locally), messages name `$WHERE`; `reset-demo.sh`'s message names `$WHERE`. `test-users.sh`: the users file's owner is compared with `vm whoami` (annex on the VM) through python3's `os.stat`, not `stat -c` (GNU only). `test-hooks.sh`: the hooks file's owner and mode are read in the ops container that reads it (on the Mac the host side always shows the Mac user, D98). `test-host.sh`: disk with POSIX `df -P` of `$DATA/state/ops` (the filesystem ops's statvfs measures; on the VM the same as `/`), memory from `/proc/meminfo` in a platform container (the Docker host's, as ops reads it; on the Mac it is Docker Desktop's VM, not the Mac). `testlib.sh` `ops_state_seen`: after a suite writes `state/ops/tuning.json` (all seven suites that do) or `test-mode`, ops lists the directory once, because Docker Desktop's file sharing kept a container's ENOENT for a name removed and created again on the Mac for minutes until the directory was read (D98); the tuning never reached ops and the audit suite's gateway buckets stayed an hour long. `test-console.sh` waits for the `/boom` error group itself, not for "two groups" (the emitted error and its traceback make two first), and reads the summary after that wait. `democlient/initdb/*.sh` are executable like product-db's (Docker Desktop's sharing told Postgres's entrypoint a 0644 script was executable, then the kernel refused to run it; the VM sources them today, and runs them after this change: same result, they only call `psql`).
+- **Not changed:** no `if local` branch in any suite; no check loosened. The VM's `vm/`, compose and bootstrap paths are unchanged except the two platform fixes.
+
+**Seen only locally.** After the Mac slept with the stack running, ops's health checker kept beating but stored no results for over half an hour ("the health checker isn't answering" for every subject, smoke's front-door check failing) until ops was restarted; a fresh process checked fine. Not investigated further (the VM doesn't sleep); if it shows on the VM, the round's thread pool is where to look. Memory after the runs (no extras; two demo apps and arcade-db): about 890 MiB of Docker Desktop's 7.65 GiB; Authelia 215 of 256, the socket proxies 30 and 36 of 48 (HAProxy's thread per CPU: 12 here, 2 on the VM). Deploy progress lines still say "on the VM" locally (cosmetic).
+
+**Why.** L3: the local lane is only useful if every suite means the same there; each failure was either a Mac-specific way of reading the same fact (fixed in the script so both lanes read it the same way) or a real race that the faster local timings exposed (fixed in the platform).
+
+**Alternatives.** An `if [ "$TARGET" = local ]` branch per check: two meanings for one check. Writing the tuning file through a container instead of a directory listing: heavier, and the listing is harmless on the VM. Turning Docker Desktop's file sharing to gRPC FUSE: a system setting (Nejc's), and slower. A different alias scheme for apps (e.g. `appdata-db` only on `annex-appdata` and another name on app networks): changes the app contract's `DATABASE_URL`.
+
+**For the VM (the orchestrator, not run here):** `scripts/push.sh` (appdata-db is recreated for its new alias; push's `networks-sync` reconnects it to the app networks), then `test-smoke.sh`, and the suites whose scripts changed: `test-users.sh`, `test-hooks.sh`, `test-host.sh`, `test-console.sh`, `test-audit.sh`, `test-errors.sh`, `test-logs.sh`; `test-alerts.sh` with Nejc's go-ahead (engine change, "exactly one alert"); `scripts/democlient.sh status` (no reseed needed).
