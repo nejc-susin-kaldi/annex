@@ -1,0 +1,127 @@
+{
+  "_comment": "Applied by vm/metabase_content.py (D109). The venue filter applies to every card (every_card: each card's SQL has an optional [[AND ... = {{venue}}]]); empty means all venues. Times are relative to the latest day in the data.",
+  "key": "ga.venue",
+  "name": "Venue performance",
+  "collection": "Venues",
+  "description": "How one venue plays: games per day, the busy hours, what each machine earns, what stands idle, and this week against last. Pick a venue with the filter; empty shows them all.",
+  "parameters": [
+    {
+      "slug": "venue",
+      "name": "Venue",
+      "every_card": true,
+      "values_sql": "SELECT venue_code, venue_code || ' · ' || venue_name FROM annex_api.venues ORDER BY venue_code"
+    }
+  ],
+  "cards": [
+    {
+      "key": "week",
+      "name": "This week against last",
+      "description": "Games and estimated revenue in the 7 days up to the latest day in the data, against the 7 days before, per venue.",
+      "display": "table",
+      "pos": [0, 0, 24, 5],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.daily_plays),",
+        "w AS (",
+        "  SELECT p.venue_code,",
+        "         sum(p.games) FILTER (WHERE p.day > l.d - 7) AS games_this,",
+        "         sum(p.games) FILTER (WHERE p.day <= l.d - 7) AS games_last,",
+        "         sum(p.revenue_eur) FILTER (WHERE p.day > l.d - 7) AS revenue_this_eur,",
+        "         sum(p.revenue_eur) FILTER (WHERE p.day <= l.d - 7) AS revenue_last_eur",
+        "  FROM annex_api.daily_plays p, l",
+        "  WHERE p.day > l.d - 14 [[AND p.venue_code = {{venue}}]]",
+        "  GROUP BY p.venue_code)",
+        "SELECT venue_code AS venue, games_this AS games_this_week, games_last AS games_week_before,",
+        "       round(100.0 * (games_this - games_last) / nullif(games_last, 0), 1) AS games_change_pct,",
+        "       revenue_this_eur AS revenue_this_week_eur, revenue_last_eur AS revenue_week_before_eur,",
+        "       round(100.0 * (revenue_this_eur - revenue_last_eur) / nullif(revenue_last_eur, 0), 1) AS revenue_change_pct",
+        "FROM w ORDER BY venue_code"
+      ],
+      "titles": {"games_change_pct": "Games change (%)", "revenue_change_pct": "Revenue change (%)"},
+      "viz": {"table.column_formatting": [
+        {"id": 0, "columns": ["games_change_pct", "revenue_change_pct"], "type": "single", "operator": "<", "value": 0, "color": "#ED6E6E", "highlight_row": false},
+        {"id": 1, "columns": ["games_change_pct", "revenue_change_pct"], "type": "single", "operator": ">", "value": 0, "color": "#84BB4C", "highlight_row": false}
+      ]}
+    },
+    {
+      "key": "games-per-day",
+      "name": "Games per day, 90 days",
+      "description": "Games played per day and venue over the last 90 days.",
+      "display": "line",
+      "pos": [0, 5, 14, 7],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.daily_plays)",
+        "SELECT p.day, p.venue_code AS venue, sum(p.games) AS games",
+        "FROM annex_api.daily_plays p, l",
+        "WHERE p.day > l.d - 90 [[AND p.venue_code = {{venue}}]]",
+        "GROUP BY p.day, p.venue_code ORDER BY p.day, p.venue_code"
+      ],
+      "viz": {"graph.dimensions": ["day", "venue"], "graph.metrics": ["games"]}
+    },
+    {
+      "key": "heatmap",
+      "name": "Busy hours: games by weekday and hour, 8 weeks",
+      "description": "Games started per hour of the day (rows) and weekday (columns) over the last 8 weeks; darker is busier. Local time; the day starts at 06:00, so the hours after midnight come last.",
+      "display": "table",
+      "pos": [14, 5, 10, 13],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.hourly_plays)",
+        "SELECT lpad(h.hour::text, 2, '0') || ':00' AS hour,",
+        "       sum(h.games) FILTER (WHERE h.weekday = 1) AS mon, sum(h.games) FILTER (WHERE h.weekday = 2) AS tue,",
+        "       sum(h.games) FILTER (WHERE h.weekday = 3) AS wed, sum(h.games) FILTER (WHERE h.weekday = 4) AS thu,",
+        "       sum(h.games) FILTER (WHERE h.weekday = 5) AS fri, sum(h.games) FILTER (WHERE h.weekday = 6) AS sat,",
+        "       sum(h.games) FILTER (WHERE h.weekday = 7) AS sun",
+        "FROM annex_api.hourly_plays h, l",
+        "WHERE h.day > l.d - 56 [[AND h.venue_code = {{venue}}]]",
+        "GROUP BY h.hour ORDER BY (h.hour + 18) % 24"
+      ],
+      "titles": {"hour": "Hour", "mon": "Mon", "tue": "Tue", "wed": "Wed", "thu": "Thu", "fri": "Fri", "sat": "Sat", "sun": "Sun"},
+      "viz": {"table.column_formatting": [
+        {"id": 0, "columns": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "type": "range", "colors": ["#FFFFFF", "#509EE3"], "min_type": null, "max_type": null, "highlight_row": false}
+      ]}
+    },
+    {
+      "key": "earnings",
+      "name": "Machine earnings, 30 days",
+      "description": "Every machine on the floor: games and estimated revenue in the last 30 days, per day, and its price. Highest earners first.",
+      "display": "table",
+      "pos": [0, 12, 14, 14],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.daily_plays),",
+        "p AS (SELECT d.machine_id, sum(d.games) AS games, sum(d.revenue_eur) AS revenue_eur",
+        "      FROM annex_api.daily_plays d, l WHERE d.day > l.d - 30 GROUP BY d.machine_id)",
+        "SELECT f.venue_code AS venue, f.machine_id, f.title, coalesce(f.era, f.machine_type) AS era,",
+        "       coalesce(p.games, 0) AS games_30_days, coalesce(p.revenue_eur, 0) AS revenue_30_days_eur,",
+        "       round(coalesce(p.revenue_eur, 0) / 30, 2) AS revenue_per_day_eur, f.price_per_play_eur, f.out_of_order",
+        "FROM annex_api.machine_floor f LEFT JOIN p ON p.machine_id = f.machine_id",
+        "WHERE true [[AND f.venue_code = {{venue}}]]",
+        "ORDER BY revenue_30_days_eur DESC"
+      ],
+      "titles": {"machine_id": "Machine ID"},
+      "viz": {"table.column_formatting": [
+        {"id": 0, "columns": ["revenue_per_day_eur"], "type": "range", "colors": ["#FFFFFF", "#84BB4C"], "min_type": null, "max_type": null, "highlight_row": false}
+      ]}
+    },
+    {
+      "key": "idle",
+      "name": "Idle machines: fewest games, last 7 days",
+      "description": "The 10 machines on the floor with the fewest games in the 7 days up to the latest day in the data: candidates to move, fix or swap.",
+      "display": "table",
+      "pos": [14, 18, 10, 8],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.daily_plays),",
+        "p AS (SELECT d.machine_id, sum(d.games) AS games, max(d.day) AS last_day",
+        "      FROM annex_api.daily_plays d, l WHERE d.day > l.d - 30 GROUP BY d.machine_id),",
+        "w AS (SELECT d.machine_id, sum(d.games) AS games",
+        "      FROM annex_api.daily_plays d, l WHERE d.day > l.d - 7 GROUP BY d.machine_id)",
+        "SELECT f.venue_code AS venue, f.machine_id, f.title, coalesce(w.games, 0) AS games_7_days,",
+        "       coalesce(p.games, 0) AS games_30_days, l.d - p.last_day AS days_since_played, f.out_of_order",
+        "FROM annex_api.machine_floor f CROSS JOIN l",
+        "LEFT JOIN p ON p.machine_id = f.machine_id LEFT JOIN w ON w.machine_id = f.machine_id",
+        "WHERE true [[AND f.venue_code = {{venue}}]]",
+        "ORDER BY games_7_days, games_30_days",
+        "LIMIT 10"
+      ],
+      "titles": {"machine_id": "Machine ID", "days_since_played": "Days since last game"}
+    }
+  ]
+}

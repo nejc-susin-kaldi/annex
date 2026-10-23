@@ -1,0 +1,84 @@
+{
+  "_comment": "Applied by vm/metabase_content.py (D109). Weeks are the full weeks in revenue_weekly (the latest is the last full week in the data). A token is 0.50 EUR; card money is the counted amount less coins and tokens.",
+  "key": "ga.cash",
+  "name": "Cash and collections",
+  "collection": "Finance",
+  "description": "The weekly cash count: per venue, how it is paid, what a machine brings in by era, and whether the counted cash matches the plays the machines recorded.",
+  "cards": [
+    {
+      "key": "weekly",
+      "name": "Cash counted per week, by venue, 26 weeks",
+      "description": "Weekly cash count, stacked by venue, over the last 26 full weeks.",
+      "display": "bar",
+      "pos": [0, 0, 16, 8],
+      "sql": [
+        "SELECT week_start AS week, venue_name AS venue, amount_eur AS cash_eur",
+        "FROM annex_api.revenue_weekly",
+        "WHERE week_start > (SELECT max(week_start) FROM annex_api.revenue_weekly) - 26 * 7",
+        "ORDER BY week_start, venue_name"
+      ],
+      "viz": {"graph.dimensions": ["week", "venue"], "graph.metrics": ["cash_eur"], "stackable.stack_type": "stacked", "graph.y_axis.title_text": "Cash counted"}
+    },
+    {
+      "key": "split",
+      "name": "Coins, tokens and card, 13 weeks",
+      "description": "How the cash counted in the last 13 full weeks was paid, per venue: coins, tokens (0.50 EUR each) and member cards (the rest).",
+      "display": "bar",
+      "pos": [16, 0, 8, 8],
+      "sql": [
+        "SELECT venue_code AS venue, sum(coins_eur) AS coins_eur, sum(tokens * 0.50) AS tokens_eur,",
+        "       sum(amount_eur - coins_eur - tokens * 0.50) AS card_eur",
+        "FROM annex_api.revenue_weekly",
+        "WHERE week_start > (SELECT max(week_start) FROM annex_api.revenue_weekly) - 13 * 7",
+        "GROUP BY venue_code ORDER BY venue_code"
+      ],
+      "viz": {"graph.dimensions": ["venue"], "graph.metrics": ["coins_eur", "tokens_eur", "card_eur"], "stackable.stack_type": "normalized"}
+    },
+    {
+      "key": "per-machine-era",
+      "name": "Takings per machine per week, by era, 13 weeks",
+      "description": "Estimated revenue per machine per week by pinball era (and video and other), averaged over the last 13 weeks. The count is per venue, so per machine is estimated from the plays.",
+      "display": "bar",
+      "pos": [0, 8, 10, 8],
+      "sql": [
+        "WITH l AS (SELECT max(day) AS d FROM annex_api.daily_plays)",
+        "SELECT coalesce(p.era, p.machine_type) AS era,",
+        "       round(sum(p.revenue_eur) / count(DISTINCT p.machine_id) / 13, 2) AS per_machine_per_week_eur,",
+        "       count(DISTINCT p.machine_id) AS machines",
+        "FROM annex_api.daily_plays p, l",
+        "WHERE p.day > l.d - 91",
+        "GROUP BY 1",
+        "ORDER BY array_position(ARRAY['EM', 'SS', 'DMD', 'LCD', 'video', 'other'], coalesce(p.era, p.machine_type))"
+      ],
+      "titles": {"per_machine_per_week_eur": "Per machine per week"},
+      "viz": {"graph.dimensions": ["era"], "graph.metrics": ["per_machine_per_week_eur"], "graph.show_values": true}
+    },
+    {
+      "key": "counted-vs-estimated",
+      "name": "Counted cash against estimated plays, 13 weeks",
+      "description": "Per venue, over the last 13 full weeks: the cash counted (revenue_weekly) against the estimated revenue of the plays the machines recorded in the same weeks (daily_plays: credits times today's price). A large gap is what finance checks first.",
+      "display": "table",
+      "pos": [10, 8, 14, 8],
+      "sql": [
+        "WITH wk AS (SELECT week_start, venue_code, amount_eur FROM annex_api.revenue_weekly",
+        "            WHERE week_start > (SELECT max(week_start) FROM annex_api.revenue_weekly) - 13 * 7),",
+        "est AS (SELECT p.venue_code, date_trunc('week', p.day)::date AS week_start, sum(p.revenue_eur) AS revenue_eur",
+        "        FROM annex_api.daily_plays p",
+        "        WHERE p.day >= (SELECT min(week_start) FROM wk) AND p.day < (SELECT max(week_start) FROM wk) + 7",
+        "        GROUP BY 1, 2)",
+        "SELECT wk.venue_code AS venue, count(*) AS weeks, sum(wk.amount_eur) AS counted_eur,",
+        "       sum(coalesce(est.revenue_eur, 0)) AS estimated_eur,",
+        "       sum(wk.amount_eur) - sum(coalesce(est.revenue_eur, 0)) AS gap_eur,",
+        "       round(100.0 * (sum(wk.amount_eur) - sum(coalesce(est.revenue_eur, 0))) / nullif(sum(coalesce(est.revenue_eur, 0)), 0), 1) AS gap_pct",
+        "FROM wk LEFT JOIN est ON est.venue_code = wk.venue_code AND est.week_start = wk.week_start",
+        "GROUP BY wk.venue_code",
+        "ORDER BY abs(sum(wk.amount_eur) - sum(coalesce(est.revenue_eur, 0))) DESC"
+      ],
+      "titles": {"counted_eur": "Counted", "estimated_eur": "Estimated from plays", "gap_eur": "Gap", "gap_pct": "Gap (%)"},
+      "viz": {"table.column_formatting": [
+        {"id": 0, "columns": ["gap_pct"], "type": "single", "operator": "<", "value": -5, "color": "#ED6E6E", "highlight_row": true},
+        {"id": 1, "columns": ["gap_pct"], "type": "single", "operator": ">", "value": 5, "color": "#F9CF48", "highlight_row": true}
+      ]}
+    }
+  ]
+}
