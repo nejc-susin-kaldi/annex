@@ -88,6 +88,15 @@ def tournaments() -> list[dict]:
                               "max_players,entries,winner_handle,winner_nickname", order="starts_on.desc"))
 
 
+def official_entries(tournament_id: int, fresh: bool = False) -> list[dict]:
+    """The club system's entries for one tournament (tournament_entries). `fresh` skips the cache: the sign-up check
+    must not miss an entry made in the last minute."""
+    def load():
+        return gateway("tournament_entries", select="nickname,handle,seed,entered_at",
+                       tournament_id=f"eq.{tournament_id}", order="nickname.asc", limit=500)
+    return load() if fresh else cached(f"entries:{tournament_id}", load)
+
+
 def venue_names() -> dict[str, str]:
     rows = cached("venues", lambda: gateway("venues", select="venue_code,venue_name,city"), 600)
     return {v["venue_code"]: f"{v['venue_name']} ({v['city']})" for v in rows}
@@ -140,7 +149,7 @@ def signup_form(t: dict, nickname: str = "", compact: bool = False) -> str:
             + f'<button>Sign up{" for " + esc(t["name"]) if compact else ""}</button></form>')
 
 
-def upcoming_card(t: dict, pend: list[dict], last_day: date | None, nickname: str, venues: dict) -> str:
+def upcoming_card(t: dict, pend: list[dict], entrants: list[str] | None, last_day: date | None, nickname: str, venues: dict) -> str:
     starts = desk.as_date(t["starts_on"])
     official, n_pend, cap = t["entries"] or 0, len(pend), t["max_players"] or 0
     left = desk.places_left(cap, official, n_pend)
@@ -165,6 +174,13 @@ def upcoming_card(t: dict, pend: list[dict], last_day: date | None, nickname: st
                      f'<tbody>{rows}</tbody></table>')
     else:
         pend_html = '<p class="muted">No desk sign-ups waiting for the club system.</p>'
+    if entrants is None:
+        entered_html = '<p class="muted">The club system\'s entry list can\'t be read right now.</p>'
+    elif entrants:
+        entered_html = ('<p class="entrants">' + ", ".join(f'<a href="/players/{quote(n)}">{esc(n)}</a>' for n in entrants)
+                        + '</p>')
+    else:
+        entered_html = '<p class="muted">Nobody is entered in the club system yet.</p>'
     form = signup_form(t, nickname) if left > 0 else box("warn", "The tournament is full: no places left.")
     return f"""
 <section class="card hero">
@@ -182,9 +198,9 @@ def upcoming_card(t: dict, pend: list[dict], last_day: date | None, nickname: st
   {bar}
   <div class="cols">
     <div><h3>Sign a player up</h3>{form}
-      <p class="small muted">The nickname must be a member's. The club system's entry list isn't in the data
-      (only its count), so check the club list for players who entered there.</p></div>
-    <div><h3>Pending desk sign-ups</h3>{pend_html}</div>
+      <p class="small muted">The nickname must be a member's, and not already entered in the club system.</p></div>
+    <div><h3>Pending desk sign-ups</h3>{pend_html}
+      <h3>Entered in the club system ({official})</h3>{entered_html}</div>
   </div>
 </section>"""
 
@@ -224,7 +240,12 @@ def render_index(login: str, notice: str = "", nickname: str = "", status: int =
             log.exception("could not read sign-ups", tournament_id=t["tournament_id"])
             pend = []
             parts.append(box("bad", "Desk sign-ups can't be read right now; the official entries are shown."))
-        parts.append(upcoming_card(t, pend, last_day, nickname, venues))
+        try:
+            entrants = desk.official_nicknames(official_entries(t["tournament_id"]))
+        except GatewayError as e:
+            log.warn("could not read entries", tournament_id=t["tournament_id"], status=e.status)
+            entrants = None
+        parts.append(upcoming_card(t, pend, entrants, last_day, nickname, venues))
     if not upcoming:
         parts.append('<section class="card"><h2>Next tournament</h2><p class="muted">No tournament is open for '
                      'registration.</p></section>')
@@ -270,6 +291,8 @@ def sign_up(request: Request, nickname: str = Form(""), tournament_id: int = For
     try:
         t = next((x for x in tournaments() if x["tournament_id"] == tournament_id), None)
         player = find_player(nick)
+        entries = (official_entries(tournament_id, fresh=True)
+                   if t and t["status"] == "registration" and player else [])
     except GatewayError as e:
         return gateway_down(user.login, "sign up", e)
     if not t or t["status"] != "registration":
@@ -282,6 +305,10 @@ def sign_up(request: Request, nickname: str = Form(""), tournament_id: int = For
                    f"<a href=\"/players?q={quote(nick)}\">search the players</a>. New players need a member card "
                    f"first."), nick, 404)
     nick = player["nickname"]  # the club system's spelling
+    if desk.is_official(entries, nick):
+        log.info("sign-up refused", reason="already entered", tournament_id=tournament_id)
+        return render_index(user.login, box("warn", f"<b>{esc(nick)}</b> is already entered in the club system for "
+                                                    f"{esc(t['name'])}."), "", 409)
     free = desk.places_left(t["max_players"], t["entries"], 0)
     try:
         signup_id, n_pend = store.add(tournament_id, nick, user.login, free)

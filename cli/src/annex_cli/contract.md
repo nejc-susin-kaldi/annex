@@ -190,6 +190,7 @@ Two synthetic data sets. `GET $ANNEX_GATEWAY_URL/` with your token returns an Op
 | `service_log` | ticket_id, machine_id, serial_no, title, current_venue_code, opened_at, closed_at, status, symptom, resolution, reported_by, took_machine_off_floor, downtime_hours, technician, labour_hours, parts_cost_eur, parts |
 | `revenue_weekly` | week_start, venue_code, venue_name, city, amount_eur, coins_eur, tokens, card_plays, machines |
 | `tournaments` | tournament_id, name, venue_code, venue_name, starts_on, format, status, entry_fee_eur, max_players, entries, winner_handle, winner_nickname |
+| `tournament_entries` | tournament_id, nickname, handle, seed, entered_at |
 | `tournament_standings` | tournament_id, tournament_name, starts_on, position, handle, nickname, points, games_played, best_score |
 
 Views can't be joined on the gateway: read each one and join in your code, on venue_code, machine_id, model_id or nickname. The gateway doesn't group or sum either, so the views come pre-aggregated (per day, per week); filter them (`?day=gte.2026-10-01`) rather than reading everything.

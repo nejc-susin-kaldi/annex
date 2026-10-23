@@ -73,7 +73,7 @@ Some views are big if read whole, so filter them: `daily_plays` has about 23,000
 | Tilts, faults, jackpots | `machine_events_daily` |
 | What broke, how fast it got fixed, what it cost | `service_log` |
 | Cash per venue per week | `revenue_weekly` |
-| Tournaments and their results | `tournaments`, `tournament_standings` |
+| Tournaments, who entered and their results | `tournaments`, `tournament_entries`, `tournament_standings` |
 
 Good to know:
 - **Time.** The data covers the **180 days before the last reseed** and ends the day before it. Timestamps are ISO 8601 with an offset; `day` columns are local (Central European) dates. Don't assume today has data. Find the latest day with `daily_plays?select=day&order=day.desc&limit=1`, or show "no plays in the last 7 days" gracefully.

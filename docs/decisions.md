@@ -116,6 +116,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D105 | Control-plane: final runs on both lanes and resource record | active |
 | D107 | Goat Arcade people and branding: `cm` becomes `maja`, demo passwords, Metabase groups, the front door | active; revises D9 (accounts and groups) and D12 (users.txt) in part |
 | D108 | Goat Arcade `hourly_plays` view; GA.2's Metabase part moves to GA.3 | active |
+| D110 | Goat Arcade `tournament_entries` view: who is entered, by nickname | active |
 
 ## D1. Apps run through `ssh annex` and the VM's Compose (14 Oct)
 **What.** The CLI copies the app folder to `/srv/annex/deploy/<app>`, writes the generated compose file there and runs `docker compose` on the VM over SSH, the same way the platform runs. The brief said "built and run through the annex-vm Docker context, using the Mac's Compose".
@@ -1346,3 +1347,12 @@ The Goat Arcade database (`scripts/democlient.sh up`, `reseed`, `link`, `check`)
 **Why.** The demo's heatmap (weekday by hour, the evening and weekend peak) needs plays by hour. `daily_plays` has no hour, and asking builders' apps to read raw games is not possible (only views are exposed). A second view is cheaper and clearer than adding an hour to `daily_plays`, which would multiply its rows by about 12 and change an existing view.
 
 **Alternatives.** An `hour` column in `daily_plays` (about 12 times the rows, changes a view apps already use); a view per weekday and hour pre-summed over all 180 days (168 x venues rows, but no trends and no way to filter by period); Metabase SQL questions on `src_arcade` (bypasses the allowlist, D78); a materialised view (stale, a refresh job to run).
+
+## D110. Goat Arcade `tournament_entries`: who is entered (23 Oct, GA.4)
+**What.** A reviewed gateway view `annex_api.tournament_entries` (tournament_id, nickname, handle, seed, entered_at), one row per entry in the club system, for past and upcoming tournaments. It sits next to `tournaments` in `db/product/clientlink/api_views_arcade.sql`, is listed in the contract's Goat Arcade table and the agent brief, and league-desk reads it. A new view doesn't raise `ANNEX_CONTRACT_VERSION` (D108).
+- **Left out:** erased players (`deleted_at IS NOT NULL`, as in `leaderboard`) and every personal column (name, email, phone, birth date, opt-in). A nickname is already public in `leaderboard`, `player_profiles` and `tournament_standings`, so the view adds no new personal data; the cost is that `tournaments.entries` can count one more than the view lists after an erasure.
+- **Plain join, no aggregate:** an upcoming tournament has at most a few dozen rows, so postgres_fdw ships them as they are.
+
+**Why.** league-desk signs members up at the counter before the club system has them, and could only compare against its own pending rows: the gateway gave the entry count, not the entrants (the known gap in its README). With the list it refuses a member who is already officially entered and shows the entrants. The same list answers "who is in the Masters?" for any builder.
+
+**Alternatives.** An array of nicknames in `tournaments` (changes a view apps already use, and a column of arrays is awkward to filter); the `player_id` as the key (the id is not exposed anywhere else, nickname is the key builders use); including the player's name and e-mail for the desk (personal data, not needed for the check).
