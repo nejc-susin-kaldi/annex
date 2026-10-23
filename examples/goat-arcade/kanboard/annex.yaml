@@ -1,0 +1,27 @@
+# Annex manifest. Full contract: `annex contract`. Kanboard, self-hosted: see README.md.
+name: kanboard
+owner: sam
+description: "Repair board for the technicians: a card per broken machine, per venue, and parts to order (Kanboard)"
+type: web+job
+port: 8080
+healthcheck: /healthcheck.php   # Kanboard's own: 200 when the database answers
+access: internal
+storage:
+  postgres: true       # Kanboard's database (projects, cards, users, sessions)
+  files: true          # /data: attachments, plugins, cache
+data:
+  views: [venues, service_log]   # the seed job: open venues and open service tickets
+schedule:
+  - name: seed
+    cron: "0 0 30 2 *"           # never on its own (30 February): run by hand with `annex run kanboard seed`
+    command: ["php", "/opt/annex/seed.php", "seed"]
+  - name: members
+    cron: "*/15 * * * *"         # everyone who has signed in joins the Goat Arcade boards
+    command: ["php", "/opt/annex/seed.php", "members"]
+  - name: cronjob
+    cron: "0 6 * * *"            # Kanboard's daily housekeeping (recurring tasks, statistics)
+    command: ["/opt/annex/cronjob.sh"]
+env:
+  KANBOARD_DEFAULT_ADMIN: kaldi-admin   # this login is a Kanboard admin; everyone else is a normal user
+secrets: [KANBOARD_API_TOKEN]   # a human sets it: openssl rand -hex 32 | annex secret set kanboard KANBOARD_API_TOKEN
+egress: []
