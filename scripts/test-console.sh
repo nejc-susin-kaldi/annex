@@ -31,7 +31,7 @@ cleanup() {
 on_exit cleanup
 
 echo "Setup"
-for u in sam maja kaldi-admin; do expect "$u signs in" 200 "$(login $u)"; done
+for u in sam maja petra kaldi-admin; do expect "$u signs in" 200 "$(login $u)"; done
 vm "printf '%s' '{\"errors_scan_s\": 4, \"errors_settle_s\": 4}' > $TUNING && chmod 644 $TUNING"; ops_state_seen
 sleep 6
 A=annex-selftest; B=annex-selftest-other
@@ -62,7 +62,7 @@ hasnt "  ...and no platform section" "Platform" "$home"
 for p in /status / /apps; do expect "maja $p" 200 "$(code -b "$TMP/maja.jar" "$CON$p")"; done
 for p in /audit /platform; do expect "maja is refused $p (admins only)" 403 "$(code -b "$TMP/maja.jar" "$CON$p")"; done
 for a in annex-selftest annex-selftest-other; do expect "maja is refused /apps/$a (403)" 403 "$(code -b "$TMP/maja.jar" "$CON/apps/$a")"; done
-has "maja's overview points at the status page" "don't own any apps" "$(as maja "$CON/" | text)"
+has "a user who owns no apps (petra) is pointed at the status page" "don't own any apps" "$(as petra "$CON/" | text)"
 st=$(as maja "$CON/status" | text)
 has "the status page lists apps by name and state for everyone" "annex-selftest" "$st"
 has "  ...and the platform's front door" "front door" "$st"
