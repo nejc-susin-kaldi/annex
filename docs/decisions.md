@@ -35,8 +35,8 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D25 | `static` template has a tiny server with two endpoints | active |
 | D26 | `node-web` template | active |
 | D27 | The skill lives in the repo, symlinked | active |
-| D28 | Demo reset | active |
-| D29 | M0.4 proof run is part of the demo | active |
+| D28 | Demo reset | superseded by D113 (the Goat Arcade reset) |
+| D29 | M0.4 proof run is part of the demo | active; revised by D113 (the live build is tilt-watch) |
 | D30 | Releases and the health gate | revised by D92 (lock, pending record) and D101 (the gate runs on the VM) |
 | D31 | Data snapshots before each switch | active |
 | D32 | Apps deployed before M1.1 | active |
@@ -121,6 +121,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D110 | Goat Arcade `tournament_entries` view: who is entered, by nickname | active |
 | D111 | Kanboard, self-hosted as an Annex app: the official image adapted to the contract, header sign-in, its own API token | active |
 | D112 | Goat Arcade is the only product data: the wealth demo is retired | active; revises D14 (retired: the wealth data is gone) and D10 (what push re-applies) |
+| D113 | The Goat Arcade demo: its shape, the reset's order, the live build and its fallback; open question on runs by hand | active; supersedes D28, revises D29 |
 
 ## D1. Apps run through `ssh annex` and the VM's Compose (14 Oct)
 **What.** The CLI copies the app folder to `/srv/annex/deploy/<app>`, writes the generated compose file there and runs `docker compose` on the VM over SSH, the same way the platform runs. The brief said "built and run through the annex-vm Docker context, using the Mac's Compose".
@@ -1437,3 +1438,84 @@ The Goat Arcade database (`scripts/democlient.sh up`, `reseed`, `link`, `check`)
 - Keep the contract at 1 because the allowlist is data validated live at deploy: true for the deploy, but the contract text is what agents read, and D94's rule is "an existing app would notice".
 
 **Tests.** Unit tests (ops, vm, cli, runtime Python and Node), `sync-runtime.sh --check` and `sync-contract.sh --check` green; `bash -n` on every changed script. Not run here (human steps first): `push.sh` on a fresh local stack (seeds and links), on the VM (re-applies only), `retire-wealth.sql` on both lanes, then `test-smoke.sh`, `test-apps.sh`, `test-audit.sh`, `test-errors.sh`, `test-platform.sh`.
+
+## D113. The Goat Arcade demo: its shape, the reset's order, the live build and its fallback (24 Oct, GA.7)
+**What.** The management demo (`docs/demo.md`) and its scripts now tell Goat Arcade's story. This supersedes D28 (the wealth reset) and revises D29: the live build is `tilt-watch`.
+- **The demo's shape: one morning, 12 minutes.** Three browsers, one person each (Authelia keeps one session per browser): maja (A), kaldi-admin (B), boris then tomaz's Metabase (C). The beats, in order:
+  1. maja's discovery page, grouped by team;
+  2. venue-pulse on her venue, then Celje's rotation candidates;
+  3. a party request sent live with `scripts/demo-booking.sh` and shown in party-bookings and Mailpit;
+  4. boris's tech-board, with the Haunted Lighthouse on top of *Rising faults*, then Kanboard behind the same login;
+  5. petra's "Weekly takings" email in Mailpit;
+  6. the live build;
+  7. the safety net (`demo-bad-deploy.sh` on venue-pulse);
+  8. the console: Overview, Activity's chips, and maja's Status and her 403 on a tool that isn't hers;
+  9. Metabase as tomaz (at a glance) and maja (Venue performance, filtered);
+  10. the data owner's angle (`connect-your-database.md`), and the close.
+
+  `docs/goat-arcade/tour.md` is the same server as a self-guided tour for a visitor without Nejc: who's who, thirteen stops each naming what it shows, the seven planted stories as hints.
+- **The reset's order** (`scripts/reset-demo.sh`, both lanes; still lists what it will do and asks; `--yes`, `--keep`, `--no-check` as before; `--keep-history` is gone, `--usage` is new):
+  1. **The platform with extras** (`push.sh --extras`, which also brings up and links Goat Arcade's database and rebuilds the dashboards, D112).
+  2. **Removals.** Every app that isn't a folder of `examples/goat-arcade/` is removed with its data. `tilt-watch` is removed too, although it is a folder there, unless `--keep tilt-watch`.
+  3. **The reseed** (`democlient.sh reseed --yes`): the data then ends yesterday. It comes after the push because a fresh stack only has arcade-db once push has brought it up.
+  4. **The examples redeployed**, after the reseed. A new container drops every in-memory cache of the old data: venue-pulse's 5 minutes, league-desk's 1 to 10. A missing `BOOKING_HOOK_SECRET` is reported with the human command, and the reset goes on.
+  5. **The checks**, `test-smoke.sh` and `test-examples.sh`, unless `--no-check`. They go to files under `.build/reset-demo/`, not a pipe, because the tunnel holds a pipe open. They are skipped if another suite is running.
+  6. **The demo's own state:**
+     - tech-board's claims released, as boris, through the board's own Release forms;
+     - tech-board's `watch` run once on the new data;
+     - `kanboard seed`, after boris, maja and sam have each opened Kanboard once, so they're on the boards even with `--no-check` (D111: the seed adds everyone Kanboard knows);
+     - weekly-takings' `weekly` (petra's email, a run on its page);
+     - one party request through the webhook.
+  7. With `--usage`, `seed-usage.sh`.
+  8. The tunnel, the apps and the passwords. Problems are collected and listed at the end, with exit 1.
+
+  Test mode (D74b) is on for the whole run, so a reset notifies nobody on Slack.
+- **The checks come before the demo's state,** not after it: `test-examples.sh` leaves its own traces. It confirms a party request, sends morning lists and a takings email, and saves sam's venue. Doing the demo steps last makes theirs the newest: the booking on top of the list, petra's email first in Mailpit, and no claim on the board.
+- **What a reseed doesn't reset, and why that's fine.** The seed is deterministic (`pg_temp.r`, a hash of a key), so ids and values come back the same, shifted to the new anchor date.
+  - tech-board's claims and `watch_state` refer to the same machines and tickets. The reset releases the claims, and runs `watch` so the next scheduled run doesn't post the reseed's differences to `#ga-tech`.
+  - Kanboard's cards keep their `ticket-<id>` references, so its seed adds only new tickets.
+  - league-desk's sign-ups refer to the same tournaments.
+  - party-bookings uses real calendar dates.
+  - weekly-takings' history keeps the weeks it recorded. The reset's run adds the newest complete week, or updates it if the week is the same.
+- **The live build** is plan §2.4's prompt. The data supports it:
+  - `daily_plays` has games and tilts per machine per day;
+  - `machine_floor`, the model of a cabinet on a floor;
+  - `machine_models`, the model of one in storage, by title.
+
+  The fallback, `examples/goat-arcade/tilt-watch`, was built the way Claude Code would build it: `annex init python-web`, the prompt in its README, then a review pass. It compares each cabinet with the **other** cabinets of its model, needs 5 tilts to flag, and counts back from the latest day in the data. On the local lane (data to 21 Oct) it flags:
+  - the **Cyber Samurai #108 in Graz**: 13.2% of its games against 2.5% on the other three, 5.2x (D78, story 6);
+  - Punk Planet #90, Zagreb: 4.1x;
+  - Mummy's Revenge #5, Metelkova: 3.2x.
+
+  The last two are chance over 30 days; over 180 days only the Cyber Samurai stands out (3.7x, the next one 1.8x). The reset removes the fallback unless `--keep tilt-watch`, so the live build starts from nothing.
+- **demo-bad-deploy.sh** breaks venue-pulse's `/healthz` in a copy under `.build/` and deploys it. The health gate fails, and the live release stays. The script prints `annex releases venue-pulse`.
+- **seed-usage.sh**:
+  - covers every app in `app_seen`: the six tools and Kanboard;
+  - leaves out tilt-watch, which has no past, and `annex-selftest*`;
+  - gives venue-pulse the rise, capped at 6 users a week, since Goat Arcade has seven people;
+  - has a header that names the console, not the retired Metabase dashboard (D76).
+
+**Why.** The demo has to be the client's story, not a feature list. Following people through a morning shows each capability where it matters to someone. The reset has to leave the same morning every time, on data that ends yesterday, without a human step. Claims and Kanboard need none, and party-bookings' secret survives a reset because the app is kept.
+
+**Alternatives.**
+- **Pooled model average** for tilt-watch: the obvious reading of the prompt. The Graz cabinet pulls its own model's average from 2.5% to 5.0% and shows 2.6x, so nothing is flagged. Kept as the README's review-pass finding and the demo's "if it flags nothing" line, because the live AI may do the same.
+- **A significance test** instead of a minimum of 5 tilts: more correct, but harder to read on a page, and the prompt asks for a ratio.
+- **The checks last,** as the brief's order had it: their traces would be the newest things in the demo.
+- **Removing weekly-takings with its history,** as D28 did for monthly-report: an empty history is less lived-in, and a week's row is replaced, not added.
+- **Releasing claims in tech-board's database** directly: it bypasses the app. A POST as boris uses the app's own rule ("anyone can release").
+- **tilt-watch deployed by default:** the live build would then be a second release of an existing app, not a new one.
+
+**Open question for Nejc: a job run by hand isn't a run in the console.** `annex status` and the console count job runs from `annex_ops.job_runs`, which ops fills from Ofelia's log lines (D42). `annex run` (`annex_vm.py run-job`, a `docker exec`) doesn't go through Ofelia. So after a reset, weekly-takings' run shows on its own page but "no run seen yet" in the console and in `annex status`, until the Monday schedule runs. The same holds for tech-board and Kanboard's seed. Two options:
+- (a) `run-job` records a row in `job_runs` itself (`annex_vm.py` has the exit code and duration; via ops, or an insert like the audit rows it already writes). It would also be marked as a manual run in the console.
+- (b) Leave it, and document that the console shows scheduled runs.
+
+The platform isn't changed in this step; `docs/demo.md` lists the symptom under "If something goes wrong".
+
+**Tests.**
+- `bash -n` on `reset-demo.sh`, `demo-bad-deploy.sh` and `seed-usage.sh`.
+- The reset's planning part was run alone, with a stubbed `annex list` (the plan for several cases, and refusal of an unknown option). The reset itself was not run, on any lane.
+- The claim parser was run read-only against the local tech-board. It found a held claim on #48, listed twice, which is why it de-duplicates.
+- The seed-usage SQL was run inside a transaction that was rolled back.
+- The broken-copy `sed` was checked against venue-pulse's `main.py`.
+- tilt-watch: unit tests (`tests/test_tilts.py`), and deployed on the local lane (r3); signed in as sam, it flags the Graz Cyber Samurai first.
+- Not run here (VM, human go-ahead): the reset on the VM, then the demo walkthrough.

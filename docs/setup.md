@@ -35,11 +35,16 @@ The mkcert root CA (`$(mkcert -CAROOT)/rootCA.pem`) was **already trusted** in t
 ## 3. Browser access through the SSH tunnel (`/etc/hosts`)
 Until the route through `dronky` exists. Port 443 on the Mac is already taken by another process (`node`), so the tunnel listens on **8443**, and `.env` sets `ANNEX_PUBLIC_PORT=8443` so every Annex URL and login redirect keeps the port.
 
-Add the hostnames (one line, tagged `# annex`). Apps need their own names because `/etc/hosts` has no wildcards; the planned ones are included:
+Add the hostnames (one line, tagged `# annex`). Apps need their own names because `/etc/hosts` has no wildcards; Goat Arcade's are the next line:
 ```bash
-echo '127.0.0.1 home.annex.home.arpa auth.annex.home.arpa metabase.annex.home.arpa logs.annex.home.arpa gateway.annex.home.arpa client-lookup.annex.home.arpa monthly-report.annex.home.arpa vibe-dashboard.annex.home.arpa echo-test.annex.home.arpa # annex' | sudo tee -a /etc/hosts
+echo '127.0.0.1 home.annex.home.arpa auth.annex.home.arpa metabase.annex.home.arpa logs.annex.home.arpa gateway.annex.home.arpa echo-test.annex.home.arpa # annex' | sudo tee -a /etc/hosts
 ```
-Undo:
+Goat Arcade's tools (GA.7): the six vibe-coded ones, Kanboard and `tilt-watch`, the demo's live build. **Already done on Nejc's Mac on 23 Oct.** On another Mac, add them as their own line with the same tag:
+```bash
+echo '127.0.0.1 venue-pulse.annex.home.arpa tech-board.annex.home.arpa weekly-takings.annex.home.arpa league-desk.annex.home.arpa high-score-wall.annex.home.arpa party-bookings.annex.home.arpa kanboard.annex.home.arpa tilt-watch.annex.home.arpa # annex' | sudo tee -a /etc/hosts
+```
+The wealth demo's names (`client-lookup`, `monthly-report`, `vibe-dashboard`) are no longer used (D112). If a line has them, the undo below removes it with the rest; add back the lines you want.
+Undo (removes every line tagged `# annex`):
 ```bash
 sudo sed -i '' '/# annex$/d' /etc/hosts
 ```
@@ -269,7 +274,7 @@ It is idempotent and skips anyone without a line in `users.txt`.
 ```bash
 ./annex users remove cm --yes
 ```
-Then deactivate the old Metabase account `cm@annex.example` (Metabase, Admin, People). Apps that name `cm` as a recipient or alert target (`monthly-report`'s `REPORT_RECIPIENTS`) need `maja` first.
+Then deactivate the old Metabase account `cm@annex.example` (Metabase, Admin, People).
 
 Undo: `./annex users remove <login> --yes` for each new account (the Metabase accounts stay until deactivated in Admin, People); to bring `cm` back, `./annex users add cm --name 'Maja Horvat' --email cm@annex.example --groups users --demo`.
 

@@ -1,0 +1,18 @@
+# Annex manifest. Full contract: `annex contract`
+name: tilt-watch
+owner: sam
+description: Pinball cabinets that tilt far more than their model does (last 30 days), worst first
+type: web
+port: 8080
+healthcheck: /healthz
+access: internal
+storage:
+  postgres: false
+  files: false
+data:
+  views: [daily_plays, machine_floor, machine_models]
+env:
+  FLAG_FACTOR: "3"   # flag a cabinet over this many times its model's average
+  MIN_TILTS: "5"     # fewer tilts than this in 30 days is chance, not a finding
+secrets: []
+egress: []
