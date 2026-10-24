@@ -179,7 +179,7 @@ else
 fi
 if [ "$pb_ok" = 1 ]; then
   PB=$(url party-bookings)
-  pb_ids() { as maja "$PB/" | grep -o '/r/[0-9]*"' | tr -dc '0-9\n' | sort -un; }
+  pb_ids() { as maja "$PB/" | grep -o '/r/[0-9]*"' | tr -dc '0-9\n' | sort -un || true; }
   has "maja sees the requests" "Birthday-party requests from the website" "$(as maja "$PB/" | text)"
   ids_before=$(pb_ids)
   req_before=$(mail_count maja@goat-arcade.example "Party request:")
