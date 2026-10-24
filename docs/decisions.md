@@ -121,7 +121,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D110 | Goat Arcade `tournament_entries` view: who is entered, by nickname | active |
 | D111 | Kanboard, self-hosted as an Annex app: the official image adapted to the contract, header sign-in, its own API token | active |
 | D112 | Goat Arcade is the only product data: the wealth demo is retired | active; revises D14 (retired: the wealth data is gone) and D10 (what push re-applies) |
-| D113 | The Goat Arcade demo: its shape, the reset's order, the live build and its fallback; open question on runs by hand | active; supersedes D28, revises D29 |
+| D113 | The Goat Arcade demo: its shape, the reset's order, the live build and its fallback; runs by hand stay out of the console (Nejc) | active; supersedes D28, revises D29 |
 
 ## D1. Apps run through `ssh annex` and the VM's Compose (14 Oct)
 **What.** The CLI copies the app folder to `/srv/annex/deploy/<app>`, writes the generated compose file there and runs `docker compose` on the VM over SSH, the same way the platform runs. The brief said "built and run through the annex-vm Docker context, using the Mac's Compose".
@@ -1505,7 +1505,7 @@ The Goat Arcade database (`scripts/democlient.sh up`, `reseed`, `link`, `check`)
 - **Releasing claims in tech-board's database** directly: it bypasses the app. A POST as boris uses the app's own rule ("anyone can release").
 - **tilt-watch deployed by default:** the live build would then be a second release of an existing app, not a new one.
 
-**Open question for Nejc: a job run by hand isn't a run in the console.** `annex status` and the console count job runs from `annex_ops.job_runs`, which ops fills from Ofelia's log lines (D42). `annex run` (`annex_vm.py run-job`, a `docker exec`) doesn't go through Ofelia. So after a reset, weekly-takings' run shows on its own page but "no run seen yet" in the console and in `annex status`, until the Monday schedule runs. The same holds for tech-board and Kanboard's seed. Two options:
+**Runs by hand aren't runs in the console (Nejc, 24 Oct: leave it, documented; option (b) below).** `annex status` and the console count job runs from `annex_ops.job_runs`, which ops fills from Ofelia's log lines (D42). `annex run` (`annex_vm.py run-job`, a `docker exec`) doesn't go through Ofelia. So after a reset, weekly-takings' run shows on its own page but "no run seen yet" in the console and in `annex status`, until the Monday schedule runs. The same holds for tech-board and Kanboard's seed. Two options:
 - (a) `run-job` records a row in `job_runs` itself (`annex_vm.py` has the exit code and duration; via ops, or an insert like the audit rows it already writes). It would also be marked as a manual run in the console.
 - (b) Leave it, and document that the console shows scheduled runs.
 
