@@ -135,7 +135,7 @@ def load(folder: Path) -> Manifest:
     name = raw.get("name")
     if not isinstance(name, str) or not NAME_RE.match(name):
         p.append(f"name: {name!r} is not valid. Use 2-32 characters: lowercase letters, digits and '-', "
-                 "starting with a letter and not ending with '-', e.g. weekly-takings")
+                 "starting with a letter and not ending with '-', e.g. cash-report")
     elif name in RESERVED_NAMES:
         p.append(f"name: {name!r} is reserved for the platform. Pick another name")
     owner = raw.get("owner")

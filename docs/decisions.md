@@ -115,14 +115,15 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D104 | CI: unit tests on every push, the local stack on pull requests | active (written, not run: no remote yet) |
 | D105 | Control-plane: final runs on both lanes and resource record | active |
 | D106 | Goat Arcade after hardening: the FDW connection budget, the isolation probe, the client's secrets, refreshing a changed table | active; revises D77 in part |
-| D107 | Goat Arcade people and branding: `cm` becomes `maja`, demo passwords, Metabase groups, the front door | active; revises D9 (accounts and groups) and D12 (users.txt) in part |
+| D107 | Goat Arcade people and branding: `cm` becomes `maja`, demo passwords, Metabase groups, the front door | active; revises D9 (accounts and groups) and D12 (users.txt) in part; revised by D115 (maja's venue-pulse is gone; her first stop is the Venue performance dashboard) |
 | D108 | Goat Arcade `hourly_plays` view; GA.2's Metabase part moves to GA.3 | active |
 | D109 | Goat Arcade's Metabase as code: the connection, collections, permissions, five dashboards, account hygiene | active; revises D9 (the connection's name; the SQL editor for analysts only) and D107 (Analysts group; accounts of removed people deactivated) |
 | D110 | Goat Arcade `tournament_entries` view: who is entered, by nickname | active |
 | D111 | Kanboard, self-hosted as an Annex app: the official image adapted to the contract, header sign-in, its own API token | active |
 | D112 | Goat Arcade is the only product data: the wealth demo is retired | active; revises D14 (retired: the wealth data is gone) and D10 (what push re-applies) |
-| D113 | The Goat Arcade demo: its shape, the reset's order, the live build and its fallback; runs by hand stay out of the console (Nejc) | active; supersedes D28, revises D29 |
-| D114 | Goat Arcade demo: final runs on the VM and resource record | active |
+| D113 | The Goat Arcade demo: its shape, the reset's order, the live build and its fallback; runs by hand stay out of the console (Nejc) | active; supersedes D28, revises D29; revised by D115 (two apps retired: the demo has four vibe-coded tools, and the bad deploy is league-desk's) |
+| D114 | Goat Arcade demo: final runs on the VM and resource record | active; its seven-app memory record predates D115 |
+| D115 | venue-pulse and weekly-takings retired: two dashboards instead of two apps | active; revises D113 |
 
 ## D1. Apps run through `ssh annex` and the VM's Compose (14 Oct)
 **What.** The CLI copies the app folder to `/srv/annex/deploy/<app>`, writes the generated compose file there and runs `docker compose` on the VM over SSH, the same way the platform runs. The brief said "built and run through the annex-vm Docker context, using the Mac's Compose".
@@ -1545,3 +1546,19 @@ The platform isn't changed in this step; `docs/demo.md` lists the symptom under 
 - Manual job runs stay out of the console (D113, Nejc).
 - The console health race above is left for a follow-up.
 - The browser checks of the Homepage branding and the Metabase charts are Nejc's.
+
+## D115. venue-pulse and weekly-takings retired: two dashboards instead of two apps (24 Oct, Nejc)
+**What.**
+- `venue-pulse` and `weekly-takings` moved from `examples/goat-arcade/` to `examples/archive/` (with a line each in its README). The vibe-coded tools that stay are high-score-wall, tech-board, league-desk and party-bookings, with Kanboard and tilt-watch (the live build's fallback).
+- In the demo, Metabase's **Venue performance** covers venue-pulse: Maja's morning opens it filtered to her venue, before party-bookings. **Cash and collections** covers weekly-takings: Petra's beat is that dashboard. The presenter says "Not everything needs an app: these two are dashboards."
+- `scripts/demo-bad-deploy.sh` now breaks a copy of league-desk (its `/healthz` returns `{"ok": True}`, matched by the same `sed`); the real app stays live.
+- Removed from the live files: `config/teams.json` (so the Finance group has no tile), `test-examples.sh` (both blocks, and petra's sign-in, since nothing uses her there), `reset-demo.sh` (the `weekly` job and its text), `seed-usage.sh` (the rise moves to league-desk, so the console still shows a graduation candidate), the contract's `annex.yaml` example (now `cash-report`, same fields; no rule changed, so `ANNEX_CONTRACT_VERSION` stays 2), the manifest's name-error example, and the docs (README, operations, setup §3, demo, tour, the plan's §2.4 note).
+- Nejc removes the deployed apps himself (`annex remove` is human-only).
+
+**Why.** Nejc: fewer apps. A read-only summary is a dashboard's job, and a dashboard needs no code to maintain. The demo now says so, which is also a better answer to "when is an app the right tool?": when it writes data, takes calls from outside or runs jobs.
+
+**Alternatives.**
+- Keeping all six: more to run, check and explain, and two of them duplicate dashboards that already exist.
+- Retiring tech-board or league-desk instead: they write data (claims, sign-ups), so they show what a dashboard can't. Kept.
+
+**Not run here.** The demo and the checks on both lanes: after Nejc removes the two deployed apps, `scripts/test-examples.sh` and a reset are his. Memory is lower than D114's table by about 100 MiB (venue-pulse 51, weekly-takings 48).

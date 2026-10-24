@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Do the demo apps in examples/ still build, deploy and work? Run it before a demo, not as a platform check: the platform
 # suites use annex-selftest and never touch these (they are stand-ins for client apps and change with the client).
-# Covers the six Goat Arcade apps in examples/goat-arcade/ (venue-pulse, weekly-takings, tech-board, high-score-wall,
-# league-desk, party-bookings): deploy, health check, the pages for the logins that use them, and the writes and jobs
+# Covers the four vibe-coded Goat Arcade apps in examples/goat-arcade/ (tech-board, high-score-wall, league-desk,
+# party-bookings) and Kanboard (venue-pulse and weekly-takings are archived, D115): deploy, health check, the pages for the logins that use them, and the writes and jobs
 # each one has. Repeatable on a stack where the apps already ran:
 # sign-ups are withdrawn and claims released again; what stays behind is one party request (and its confirmation) from
-# scripts/demo-booking.sh, and venue-pulse's saved venue for sam. Jobs only email demo logins, and Slack posts go to
+# scripts/demo-booking.sh. Jobs only email demo logins, and Slack posts go to
 # #annex-selftest because testlib switches test mode on while a suite runs (D74). party-bookings needs its
 # secret (`annex secret set party-bookings BOOKING_HOOK_SECRET`, human only): without it that block prints a skip line
 # and the suite goes on. Works on both lanes (ANNEX_ENV=local).
@@ -28,45 +28,7 @@ GA="$ROOT/examples/goat-arcade"
 
 expect "sam signs in" 200 "$(login sam)"
 expect "maja signs in" 200 "$(login maja)"
-for u in boris lena petra kaldi-admin; do expect "$u signs in" 200 "$(login "$u")"; done
-
-echo "venue-pulse"
-if deploy_app venue-pulse "$GA/venue-pulse"; then
-  VP=$(url venue-pulse)
-  page=$(as maja "$VP/?venue=LJ1" | text)
-  has "a venue page names the venue" "Goat Arcade Metelkova" "$page"
-  has "  ...games per day" "Games per day" "$page"
-  has "  ...idle machines" "Idle machines" "$page"
-  has "  ...rotation candidates" "Rotation candidates" "$page"
-  has "a venue from a link is a look, not saved" "from the link (not saved)" "$(as maja "$VP/?venue=MB" | text)"
-  has_re "maja's home page is the picker or her venue" "Which venue do you want to look at|your saved venue|your home venue" "$(as maja "$VP/" | text)"
-  expect "choosing a venue redirects" 303 "$(code -b "$TMP/sam.jar" -X POST -d venue=MB "$VP/venue")"
-  has "  ...and it is remembered" "your saved venue" "$(as sam "$VP/" | text)"
-  expect "a cross-site POST is refused" 403 "$(code -b "$TMP/maja.jar" -X POST -H 'Sec-Fetch-Site: cross-site' -d venue=MB "$VP/venue")"
-  status_up venue-pulse
-fi
-
-echo "weekly-takings"
-if deploy_app weekly-takings "$GA/weekly-takings"; then
-  WT=$(url weekly-takings)
-  page=$(as petra "$WT/" | text)
-  has "petra sees the takings" "Takings, week of" "$page"
-  has "  ...all venues" "All venues" "$page"
-  hasnt "  ...and no builder note" "For builders" "$page"
-  has "sam, a builder, sees how to run it" "annex run weekly-takings weekly" "$(as sam "$WT/" | text)"
-  before=$(mail_count petra@goat-arcade.example "Weekly takings: week of")
-  out=$("$ANNEX" run weekly-takings weekly 2>&1) && ok "annex run weekly-takings weekly" || bad "run weekly" "$(tail -3 <<<"$out")"
-  has "  ...it logged in the convention" '"msg": "job finished"' "$out"
-  has "  ...and logged the email" "summary emailed" "$out"
-  mail_wait petra@goat-arcade.example "Weekly takings: week of" $((before + 1)) 60 && ok "  ...petra got the summary" || bad "petra got the summary" "no new message in 60 s (was $before)"
-  week=$(as petra "$WT/" | grep -o 'runs/[0-9-]*' | head -1 | sed 's|runs/||')
-  has_re "the run history lists a week" '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' "$week"
-  has "the week's page offers the CSV" "Download CSV" "$(as petra "$WT/runs/$week" | text)"
-  csv=$(as petra "$WT/download/weekly-takings-$week.csv")
-  has "the CSV has its header" "week_start,week_end,venue_code" "$csv"
-  has "  ...and a total row" ",TOTAL," "$csv"
-  status_up weekly-takings
-fi
+for u in boris lena kaldi-admin; do expect "$u signs in" 200 "$(login "$u")"; done
 
 echo "tech-board"
 if deploy_app tech-board "$GA/tech-board"; then
