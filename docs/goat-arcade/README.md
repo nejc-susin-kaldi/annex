@@ -4,6 +4,8 @@ Goat Arcade d.o.o. is a made-up client: eight pinball and retro arcades around L
 
 Their **production database is their own system**. Annex doesn't own it. Annex reads it through the **data gateway**, as a set of curated, read-only views without personal data. That's the setup a real client would have, which makes this the place to try vibe-coding an internal tool on a client's data. **Everything in it is synthetic.**
 
+**Visiting?** [tour.md](tour.md) is a self-guided tour of this server: who's who, what to open in which order, what each part shows, and hints at the stories in the data.
+
 ## For the builder
 You build a small internal tool (a web page, a dashboard or a scheduled job) with your coding agent, and deploy it to Annex. It runs behind Annex's login and reads Goat Arcade's data through the gateway.
 

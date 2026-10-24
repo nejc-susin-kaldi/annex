@@ -1,80 +1,92 @@
-# Demo: Annex in 10 minutes
+# Demo: Goat Arcade on Annex in 12 minutes
 
-For Kaldi management. **The story:** one client's own server, where people who aren't developers, with an AI, put small internal tools live behind the client's login in minutes. The data access is curated, and backups and oversight come built in.
+For Kaldi management. **The story:** this is the server of one client, Goat Arcade, which runs eight pinball and retro arcades. Its staff aren't developers. With an AI, they've built their own small internal tools, and those tools run behind the company login. Next to them is an off-the-shelf tool they host themselves. The data the tools read is curated by the client's database owner. Backups, alerts and oversight come with the platform. Kaldi and the client can see all of it.
 
-The demo shows four things:
-- the login and discovery page, from the user's side;
-- two real-shaped tools (lookup, monthly report);
-- **an AI building and deploying a new dashboard live**;
-- the admin's oversight.
+The demo follows Goat Arcade's people through one morning:
+- **maja**, a venue manager, opens her tools;
+- **boris**, the lead technician, checks his board;
+- **petra**, in finance, has her Monday email;
+- **sam** (the AI, really) builds a new tool live;
+- **kaldi-admin** shows the safety net and the oversight;
+- **tomaz**, the managing director, and maja look at the dashboards;
+- the close is the data owner's angle.
 
-All data is synthetic.
+All data is synthetic. Who's who and what each person can open is in [goat-arcade/tour.md](goat-arcade/tour.md).
 
-## Before the demo (about 15 minutes ahead)
-1. **Reset**, from the repo. Keep any app you want to show by adding `--keep <app>` (e.g. `--keep vibe-leads`). Everything else that isn't an example is removed with its data. The script lists what it will do and asks first.
+## Before the demo (about 20 minutes ahead)
+1. **Reset**, from the repo. It removes every app that isn't a Goat Arcade example, along with its data (`tilt-watch` too, so the live build starts from nothing). It also reseeds Goat Arcade's database so the data ends yesterday, redeploys the seven tools and runs the checks. Then it sets up the morning: boris's claims are released, petra's Monday email is sent and one party request arrives. The script lists what it will do and asks before it starts.
    ```bash
-   scripts/reset-demo.sh
+   scripts/reset-demo.sh --usage
    ```
-   It takes 3–5 minutes and ends with the demo passwords and a check summary. Both suites should say `failed 0`.
-2. **Tunnel.** The reset starts it. Leave the Mac awake and don't change networks. Check it with:
-   ```bash
-   scripts/tunnel.sh status
-   ```
-3. **Browser windows.**
-   - **Window A** (normal), for the user's view: open https://home.annex.home.arpa:8443 at the Annex login page. Don't sign in yet.
-   - **Window B** (private), for the admin's view:
-     - sign in as `kaldi-admin`;
-     - open https://console.annex.home.arpa:8443 (the console: fleet overview) in one tab. It needs the `console.annex.home.arpa` line in `/etc/hosts` (`docs/setup.md` §3) unless you use the wildcard resolver;
-     - open https://metabase.annex.home.arpa:8443 in another and sign in to Metabase as `admin@annex.example` with the same password. Metabase is slow on the first load, so warm it now;
-     - open https://mail.annex.home.arpa:8443 (Mailpit) in a third tab. It needs the `mail.annex.home.arpa` line in `/etc/hosts` (`docs/setup.md` §3).
+   - `--usage` adds 8 weeks of synthetic usage history, so the console's Usage pages have a shape. Leave it out for a console that shows only real use.
+   - It takes 10–15 minutes. It ends with the apps, the passwords (`scripts/show-users.sh`) and the checks: both suites should say `failed 0`, and there should be no "Problems" list.
+   - It doesn't change accounts, secrets, backups or Mailpit. The tools keep their own data: party requests, desk sign-ups, Kanboard cards and the takings history.
+2. **Tunnel.** The reset starts it. Leave the Mac awake and don't change networks. Check it with `scripts/tunnel.sh status`.
+3. **Browsers.** One person per browser, because the login is one session per browser:
+   - **Window A** (Chrome) is **maja**, who is in the users group. Open https://home.annex.home.arpa:8443 at the login page and don't sign in yet. In a second tab, sign in to Metabase (https://metabase.annex.home.arpa:8443) as `maja@goat-arcade.example`, with the same password as her Annex login. Open *Goat Arcade → Venues → Venue performance* once to warm it: Metabase is slow on the first load.
+   - **Window B** (Chrome, incognito) is **kaldi-admin**. Sign in, then open three tabs:
+     - the console, https://console.annex.home.arpa:8443;
+     - Mailpit, https://mail.annex.home.arpa:8443;
+     - https://venue-pulse.annex.home.arpa:8443, to have it ready.
+   - **Window C** (Safari or Firefox) is **boris**. Sign in, open https://tech-board.annex.home.arpa:8443, and Kanboard (https://kanboard.annex.home.arpa:8443) in a second tab. In a third tab, sign in to Metabase as `tomaz@goat-arcade.example` and open *Goat Arcade → Management → Goat Arcade at a glance*.
+   - The passwords come from `scripts/show-users.sh`. All the hostnames are in `/etc/hosts` (`docs/setup.md` §3).
 4. **Claude Code**, ready for the live build:
-   - Create a fresh empty folder; the folder name doesn't matter:
+   - Create a fresh empty folder (the name doesn't matter):
      ```bash
      mkdir -p ~/annex-demo/run-$(date +%m%d-%H%M)
      ```
    - Start a new Code session in it.
    - Check that the `annex` MCP server is connected (`/mcp`).
    - Have the prompt below ready to paste.
-5. **Terminal** in the repo, with a large font, for `./annex` commands.
-   Optional: `scripts/seed-usage.sh` adds 8 weeks of synthetic usage history so the console's Usage tab has charts (`--clear` removes it). Without it the charts show only what the demo itself generated.
-6. **Fallback:** if you have a dashboard already built by Claude Code (e.g. from the M0.4 proof run), keep it with `--keep <name>` in step 1.
+5. **Terminal** in the repo, with a large font, for `scripts/demo-booking.sh`, `scripts/demo-bad-deploy.sh` and `./annex` commands.
+6. **Fallback for the live build:** `examples/goat-arcade/tilt-watch` is a copy built from the same prompt. If the live build fails on stage, deploy it with `./annex deploy examples/goat-arcade/tilt-watch` (about a minute). To have it live from the start, run the reset with `--keep tilt-watch`. Its tile is then on the discovery page before the build, and the live build becomes a new release of it. If that release fails its health check, the copy stays live.
 
 ## The prompt for the live build
-> Build a dashboard on Annex called vibe-dashboard, owner sam. Show total assets under management, AUM by client segment and by advisor as charts, and the top 10 clients in a table. Greet the signed-in user by name. Deploy it and give me the URL.
+> Build tilt-watch on Annex, owner sam: for the last 30 days, each pinball machine's tilt rate next to its model's average. Flag anything over 3x, worst first. Deploy it and give me the URL.
 
-`vibe-dashboard` is already in `/etc/hosts`. A different name needs its own hosts entry (`docs/setup.md` §3).
+What the data holds:
+- `daily_plays` has games and tilts per machine per day, and `machine_floor` has each cabinet's model.
+- The planted story is the **Cyber Samurai in Graz** (Goat Arcade Lend, machine #108). It tilts about 13% of its games; the other Cyber Samurai cabinets tilt about 2.5%, so it's about 5x.
+- **The catch:** if the AI averages the model over all its cabinets, the Graz one is part of its own yardstick. It pulls the average up to about 5% and shows only about 2.6x, so nothing is flagged. If the page flags nothing, ask Claude Code: *"Compare each cabinet with the other cabinets of its model, not including itself."* The fix is quick, and it shows a review pass. The fallback's README tells the same story.
+
+`tilt-watch` is in `/etc/hosts` and already in the Technical group on the discovery page (`config/teams.json`). A different name needs its own hosts entry (`docs/setup.md` §3) and lands under "Tools".
 
 ## Walkthrough
 | Time | Do | Say |
 |---|---|---|
-| 0:00 | Title only; nothing on screen yet. | "Every client has small internal needs: a lookup, a monthly report, a dashboard. Today they wait for a dev team or end up in spreadsheets. Annex is a small platform on the client's own server where these tools can be built with AI and put live safely in minutes." |
-| 0:45 | **Start the live build:** paste the prompt into Claude Code and let it run. | "I'll start an AI on a new tool now, and we'll come back to it in a few minutes." |
-| 1:00 | **Window A**: sign in as `maja`. The discovery page appears. | "This is what a client's employee sees. One login, the client's own users. Every tool is listed with its owner, plus the platform services and optional add-ons." |
-| 2:00 | Open **client-lookup**. Point at "Hello, Maja Horvat". Search `Novak`. | "The tool knows who I am, and it has no login code: the platform tells it. It reads client data through a curated gateway." |
-| 2:45 | Scroll to **Data access for this app**. | "This tool asked for two views and got exactly those. The other two are denied by the gateway, not by the app. Every request is logged with the app's name." |
-| 3:30 | Back to the discovery page, then open **monthly-report**. Show the summary, the top-clients table, *Download CSV* and the run history. | "This is the kind of SQL-to-CSV-to-email routine people run by hand every month. Here it runs on a schedule, keeps its history in its own database and its files on disk, and both are backed up every night." |
-| 4:15 | **Terminal**: run `./annex run monthly-report monthly`, then reload the page; a new history row appears. Then show the **Mailpit** tab in window B: `maja` has an email, "Monthly positions: <month> is ready", with a download link. | "A builder can also run it on demand. Same command, same result. And when it finishes, the people who need the report get an email with the link. The tool never holds a mail password: it asks the platform to send, and the platform only sends to the client's own people. Here the mail is caught by a test inbox, so nothing leaves the server." |
-| 5:00 | **Claude Code**: show what it's doing. It read the contract, chose the `static` template, wrote the page, and called `annex_deploy`. If a deploy failed and it fixed itself, point that out. | "The AI follows a written contract: no login code, no passwords, no ports. When it gets something wrong, the platform says exactly what to fix, and it fixes it. Its toolkit has no way to delete apps, set secrets or restore data: those stay with a person." (If asked: on this prototype that's a limit of the AI's toolkit, not yet a lock on the server; the production deploy path enforces it server-side.) |
-| 6:30 | Open the URL it printed, in **window A**. "Hello, Maja Horvat" plus the charts. Back on the discovery page, it's listed with owner `sam`. | "Built and deployed from an empty folder, with no code from me. Behind the same login, and only the data it asked for." |
-| 7:00 | **Terminal**: `scripts/demo-bad-deploy.sh`. It deploys a version of client-lookup whose health check fails; the output shows "failed the health gate … rolled back to rN, which is live again". Reload client-lookup in window A: unchanged. Then **window B**, the console: **client-lookup** → *Releases*: the failed release in red, the live one green; click its **logs**: the error the broken version wrote ("cannot reach its database"), kept although that version's container is gone. | "Now the safety net. Someone, or their AI, ships a broken version. Annex checks it before switching, sees it's broken and puts the last good version back by itself. Users never saw it. And the evidence stays: the broken version's logs are still here, so whoever fixes it knows why." |
-| 7:30 | **Window B**, the console's **Overview** (home of `console.`): what needs attention first, then every tool with its owner, health, users this week, errors, last deploy, and chips for "graduation candidate" or "dormant". Open **vibe-dashboard**: its Summary, its release from a few minutes ago (Releases tab), its first visitors (Usage tab), its logs. Then **Activity**, on the *Deploys* chip: the live build's deploy a few minutes ago, by whom and `via=mcp` (through the AI). Choose *All*: the data each tool read, per view and hour (`gateway.reads`; the live build's own reads appear once their hour is over), the report email, the sign-ins. Then window A as `maja`: `console.annex.home.arpa:8443/apps/client-lookup` is a **403** (not her tool); `/status` works. | "This is Kaldi's view, and the client's: every tool, who owns it, whether it's healthy, whether anyone uses it. And one timeline of who deployed what, which data each tool read, and what was sent. Owners see their own tools here; everyone else sees only whether things are up. If something breaks, the owner gets an email before their users notice." |
-| 8:15 | **Metabase**: New → Question → Product → *Client Summary* → Summarize: Sum of *Aum Eur* by *Segment* → Visualize. | "Analysts get Metabase on the same curated views, read-only. They can't see the raw tables." |
-| 9:00 | Close with what's next. | "In production each client gets this on their own AWS account, with their company login (or Annex's own accounts if they don't have one) and the gateway pointed at a read replica. What you saw runs on one small VM." |
-| 9:30 | Questions. | |
+| 0:00 | Title only, nothing on screen yet. | "Every company has small internal needs: a list for the technicians, a weekly report for finance, a page for the venue manager. Today those wait for a dev team or end up in spreadsheets. Annex is a small platform on the client's own server, where the staff build these tools with AI and put them live safely. This is Goat Arcade's server: eight arcades, 145 machines, all synthetic." |
+| 0:40 | **Start the live build:** paste the prompt into Claude Code and let it run. | "Sam, their operations manager, has a question about tilting machines. I'll give it to an AI now, and we'll come back to it." |
+| 1:00 | **Window A**: sign in as `maja`. The discovery page, "Goat Arcade · internal tools", shows tiles grouped by team: Venues, Technical, Finance, Community, Platform. | "This is Maja, a venue manager. One login, Goat Arcade's own accounts. Every tool is listed with its owner and grouped by team, next to the platform services." |
+| 1:30 | Open **venue-pulse**. It opens on her venue: "Goat Arcade Metelkova · Ljubljana · LJ1", "Last 7 days in the data … against …", the games and revenue tiles, *Biggest risers*, *Idle machines*. Switch the venue picker to Celje. Under *Rotation candidates*: "Monster Truck Mayhem earns €22/day in Ljubljana … against €7/day here". | "Maja built this herself, in her own words; the prompt is in its README. It knows who she is without any login code, because the platform tells it. It reads the arcade's data through a curated gateway. And it has a real finding: Celje lost two popular tables to Zagreb, and this tells her what to move." |
+| 2:30 | **Terminal**: `scripts/demo-booking.sh --child Luka`. It prints the form and "Annex answered: … HTTP 200". In window A, open **party-bookings** and reload: a new request sits on top, marked New. Open it to show the details, the history ("website") and the actions *Confirm*, *Decline* and *Mark as contacted*. In **window B**, Mailpit has "Party request: …" for maja. | "That was Goat Arcade's public website: a parent asking for a birthday party. It is the one route into Annex that comes from outside. Annex checks the website's secret, stores the request and retries it until the tool has it. Maja gets an email. The tool never emails the customer: Annex only sends mail to the company's own people." |
+| 3:30 | **Window C**, as `boris`: **tech-board**. "Out of order now"; "Open tickets, oldest first"; *Rising faults*: "Haunted Lighthouse off since … 16 coil … faults", at the top. Click **I'm on it**; the row says "You since 09:12". Then the **Kanboard** tab: "Dashboard for Boris", the venue boards, and the Haunted Lighthouse card under *Goat Arcade Lent, Maribor (MB)*. | "Boris is the lead technician. Sam built this board for him. The machine at the top has been getting sicker for six weeks. 'I'm on it' is saved in the tool's own database, so the others see who took it. Next to it is Kanboard, an open-source tool they'd otherwise pay a SaaS for. It runs on the same server, behind the same login: no second password, with backups and monitoring like everything else." |
+| 4:30 | **Window B**, Mailpit: "Weekly takings: week of …" to petra. Open it and follow its link: the week per venue, the chain total, *Download CSV* and the run history. | "Petra in finance. Every Monday at seven a job writes last week's takings per venue to a CSV and keeps the history. She gets a short summary with a link, and finance gets a line in Slack. On this demo server the mail is caught by a test inbox, so nothing leaves the server." |
+| 5:15 | **Claude Code**: show what it did. It read the contract and Goat Arcade's brief, started from a template, wrote the page and called `annex_deploy`. If a deploy failed and it fixed it, point that out. | "The AI follows a written contract: no login code, no passwords, no ports. When it gets something wrong, the platform says exactly what to fix. Its toolkit can't delete apps, set secrets or restore data: those stay with a person." (If asked: on this prototype that's a limit of the AI's toolkit, not yet a lock on the server.) |
+| 6:15 | Open the URL it printed, in **window A**. Under "Flagged, worst first": **Cyber Samurai #108 (Goat Arcade Lend, Graz)**, about 13% against 2.5%, about 5x. Back on the discovery page, it's listed under Technical, owner `sam`. | "From an empty folder to a live tool, behind the same login, reading only the views it asked for. And it found the cabinet in Graz that tilts five times as often as its siblings. That's a tilt bob to adjust, or a cabinet that rocks." |
+| 7:00 | **Terminal**: `scripts/demo-bad-deploy.sh`. It deploys a version of venue-pulse whose health check fails. The output ends with "failed the health gate … rolled back to rN, which is live again" and the releases. Reload venue-pulse in window A: unchanged. In **window B**, open the console: **venue-pulse** → *Releases* shows the failed release in red and the live one green. Click the failed one's **logs**: "the new version cannot reach its database", kept although that container is gone. | "Now the safety net. Someone, or their AI, ships a broken version. Annex checks it before switching, sees it's broken and puts the last good version back by itself. Maja never noticed. The evidence stays, so whoever fixes it knows why." |
+| 8:00 | **Window B**, the console's **Overview**: what needs attention first, then every tool with its owner, health, users this week, errors and last deploy. Open **Activity**: *Deploys* shows tilt-watch deployed a few minutes ago by sam, `via=mcp`. *Data reads* shows which views each tool read, per hour (`gateway.reads`; the newest hour appears once it's over). *Webhooks* has the booking; *Messages*, petra's email. Then **window A**: maja opens https://console.annex.home.arpa:8443/status (it works), and `/apps/tech-board` gets a **403**: not her tool. Her own `/apps/venue-pulse` opens. | "This is Kaldi's view, and the client's: every tool, who owns it, whether it's healthy, whether anyone uses it. One timeline shows who deployed what, which data each tool read and what was sent. Owners see their own tools; everyone else sees whether things are up. When something breaks, the owner gets an email before the users notice." |
+| 9:15 | **Metabase.** **Window C**, as `tomaz`: *Goat Arcade at a glance* shows last week's cash and games against the week before, cash per venue over 26 weeks and the map. **Window A**, as `maja`: *Venue performance*, set the venue filter to Metelkova, then to Bežigrad: in the weekday × hour heatmap, Thursday evening stands out (league night). | "Analysts and managers get dashboards on the same curated views. Each team has its own collection. Everyone can explore with the query builder; only analysts write SQL. The dashboards are kept as code, so a reset rebuilds them." |
+| 10:15 | Say it, or show `docs/goat-arcade/connect-your-database.md`. | "And the data owner's side. Goat Arcade's database stays theirs; in production it's a read replica. Annex gets one read-only login they can revoke at any time. Over it, a reviewed set of views without personal data: no names, emails, phones or birth dates leave their database. Every tool asks for views by name, and every read is logged with the tool's name. A new view is a reviewed change, not something an AI can grant itself." |
+| 11:00 | Close with what's next. | "In production each client gets this on their own AWS account, with their company login (or Annex's own accounts if they don't have one) and the gateway pointed at a read replica. What you saw runs on one small VM." |
+| 11:30 | Questions. | |
 
-**If the live build is still running at 5:00,** do the oversight part (7:30–8:15) first and come back to it.
+**If the live build is still running at 5:15,** do the safety net and the console (7:00–9:15) first and come back to it.
 
 ## If something goes wrong
 | Symptom | Fix |
 |---|---|
 | A page doesn't load at all | The tunnel dropped: run `scripts/tunnel.sh up` |
-| The console doesn't load | It needs `console.annex.home.arpa` in `/etc/hosts` (setup.md §3), or the wildcard resolver |
 | A new app's URL doesn't resolve | Its hostname isn't in `/etc/hosts`. With the wildcard resolver from setup.md §3 every name resolves; without it, only the names listed there do |
 | Login keeps failing | Authelia blocks a user for 5 minutes after 5 wrong passwords. Use another user, or wait. `scripts/show-users.sh` prints the passwords |
 | Metabase is slow or shows a spinner | It's still starting (up to about 2 minutes after a reset). Warm it before the demo |
 | Claude Code asks who the owner is | Answer `sam` |
-| Claude Code's deploy fails repeatedly | Let it read the error once more. If it's stuck, show `./annex logs vibe-dashboard`, and fall back to a pre-built dashboard kept with `--keep` |
-| Something looks broken on the platform | Run `scripts/test-platform.sh` after the demo, not during it |
+| tilt-watch deploys but flags nothing | The model average includes the cabinet itself (see "The prompt for the live build"). Ask: "Compare each cabinet with the other cabinets of its model, not including itself." |
+| Claude Code's deploy fails repeatedly | Let it read the error once more. If it's stuck, show `./annex logs tilt-watch`, then deploy the fallback: `./annex deploy examples/goat-arcade/tilt-watch` |
+| `demo-booking.sh` says BOOKING_HOOK_SECRET is not set | A human sets it once: `./annex secret set party-bookings BOOKING_HOOK_SECRET` (any long random value; the website and Annex share it) |
+| tech-board shows someone "since" yesterday | A claim from a rehearsal. Click *Release*. The reset releases every claim the board shows |
+| boris sees no boards in Kanboard | He hadn't opened Kanboard before the last seed. Run `./annex run kanboard seed`; it adds everyone who has signed in, and creates no card twice |
+| The console says "no run seen yet" for weekly-takings | Expected after a reset. The console and `annex status` count job runs from the scheduler's log, so a run by hand (`annex run`, which the reset uses) doesn't show there. The run history on weekly-takings' own page does show it. Open question for D113 |
+| Something looks broken on the platform | Run `scripts/test-smoke.sh` after the demo, not during it |
 
 ## After the demo
-Nothing needs cleaning up. Run `scripts/reset-demo.sh` again before the next one. When the demo stage is over, follow `docs/teardown.md`.
+Nothing needs cleaning up. The live build stays until the next reset removes it. Run `scripts/reset-demo.sh` again before the next demo. When the demo stage is over, follow `docs/teardown.md`.

@@ -10,7 +10,7 @@ scripts/push.sh --extras      # sync and start the platform, incl. Metabase and 
 scripts/test-smoke.sh         # quick check that every part works (under a minute)
 scripts/show-users.sh         # demo user passwords
 ```
-`push.sh` also brings up Goat Arcade's database (`democlient/`), the synthetic client whose curated views the gateway and Metabase serve (D77, D112). For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo is in [docs/demo.md](docs/demo.md); teardown is in [docs/teardown.md](docs/teardown.md). Day-to-day commands are in [docs/operations.md](docs/operations.md).
+`push.sh` also brings up Goat Arcade's database (`democlient/`), the synthetic client whose curated views the gateway and Metabase serve (D77, D112). For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo is in [docs/demo.md](docs/demo.md), and a self-guided tour for visitors in [docs/goat-arcade/tour.md](docs/goat-arcade/tour.md); teardown is in [docs/teardown.md](docs/teardown.md). Day-to-day commands are in [docs/operations.md](docs/operations.md).
 
 ## Deploying apps
 ```bash
@@ -19,7 +19,7 @@ scripts/show-users.sh         # demo user passwords
 ./annex list
 ./annex releases my-tool                       # release history; ./annex rollback my-tool undoes a deploy
 ```
-The app contract is in [docs/app-contract.md](docs/app-contract.md), or run `./annex contract`. Example apps are Goat Arcade's tools in `examples/goat-arcade/`: `venue-pulse` (web, gateway), `weekly-takings` (web+job, Postgres, files, email, Slack), `tech-board`, `high-score-wall`, `league-desk`, `party-bookings` (a webhook) and `kanboard` (an off-the-shelf tool behind the same login). Templates: `python-web`, `python-job`, `node-web`, `static`; any other stack works too (the contract's "Bring your own stack").
+The app contract is in [docs/app-contract.md](docs/app-contract.md), or run `./annex contract`. Example apps are Goat Arcade's tools in `examples/goat-arcade/`: `venue-pulse` (web, gateway), `weekly-takings` (web+job, Postgres, files, email, Slack), `tech-board`, `high-score-wall`, `league-desk`, `party-bookings` (a webhook) and `kanboard` (an off-the-shelf tool behind the same login), plus `tilt-watch`, the demo's live build kept as its fallback. Templates: `python-web`, `python-job`, `node-web`, `static`; any other stack works too (the contract's "Bring your own stack").
 
 People sign in with Annex's own accounts (no company SSO needed): `./annex users add ana --name 'Ana Kovač' --email ana@client.com` emails them an invitation. See [docs/operations.md](docs/operations.md#accounts-annexs-own-users-d57).
 
@@ -59,12 +59,12 @@ Plus annex-ops (`ops/`: email and Slack for apps, incidents and alerts, host and
 | `scripts/test-errors.sh` | M2.3 checks (about 4 minutes): 50 identical errors are one group and one email, another kind another email, the hourly limit and its summary, quiet after a fix, back in a newer release, browser reports, printed tracebacks, groups removed with the app |
 | `scripts/test-hooks.sh` | M1.5 checks: signed events reach the app, bad ones don't, retries after a stop, replay, a tight route |
 | `scripts/test-usage.sh` | M1.4 checks: a scripted session shows the same numbers in `annex usage`, the tiles and the console; privacy, retention, restart, digest |
-| `scripts/seed-usage.sh [--clear]` | optional demo prep: 8 weeks of synthetic usage history for the dashboard |
+| `scripts/seed-usage.sh [--clear]` | optional demo prep: 8 weeks of synthetic usage history for the console's Usage pages |
 | `scripts/test-alerts.sh` | M1.3 checks: stop, crash loop, 500 burst, failing job and platform outage each give one alert and one "resolved" (12-20 minutes) |
 | `scripts/test-host.sh` | disk, memory and backup alerts: one alert and one "resolved" each, admins only |
 | `scripts/test-users.sh` | accounts: invitation, self-service reset and change, groups, disable, last-admin guard, removal |
 | `scripts/sync-runtime.sh [--check]` | copies `runtime/annex_runtime.*` into templates, examples and fixtures (or checks they match) |
-| `scripts/demo-bad-deploy.sh` | demo beat: a broken version of a demo app is rolled back by itself (being rewritten for Goat Arcade, GA.7) |
-| `scripts/reset-demo.sh` | clean demo state: example apps redeployed, other apps removed, checks run (see docs/demo.md; being rewritten for Goat Arcade, GA.7) |
+| `scripts/demo-bad-deploy.sh` | demo beat: a broken copy of `venue-pulse` fails its health check and is rolled back by itself; the live version stays |
+| `scripts/reset-demo.sh [--keep <app>] [--usage] [--no-check] [--yes]` | clean demo state (destructive, asks first): other apps removed with their data, Goat Arcade's data reseeded, the examples redeployed, checks run, the morning set up (see docs/demo.md, D113) |
 | `scripts/wipe-vm.sh` | removes everything Annex from the VM (asks first) |
 | `scripts/show-users.sh` | prints the demo users' passwords |
