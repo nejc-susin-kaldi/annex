@@ -11,9 +11,6 @@ layout:
   Technical:
     style: row
     columns: 3
-  Finance:
-    style: row
-    columns: 3
   Community:
     style: row
     columns: 3
