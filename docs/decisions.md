@@ -1562,3 +1562,10 @@ The platform isn't changed in this step; `docs/demo.md` lists the symptom under 
 - Retiring tech-board or league-desk instead: they write data (claims, sign-ups), so they show what a dashboard can't. Kept.
 
 **Not run here.** The demo and the checks on both lanes: after Nejc removes the two deployed apps, `scripts/test-examples.sh` and a reset are his. Memory is lower than D114's table by about 100 MiB (venue-pulse 51, weekly-takings 48).
+
+**D115, verification (24 Oct).**
+- After Nejc removed the two apps on both lanes: smoke 54/54 on both lanes; `test-examples.sh` 81/81 on both, on its second run.
+- Two failures came first:
+  - **party-bookings "down" on both lanes.** The health checker had probed it during the suite's own redeploy (connection refused, seconds before `status_up` read it). `status_up` in `test-examples.sh` now waits up to 90 s for a probe that says up. It's the same race as D114's console check.
+  - **On the local lane only, Kanboard's seed timed out** (30 s) calling its own JSON-RPC right after the redeploy. Run by hand it took 1.5 s, and on the rerun on both lanes it passed. It's a one-off; if it recurs, the seed should retry its first API call while php-fpm warms up.
+- `seed-usage.sh` was rerun on both lanes, so the synthetic rise is on league-desk.

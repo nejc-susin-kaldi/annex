@@ -16,7 +16,17 @@ use_tunnel
 ANNEX="$ROOT/annex"
 url() { echo "https://$(setting ANNEX_HOST_PATTERN | sed "s/{name}/$1/")$(setting ANNEX_PORT_SUFFIX)"; }
 text() { sed 's/<[^>]*>/ /g' | tr -s ' '; }
-status_up() { expect "annex status $1: health check up" up "$("$ANNEX" --json status "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["health_check"]["state"])')"; }
+# the health checker probes every minute and can catch an app mid-restart right after its deploy ("down", or "unknown"
+# before its first probe): wait up to 90 s for a probe that says up (D115)
+status_up() {
+  local st="" end=$((SECONDS + 90))
+  while :; do
+    st=$("$ANNEX" --json status "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["health_check"]["state"])')
+    [ "$st" = up ] || [ $SECONDS -ge $end ] && break
+    sleep 5
+  done
+  expect "annex status $1: health check up" up "$st"
+}
 # deploy_app NAME DIR: deploys (output in $out); no warning at deploy except Slack not being connected, which a stack without Slack has
 deploy_app() {
   out=$("$ANNEX" deploy "$2" 2>&1) && ok "deploys $1 ($(grep -o 'r[0-9]* is live' <<<"$out" | head -1))" || { bad "deploy $1" "$(tail -3 <<<"$out")"; return 1; }
