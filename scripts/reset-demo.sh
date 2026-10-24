@@ -10,13 +10,12 @@
 #   5. the checks, unless --no-check: test-smoke.sh, test-examples.sh (output in .build/reset-demo/)
 #   6. the demo's own state, after the checks so it is the newest: tech-board's claims released (as boris) and its
 #      watch job run once on the new data; kanboard's seed (after boris, maja and sam opened Kanboard once, so they're
-#      on the boards); weekly-takings' weekly job (petra's Monday email, a run on
-#      its page); one birthday-party request through the webhook (scripts/demo-booking.sh)
+#      on the boards); one birthday-party request through the webhook (scripts/demo-booking.sh)
 #   7. with --usage: scripts/seed-usage.sh (synthetic usage history for the console)
 #   8. the SSH tunnel up, the apps, the demo passwords
 # Test mode (D74b) is on while it runs: Slack posts from these runs go to #annex-selftest, marked [TEST].
 # Kept: secrets, accounts and passwords, backups, the kept apps' own databases (party requests, desk sign-ups, Kanboard
-# cards, weekly-takings' run history), Mailpit. Takes about 10-15 minutes on the VM with the checks.
+# cards), Mailpit. Takes about 10-15 minutes on the VM with the checks.
 #
 # Usage: scripts/reset-demo.sh [--yes] [--keep <app>]... [--usage] [--no-check]
 #   --keep <app>   also keep this app as it is (--keep tilt-watch keeps the live build's fallback, or deploys it)
@@ -68,7 +67,7 @@ echo "  redeploy: ${examples[*]}"
 [ -n "$deploy_live" ] && echo "  deploy the live build's fallback: $LIVE (from examples/goat-arcade/$LIVE)"
 [ ${#as_is[@]} -gt 0 ] && echo "  keep as is: ${as_is[*]}"
 [ -n "$check" ] && echo "  run the checks: test-smoke.sh, test-examples.sh"
-echo "  then: release tech-board's claims, run tech-board watch, kanboard seed, weekly-takings weekly; send one party booking"
+echo "  then: release tech-board's claims, run tech-board watch, kanboard seed; send one party booking"
 [ -n "$usage" ] && echo "  write synthetic usage history (seed-usage.sh)"
 echo "  start the tunnel"
 if [ -z "$yes" ]; then
@@ -162,7 +161,6 @@ for u in boris maja sam; do
   as "$u" -o /dev/null "$KB/" || problem "$u couldn't open Kanboard"
 done
 run_job kanboard seed
-run_job weekly-takings weekly  # petra's "Weekly takings: week of ..." email and a run on the page
 if out=$("$ROOT/scripts/demo-booking.sh" --venue LJ1 2>&1); then
   echo "  party-bookings: $(grep -m1 'name:' <<<"$out" | sed 's/^ *//'), stored"
 else

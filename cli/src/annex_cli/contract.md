@@ -15,9 +15,9 @@ Start from a template: `annex init <template> <name> --owner <login>`. Templates
 
 ## annex.yaml
 ```yaml
-name: weekly-takings          # 2-32 chars: a-z, 0-9, '-'; starts with a letter. Becomes the hostname
+name: cash-report            # 2-32 chars: a-z, 0-9, '-'; starts with a letter. Becomes the hostname
 owner: sam                    # required; the builder's login, shown on the discovery page
-description: Weekly takings report
+description: Weekly cash report
 type: web                     # web | job | web+job
 port: 8080                    # web: listen on 0.0.0.0:$PORT (internal only; never published)
 healthcheck: /healthz         # web: returns 200 when ready

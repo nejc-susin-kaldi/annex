@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Demo beat (docs/demo.md, "the safety net"): deploy a version of venue-pulse whose health check fails, and show that
+# Demo beat (docs/demo.md, "the safety net"): deploy a version of league-desk whose health check fails, and show that
 # Annex rolls it back by itself. The running version stays live the whole time; the failed release is recorded, its
 # image removed, and its logs (the error it wrote) stay searchable in the console and with `annex logs`.
 #
-# The broken version is a copy in .build/demo-bad-deploy: examples/goat-arcade/venue-pulse itself is never changed.
-# Needs venue-pulse deployed (scripts/reset-demo.sh does that). Works on both lanes (ANNEX_ENV=local in front).
+# The broken version is a copy in .build/demo-bad-deploy: examples/goat-arcade/league-desk itself is never changed.
+# Needs league-desk deployed (scripts/reset-demo.sh does that). Works on both lanes (ANNEX_ENV=local in front).
 # Usage: scripts/demo-bad-deploy.sh
 source "$(dirname "$0")/lib.sh"
-APP=venue-pulse
+APP=league-desk
 SRC=$ROOT/examples/goat-arcade/$APP
 WORK=$ROOT/.build/demo-bad-deploy
 

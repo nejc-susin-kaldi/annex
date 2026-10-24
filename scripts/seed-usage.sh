@@ -4,8 +4,8 @@
 # Usage: scripts/seed-usage.sh [--clear]           (ANNEX_ENV=local in front for the local stack)
 #
 # Writes weeks 3-10 back into annex_ops.usage_weekly and usage_daily with synthetic = true, for every app Annex knows
-# (annex_ops.app_seen, not removed): on Goat Arcade the six vibe-coded tools and Kanboard. Left out: the live build
-# (tilt-watch, built during the demo, so it has no past) and the test fixture (annex-selftest*). venue-pulse gets a
+# (annex_ops.app_seen, not removed): on Goat Arcade the four vibe-coded tools and Kanboard. Left out: the live build
+# (tilt-watch, built during the demo, so it has no past) and the test fixture (annex-selftest*). league-desk gets a
 # gentle rise (the week's users go from 1 to 6), the others a flat 2-4 users a week: Goat Arcade has seven people.
 # It never writes the raw `requests` table, never touches the last two weeks and never overwrites a real row, so the rollup, the tiles,
 # `annex usage` totals and the tests are unaffected (the rollup never overwrites synthetic rows either). Safe to run
@@ -23,11 +23,11 @@ SQL
     log "Synthetic usage history cleared on $WHERE" ;;
   "")
     vm "docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops -v ON_ERROR_STOP=1 -qAt" <<'SQL'
--- a gentle rise for venue-pulse (the tool everyone opens), flat for the others; never over a real row
+-- a gentle rise for league-desk (the club tool that grows), flat for the others; never over a real row
 CREATE TEMP TABLE seed AS
 SELECT a.app, b.back,
        (date_trunc('week', now() AT TIME ZONE 'Europe/Ljubljana')::date - b.back * 7) AS week,
-       CASE WHEN a.app = 'venue-pulse' THEN 1 + (10 - b.back) * 5 / 7 ELSE 2 + (a.n % 3) END AS users
+       CASE WHEN a.app = 'league-desk' THEN 1 + (10 - b.back) * 5 / 7 ELSE 2 + (a.n % 3) END AS users
 FROM (SELECT app, row_number() OVER (ORDER BY app) AS n FROM annex_ops.app_seen
       WHERE removed_at IS NULL AND app <> 'tilt-watch' AND app NOT LIKE 'annex-selftest%') a,
      generate_series(3, 10) AS b(back);

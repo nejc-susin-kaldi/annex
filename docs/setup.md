@@ -39,9 +39,9 @@ Add the hostnames (one line, tagged `# annex`). Apps need their own names becaus
 ```bash
 echo '127.0.0.1 home.annex.home.arpa auth.annex.home.arpa metabase.annex.home.arpa logs.annex.home.arpa gateway.annex.home.arpa echo-test.annex.home.arpa # annex' | sudo tee -a /etc/hosts
 ```
-Goat Arcade's tools (GA.7): the six vibe-coded ones, Kanboard and `tilt-watch`, the demo's live build. **Already done on Nejc's Mac on 23 Oct.** On another Mac, add them as their own line with the same tag:
+Goat Arcade's tools (GA.7): the four vibe-coded ones, Kanboard and `tilt-watch`, the demo's live build. **Already done on Nejc's Mac on 23 Oct** (that line also has `venue-pulse` and `weekly-takings`, retired on 24 Oct, D115: harmless, and the undo below removes it with the rest). On another Mac, add them as their own line with the same tag:
 ```bash
-echo '127.0.0.1 venue-pulse.annex.home.arpa tech-board.annex.home.arpa weekly-takings.annex.home.arpa league-desk.annex.home.arpa high-score-wall.annex.home.arpa party-bookings.annex.home.arpa kanboard.annex.home.arpa tilt-watch.annex.home.arpa # annex' | sudo tee -a /etc/hosts
+echo '127.0.0.1 tech-board.annex.home.arpa league-desk.annex.home.arpa high-score-wall.annex.home.arpa party-bookings.annex.home.arpa kanboard.annex.home.arpa tilt-watch.annex.home.arpa # annex' | sudo tee -a /etc/hosts
 ```
 The wealth demo's names (`client-lookup`, `monthly-report`, `vibe-dashboard`) are no longer used (D112). If a line has them, the undo below removes it with the rest; add back the lines you want.
 Undo (removes every line tagged `# annex`):

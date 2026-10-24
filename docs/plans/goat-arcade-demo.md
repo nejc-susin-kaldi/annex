@@ -79,13 +79,15 @@ On the running VM, the steps are:
 - **Site name** "Goat Arcade analytics". Metabase accounts for every persona, with their Annex password (D9: separate accounts, as now).
 
 ### 2.4 The vibe-coded tools (Annex apps, `examples/goat-arcade/<app>`)
+> **24 Oct (D115):** `venue-pulse` and `weekly-takings` were built (GA.4), then retired: Nejc decided a Metabase dashboard does each job ("Venue performance", "Cash and collections"). Their source is in `examples/archive/`. Their rows below are kept, struck through. The demo (`docs/demo.md`) now shows four vibe-coded tools, Kanboard and tilt-watch, and says "not everything needs an app".
+
 Each tool is built the way a staff member would build it. Claude Code gets the `annex` skill, `docs/goat-arcade/agent-brief.md` and one short prompt in the person's words. Then a review pass, and the prompt is kept in the app's README. Each tool shows one platform capability clearly.
 
 | App | Owner | Type | What | Shows |
 |---|---|---|---|---|
-| `venue-pulse` | cm | web | my venue this week against last: earnings per machine, idle machines, rotation candidates ("move X, it earns more in Zagreb") | identity (the venue follows the user), gateway, charts |
+| ~~`venue-pulse`~~ (retired, D115) | cm | web | my venue this week against last: earnings per machine, idle machines, rotation candidates ("move X, it earns more in Zagreb") | identity (the venue follows the user), gateway, charts |
 | `tech-board` | sam (for boris) | web+job | the morning list: out of order, open tickets by age, rising faults. "I'm on it" claims in its own Postgres, by login. 07:30 email to the technicians; Slack `#ga-tech` when a machine goes out of order | identity, own database, jobs, email, Slack |
-| `weekly-takings` | sam (for petra) | web+job | Monday 07:00: last week's cash per venue as CSV and a summary email to finance, Slack `#ga-finance`; run history page | jobs, files and backups, run history. **Replaces monthly-report** |
+| ~~`weekly-takings`~~ (retired, D115) | sam (for petra) | web+job | Monday 07:00: last week's cash per venue as CSV and a summary email to finance, Slack `#ga-finance`; run history page | jobs, files and backups, run history. **Replaces monthly-report** |
 | `league-desk` | lena | web | tournaments: past standings, the upcoming Masters with its entries (gateway), and **new sign-ups stored in the app's own database**; Slack `#ga-community` on a sign-up | read-only gateway plus app-owned writes |
 | `high-score-wall` | lena | web (static/node) | full-screen TV mode per venue: top scores of the machines on the floor, rotating every 15 s | a builder's second app; the kiosk look |
 | `party-bookings` | cm | web | birthday-party requests arrive **by webhook** from the (fictional) public website form; staff confirm, pick a venue and slot, and the venue's manager gets a summary to forward (Annex never emails outside addresses, so the customer isn't emailed by the app). Based on vibe-leads | webhooks (the only route from outside), email, own database |

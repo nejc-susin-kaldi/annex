@@ -13,12 +13,12 @@ This page lets you explore the server on your own, about 30–45 minutes for the
 ## Who's who
 | Login | Person | Role | Annex groups | Open first |
 |---|---|---|---|---|
-| `maja` | Maja Horvat | venue manager, Metelkova (Ljubljana) | users | **venue-pulse** and **party-bookings** (she owns both); Metabase *Venue performance*; the console's Status page |
+| `maja` | Maja Horvat | venue manager, Metelkova (Ljubljana) | users | Metabase *Venue performance* (first), then **party-bookings** (she owns it); the console's Status page |
 | `boris` | Boris Zajc | lead technician | users | **tech-board**, **Kanboard**; Metabase *Machine health* |
-| `petra` | Petra Kralj | finance and admin | users | **weekly-takings**; Metabase *Cash and collections* |
+| `petra` | Petra Kralj | finance and admin | users | Metabase *Cash and collections* (no app: a dashboard does her job) |
 | `lena` | Lena Gruber | community and tournaments, Graz | builders | **league-desk** and **high-score-wall** (she built both); Metabase *Players and tournaments* |
 | `tomaz` | Tomaž Vidmar | managing director | users | Metabase *Goat Arcade at a glance* |
-| `sam` | Sam Novak | operations manager, the one who builds tools | builders | owns **tech-board**, **weekly-takings**, **Kanboard** (and **tilt-watch** when it's deployed); the only analyst in Metabase (SQL) |
+| `sam` | Sam Novak | operations manager, the one who builds tools | builders | owns **tech-board**, **Kanboard** (and **tilt-watch** when it's deployed); the only analyst in Metabase (SQL) |
 | `kaldi-admin` | Kaldi Admin | Kaldi's platform admin | admins, builders | the **console** (everything), **Mailpit** (the test inbox), Dozzle (live logs), Metabase admin |
 
 Metabase logins: `maja@goat-arcade.example` (likewise `boris`, `petra`, `lena`, `tomaz`), `sam@annex.example` and `admin@annex.example` for kaldi-admin.
@@ -27,12 +27,12 @@ Metabase logins: `maja@goat-arcade.example` (likewise `boris`, `petra`, `lena`, 
 Take the stops in order. Each one names what it shows about Annex.
 
 ### 1. The front door (identity)
-**As `maja`**, sign in at the home page. You get one login page, with Goat Arcade's logo, and then "Goat Arcade · internal tools". The tiles are grouped by team (Venues, Technical, Finance, Community, Platform), and each tool shows its owner.
+**As `maja`**, sign in at the home page. You get one login page, with Goat Arcade's logo, and then "Goat Arcade · internal tools". The tiles are grouped by team (Venues, Technical, Community, Platform), and each tool shows its owner.
 - **What it shows:** the client's own accounts and one sign-in for every tool. None of the tools has login code: the platform tells each one who is signed in.
 
-### 2. venue-pulse (identity, the gateway)
-**As `maja`**, open venue-pulse. It opens on *her* venue, Metelkova, because the venue follows the login. Look at this week against last, the games-per-day chart, idle machines and *Rotation candidates*. Switch venues with the picker; a link like `?venue=CE` lets you look at a venue without saving the choice.
-- **What it shows:** a tool built by a venue manager in her own words (the prompt is in `examples/goat-arcade/venue-pulse/README.md`). It reads Goat Arcade's data through the **gateway**, which serves only the curated views the tool declared. The tool keeps one thing of its own, each person's chosen venue, in its own small database.
+### 2. Venue performance (a dashboard, not an app)
+**As `maja`**, open Metabase (stop 10) and *Venues → Venue performance*. Set the venue filter to Metelkova, her venue: this week against last, games per day, the weekday-by-hour heatmap, machine earnings and idle machines. Switch the filter to Celje.
+- **What it shows:** **not everything needs an app.** A tool for a venue manager's read-only figures was built early on and then retired (D115): a Metabase dashboard on the same curated views does the job, with nothing to maintain. The apps below are the ones a dashboard can't be: they write data, take calls from outside or run jobs. The retired source is in `examples/archive/venue-pulse/`.
 
 ### 3. high-score-wall (a builder's second app, the gateway's limits)
 **As anyone**, open high-score-wall and pick a venue: it's TV mode, one machine at a time with its all-time top 10. Press `F` for full screen.
@@ -49,9 +49,9 @@ Take the stops in order. Each one names what it shows about Annex.
 **As `boris`**, open Kanboard. It shows "Dashboard for Boris" with no second password, a board per venue and "Parts to order", and a card per open repair. Each card links back to tech-board.
 - **What it shows:** Annex isn't only for AI-built tools. Kanboard is an open-source tool that a company would otherwise rent as a SaaS. Here it runs under the same rules as the others: the login comes from the front door, it has its own database and backups, and the console watches it. How it was adapted is in `examples/goat-arcade/kanboard/README.md`.
 
-### 6. weekly-takings (jobs, files, email)
-**As `petra`**, open weekly-takings. It shows last week's takings per venue, the chain total, an 8-week trend and the **run history** with a CSV per week.
-- **What it shows:** a Monday 07:00 **job** writes the CSV to the tool's files (`/data`, backed up), records the run in its database, emails Petra a summary with a link and posts a line to `#ga-finance`. A builder can also run it now with `annex run weekly-takings weekly`.
+### 6. Cash and collections (a dashboard, not an app)
+**As `petra`**, open Metabase and *Finance → Cash and collections*: weekly cash by venue, the coins, tokens and card split, takings per machine by era, and counted cash against estimated plays per venue.
+- **What it shows:** the second thing that doesn't need an app. A weekly-takings tool (a Monday job, a CSV, an email) was built and retired (D115): finance reads a dashboard instead. The retired source is in `examples/archive/weekly-takings/`.
 
 ### 7. party-bookings (webhooks: the one way in from outside)
 **As `maja`**, open party-bookings. These are birthday-party requests that came from Goat Arcade's public website. Open one: it shows the details, the customer's email as a link to reply by hand, the history (who did what) and the actions *Confirm*, *Decline* and *Mark as contacted*. Confirming one emails the venue manager a summary to forward to the parents.
@@ -64,11 +64,10 @@ Take the stops in order. Each one names what it shows about Annex.
 ### 9. Mailpit and Slack (messages, safely)
 **As `kaldi-admin`**, open https://mail.annex.home.arpa:8443. This is the test inbox that catches every email the server sends:
 - Boris's "Morning list";
-- Petra's "Weekly takings: week of …";
 - Maja's "Party request: …" and "Confirmed: party for …";
 - on Mondays, the weekly usage digest to the tool owners and admins.
 
-Nothing leaves the server. **Slack** goes to a test workspace (ask Nejc to see it): `#ga-tech`, `#ga-finance` and `#ga-community`. While a test suite runs, Annex is in **test mode**, and every post goes to `#annex-selftest` marked [TEST], so nobody is woken by a test.
+Nothing leaves the server. **Slack** goes to a test workspace (ask Nejc to see it): `#ga-tech` and `#ga-community`. While a test suite runs, Annex is in **test mode**, and every post goes to `#annex-selftest` marked [TEST], so nobody is woken by a test.
 - **What it shows:** tools send email and Slack only through the platform. They never hold a mail password or a Slack token. Every attempt is in the send log.
 
 ### 10. Metabase (dashboards and governance)
@@ -80,7 +79,7 @@ Sign in at https://metabase.annex.home.arpa:8443.
 
 ### 11. The console (oversight)
 https://console.annex.home.arpa:8443.
-- **As `maja`:** *Status* shows whether things are up. Her own tools (venue-pulse, party-bookings) open with their summary, releases, usage and logs; `/apps/tech-board` is a 403, because it isn't hers.
+- **As `maja`:** *Status* shows whether things are up. Her own tool (party-bookings) opens with their summary, releases, usage and logs; `/apps/tech-board` is a 403, because it isn't hers.
 - **As `kaldi-admin`:** *Overview* shows what needs attention first, then every tool with its owner, health, users this week, errors and last deploy, plus chips like "graduation candidate" or "dormant". *Platform* shows memory, disk, backups and the platform's own threads.
 - **What it shows:** owners see their own tools; Kaldi and the client's admins see everything; everyone else sees whether things are up.
 
@@ -95,16 +94,16 @@ https://console.annex.home.arpa:8443.
 - **What it shows:** one timeline answers "who did what, which data was read and what was sent".
 
 ### 13. Releases and rollback (the safety net)
-**As `kaldi-admin`** (or as `maja`, for venue-pulse), open a tool's *Releases* in the console. A release that failed its health check is red, and its logs are still there, although its container is gone.
-- If you have the `annex` CLI: `scripts/demo-bad-deploy.sh` ships a broken venue-pulse; Annex refuses to switch to it, and the working version stays live.
-- `annex releases venue-pulse` lists the releases, and `annex rollback venue-pulse` switches back to an earlier one. Restoring a tool's *data* (`--with-data`) is human-only.
+**As `kaldi-admin`** (or as `lena`, for league-desk), open a tool's *Releases* in the console. A release that failed its health check is red, and its logs are still there, although its container is gone.
+- If you have the `annex` CLI: `scripts/demo-bad-deploy.sh` ships a broken league-desk; Annex refuses to switch to it, and the working version stays live.
+- `annex releases league-desk` lists the releases, and `annex rollback league-desk` switches back to an earlier one. Restoring a tool's *data* (`--with-data`) is human-only.
 - **What it shows:** a broken deploy never reaches users, and the evidence stays.
 
 ## Hidden stories
 The data was generated with a few stories in it. Here are hints, not answers. The answers are what `scripts/democlient.sh check` proves.
 1. One machine in Maribor has been unwell for weeks. *tech-board's Rising faults; Machine health in Metabase.*
 2. One player's nickname keeps turning up at the top of the high-score tables, at more than one venue. *high-score-wall; league-desk's player lookup.*
-3. One venue's takings dipped about five weeks ago, after two popular tables moved away. Where did they go? *venue-pulse's rotation candidates; weekly-takings' 8-week trend.*
+3. One venue's takings dipped about five weeks ago, after two popular tables moved away. Where did they go? *Metabase: Venue performance's machine earnings; Cash and collections' takings per machine by era.*
 4. The arcades have a weekly rhythm, and one venue has a busy night of its own. *Venue performance's heatmap, venue by venue.*
 5. Each era of pinball has its own character: one earns the most per game, another's games last the longest. *Goat Arcade at a glance, revenue by era.*
 6. One cabinet tilts far more than its siblings. *Sam's live build in the demo looks for it: tilt-watch.*
