@@ -1,6 +1,6 @@
 # Goat Arcade demo environment plan
 
-Written 21 Oct 2026 on branch `goat-arcade` (commit `a4964d2`: the Goat Arcade database behind the gateway, D77–D78), merged into `main` on 22 Oct: work from `main`. Hardening (D79–D97) and control-plane (D98–D105) landed since; D106 records what that changed for Goat Arcade. **Not started; Nejc's choices are in (§4, 21 Oct); implementation comes later.**
+Written 21 Oct 2026 on branch `goat-arcade` (commit `a4964d2`: the Goat Arcade database behind the gateway, D77–D78), merged into `main` on 22 Oct: work from `main`. Hardening (D79–D97) and control-plane (D98–D105) landed since; D106 records what that changed for Goat Arcade. **Done (23–24 Oct, branch `goat-demo`): GA.0–GA.8, decisions D107–D114.** Nejc's choices are in §4.
 
 **Goal.** Turn this instance into one complete, believable example of Annex in practice: Goat Arcade's own server. Its staff sign in once and find their tools. Analysts have dashboards on curated data. A few tools were "vibe-coded" by staff. One off-the-shelf open-source tool is self-hosted behind the same login. Kaldi and the client oversee all of it. Everything generic or wealth-management-shaped goes.
 

@@ -122,6 +122,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D111 | Kanboard, self-hosted as an Annex app: the official image adapted to the contract, header sign-in, its own API token | active |
 | D112 | Goat Arcade is the only product data: the wealth demo is retired | active; revises D14 (retired: the wealth data is gone) and D10 (what push re-applies) |
 | D113 | The Goat Arcade demo: its shape, the reset's order, the live build and its fallback; runs by hand stay out of the console (Nejc) | active; supersedes D28, revises D29 |
+| D114 | Goat Arcade demo: final runs on the VM and resource record | active |
 
 ## D1. Apps run through `ssh annex` and the VM's Compose (14 Oct)
 **What.** The CLI copies the app folder to `/srv/annex/deploy/<app>`, writes the generated compose file there and runs `docker compose` on the VM over SSH, the same way the platform runs. The brief said "built and run through the annex-vm Docker context, using the Mac's Compose".
@@ -1519,3 +1520,28 @@ The platform isn't changed in this step; `docs/demo.md` lists the symptom under 
 - The broken-copy `sed` was checked against venue-pulse's `main.py`.
 - tilt-watch: unit tests (`tests/test_tilts.py`), and deployed on the local lane (r3); signed in as sam, it flags the Graz Cyber Samurai first.
 - Not run here (VM, human go-ahead): the reset on the VM, then the demo walkthrough.
+
+## D114. Goat Arcade demo: final runs and resource record (24 Oct, GA.8; Nejc: reset with --usage, test-all once on the VM)
+**What.** The Goat Arcade demo environment is in place on both lanes (plan `docs/plans/goat-arcade-demo.md`, GA.0–GA.8, D107–D113).
+- **The reset.** `scripts/reset-demo.sh --yes --usage` on the VM ran in 6 minutes with no problems. Smoke passed 54/54 and examples 109/109, and the seven planted stories of D78 held after the reseed.
+- **`test-all.sh`** (the fast set, without `--slow`) on the VM, after the reset: 20 of 22 suites passed at once.
+  - **errors** lost the SSH connection to the VM mid-run ("master hello exchange failed"), and the steps after it failed. Run alone, it passed 49/49. That is the path through `dronky`, not code.
+  - **console** had one real failure. It expected `maja` to own no apps, which stopped being true when she became venue-pulse's and party-bookings' owner; the check now uses `petra`. A second, known race also showed: "the health state is annex status's" fails when `annex status` still says "unknown" in the minute after a deploy. It hit 2 of 4 console runs on 23–24 Oct on both lanes, and passed on a rerun. It is older than this plan; a follow-up should make the check wait for a health result.
+  - With those, every suite passes on the VM. Every suite GA.1–GA.6 touched also passed on the local lane (D107, D112).
+- **Resource record** (VM, 24 Oct, everything up, after the suites):
+
+| | Memory |
+|---|---|
+| Platform (Metabase 775 MiB, appdata-db 184, Authelia 157, Homepage 113, ops 94, the rest under 30 each) | about 1.54 GiB, within the 2.5 GiB budget |
+| Seven apps: venue-pulse 51, party-bookings 60, league-desk 49, weekly-takings 48, tech-board 46, kanboard 28, high-score-wall 18 | 300 MiB |
+| arcade-db (the client's database, outside the platform) | 83 MiB of 192 |
+| VM | 2.5 GiB used of 3.9 GiB, 1.35 GiB available; the VM's own swap at 1.0 GiB (0.46 GiB on 21 Oct) after 30+ minutes of suites; disk 37% |
+
+**Why.** Plan decision G: everything has to fit in today's VM. It does, with 1.35 GiB to spare. The VM's own swap rose during the suites; watch it before a demo, after a reset, rather than after a test run.
+
+**Alternatives.** A bigger VM (decision G: no). Running the suites only on the local lane: the browser path, Slack, amd64 images and the VM's own limits are proven only on the VM (D100).
+
+**Not done here.**
+- Manual job runs stay out of the console (D113, Nejc).
+- The console health race above is left for a follow-up.
+- The browser checks of the Homepage branding and the Metabase charts are Nejc's.
