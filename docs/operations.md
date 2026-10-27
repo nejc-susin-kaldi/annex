@@ -88,7 +88,7 @@ What a nightly archive holds: `backup/apps/<app>/data` and `releases.jsonl`, `ba
 
 The archive contains the secrets: copy it only to places that may hold them, and delete scratch copies.
 
-1. **Prepare the new VM** as in `docs/setup.md` (Docker, the `annex` user, `/srv/annex` owned by annex, the SSH config). Do **not** run `scripts/bootstrap.sh` yet: it would generate new secrets.
+1. **Prepare the new VM** as in `docs/new-instance.md` sections 2 and 3 (Docker, the `annex` user, `/srv/annex` owned by annex, the SSH config). Do **not** run `scripts/bootstrap.sh` yet: it would generate new secrets.
 2. **Put the archive on the VM** (`scp annex-<time>.tar.gz annex:/srv/annex/backups/`; `chmod 700 /srv/annex/backups`, `chmod 600` the archive).
 3. **Unpack the files** (sudo, so the owners in the archive are kept: ops runs as uid 10001 and reads `secrets/hooks` and `state/directory`):
    ```

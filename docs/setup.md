@@ -1,6 +1,6 @@
 # Setup: steps Nejc runs on the Mac and the homelab
 
-The build agent never runs these. Each step has its undo; `docs/teardown.md` collects them.
+The build agent never runs these. Each step has its undo; `docs/teardown.md` collects them. These are the steps for the homelab instance; bringing up a new instance on another VM, including the VM's own preparation, is `docs/new-instance.md`.
 
 ## Prerequisites
 Nothing here is installed by Annex; check that each is present.
