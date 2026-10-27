@@ -4,8 +4,7 @@
 # a line in secrets/users.txt (their Annex password) in the groups of people.json (D107), accounts of people no longer
 # in Annex deactivated, and the "Goat Arcade" database (product-db's annex_api, read-only as metabase_ro, limited to
 # that schema). Then vm/metabase_content.py applies goat-arcade/: column types, collections, permissions and the five
-# dashboards (D109). The "Annex usage" dashboard is retired (M2.9): usage lives in the console;
-# vm/metabase-retire-usage.sh removes what an earlier setup created.
+# dashboards (D109). Usage lives in the console, not in Metabase (D76).
 # METABASE_SPEC_DIR: where people.json and goat-arcade/ are (default: the pushed config/metabase); METABASE_VERBOSE=1
 # prints every card's row count.
 set -euo pipefail

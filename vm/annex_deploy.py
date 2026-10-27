@@ -440,35 +440,6 @@ def _compose_networks(app: str, egress: bool) -> tuple[list[str], dict]:
     return list(nets), nets
 
 
-def rewire_compose(doc: dict, app: str, egress: bool) -> tuple[dict, dict]:
-    """An app's compose file from before D88 (on annex-edge, and annex-appdata with Postgres) moved onto its own
-    network, for an app whose source isn't at hand (migrate-networks, D102). Returns (new document, what the app
-    uses: the flags for networks-sync), read from the file itself: routed = web, on appdata = Postgres, a gateway
-    URL = views."""
-    doc = json.loads(json.dumps(doc))  # a deep copy; the file is plain YAML data
-    app_net = vm.app_network(app)
-    services = doc.get("services") or {}
-    if len(services) != 1:
-        raise vm.Fail(f"{app}'s compose file has {len(services)} services; an Annex app has exactly one")
-    svc = next(iter(services.values()))
-    labels = svc.get("labels") or {}
-    if not isinstance(labels, dict):  # Annex always writes a mapping; a list means someone edited the file
-        raise vm.Fail(f"{app}'s compose file has its labels as a list; it wasn't written by Annex. Redeploy it from its source")
-    env = svc.get("environment") or {}
-    old = svc.get("networks") or []
-    old = list(old) if isinstance(old, (list, dict)) else []
-    old_names = {(doc.get("networks") or {}).get(k, {}).get("name", k) for k in old}
-    uses = {"web": str(labels.get("traefik.enable", "")).lower() == "true",
-            "postgres": bool(old_names & {"annex-appdata"}),
-            "views": "ANNEX_GATEWAY_URL" in (env if isinstance(env, dict) else {}),
-            "egress": egress}
-    if uses["web"]:
-        labels["traefik.docker.network"] = app_net
-        svc["labels"] = labels
-    svc["networks"], doc["networks"] = _compose_networks(app, egress)
-    return doc, uses
-
-
 def _tile_labels(m, fields: list[tuple[str, str, str | None]]) -> dict[str, str]:
     """Homepage's customapi widget on the app's discovery tile: annex-ops answers /tiles/<app> with totals and
     status (never logins), and Homepage calls it from its own server. (label, field, extra field shown beside it)"""
@@ -826,7 +797,7 @@ def activate(run: Run, m, image: str, release: int, prefix: str = "") -> tuple[t
                         hooks=[w.__dict__ for w in m.webhooks], hook_port=(m.port or 0) if m.webhooks else 0)
     # before the switch: the app's network and the platform containers on it must exist when the container starts (D88)
     vm.sync_app(m.name, m.is_web, m.postgres, bool(m.views), bool(m.egress))
-    # JSON is YAML: Compose reads it, and so does migrate-networks
+    # JSON is YAML: Compose reads it
     vm.write_atomic(run.d / "compose.yaml", json.dumps(compose_for(run, m, image, release), indent=2) + "\n")
     drain(run, m.name)  # the container Compose is about to replace (a failed release's, on a switch back)
     run.step(prefix + "switch")

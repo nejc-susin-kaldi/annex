@@ -32,7 +32,7 @@ Take the stops in order. Each one names what it shows about Annex.
 
 ### 2. Venue performance (a dashboard, not an app)
 **As `maja`**, open Metabase (stop 10) and *Venues → Venue performance*. Set the venue filter to Metelkova, her venue: this week against last, games per day, the weekday-by-hour heatmap, machine earnings and idle machines. Switch the filter to Celje.
-- **What it shows:** **not everything needs an app.** A tool for a venue manager's read-only figures was built early on and then retired (D115): a Metabase dashboard on the same curated views does the job, with nothing to maintain. The apps below are the ones a dashboard can't be: they write data, take calls from outside or run jobs. The retired source is in `examples/archive/venue-pulse/`.
+- **What it shows:** **not everything needs an app.** A tool for a venue manager's read-only figures was built early on and then retired (D115): a Metabase dashboard on the same curated views does the job, with nothing to maintain. The apps below are the ones a dashboard can't be: they write data, take calls from outside or run jobs. The retired source is in git, at the tag `examples-archive` (`git show examples-archive:examples/archive/venue-pulse/main.py`).
 
 ### 3. high-score-wall (a builder's second app, the gateway's limits)
 **As anyone**, open high-score-wall and pick a venue: it's TV mode, one machine at a time with its all-time top 10. Press `F` for full screen.
@@ -51,7 +51,7 @@ Take the stops in order. Each one names what it shows about Annex.
 
 ### 6. Cash and collections (a dashboard, not an app)
 **As `petra`**, open Metabase and *Finance → Cash and collections*: weekly cash by venue, the coins, tokens and card split, takings per machine by era, and counted cash against estimated plays per venue.
-- **What it shows:** the second thing that doesn't need an app. A weekly-takings tool (a Monday job, a CSV, an email) was built and retired (D115): finance reads a dashboard instead. The retired source is in `examples/archive/weekly-takings/`.
+- **What it shows:** the second thing that doesn't need an app. A weekly-takings tool (a Monday job, a CSV, an email) was built and retired (D115): finance reads a dashboard instead. The retired source is in git, at the tag `examples-archive` (`examples/archive/weekly-takings/`).
 
 ### 7. party-bookings (webhooks: the one way in from outside)
 **As `maja`**, open party-bookings. These are birthday-party requests that came from Goat Arcade's public website. Open one: it shows the details, the customer's email as a link to reply by hand, the history (who did what) and the actions *Confirm*, *Decline* and *Mark as contacted*. Confirming one emails the venue manager a summary to forward to the parents.

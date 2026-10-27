@@ -9,7 +9,7 @@ When the demo stage is over. Steps 1–3 come from the brief; build-specific ite
 *(build)* What the hardening steps added on the VM, all under `/srv/annex` or in Docker, so `scripts/wipe-vm.sh` (or destroying the VM) removes it:
 - per-app networks and egress networks (below), with their /24s from `ANNEX_APP_SUBNETS` (nothing outside Docker);
 - `backups/` (mode 700) holds archives that contain `secrets/` and `state/directory/` (D87): delete any copy of an archive you took off the VM, and any `restore-scratch/` folder left from a restore check;
-- `deploy/<app>/.lock*` and the pending lines in `apps/<app>/releases.jsonl` (D92), and `deploy/<app>/compose.yaml.pre-d88` for an app moved with `annex migrate-networks`;
+- `deploy/<app>/.lock*` and the pending lines in `apps/<app>/releases.jsonl` (D92);
 - the `annex_ops.schema_version` table and the tables the migrations create (in the `annex_ops` database, which goes with appdata-db's data);
 - `platform/VERSION` (the push stamp, D85).
 
@@ -66,7 +66,7 @@ virsh -c qemu:///system undefine annex --snapshots-metadata --remove-all-storage
     uv tool uninstall annex-cli
     ```
   - mkcert: **don't uninstall** the CA. It was trusted before Annex (see setup.md §2). The Annex certificate exists only on the VM.
-- The local stack on Docker Desktop, if it was used (D99): the "Wipe it" commands in setup.md §9 (containers, networks, volumes, Annex's images and `~/.annex/local`), then the `/etc/hosts` lines tagged `# annex-local` and `/etc/resolver/annex-local.home.arpa` if they were added (§9's undo). The local stack's certificate lives in `~/.annex/local/certs` and goes with it.
+- The local stack on Docker Desktop, if it was used (D99): the "Wipe it" commands in setup.md §8 (containers, networks, volumes, Annex's images and `~/.annex/local`), then the `/etc/hosts` lines tagged `# annex-local` and `/etc/resolver/annex-local.home.arpa` if they were added (§8's undo). The local stack's certificate lives in `~/.annex/local/certs` and goes with it.
 - *(build)* The repo's local build output (rendered config, SSH control sockets):
   ```bash
   rm -rf .build

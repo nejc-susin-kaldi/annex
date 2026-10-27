@@ -602,8 +602,7 @@ def describe_holder(info: dict | None, now: float) -> str:
             f"pid {info.get('pid') or 'unknown'} on the VM)")
 
 
-HOLDER_DOING = {"secret-set": "having a secret set", "remove": "being removed",
-                "migrate-networks": "being moved onto its own network"}  # D102; deploys and rollbacks: the default
+HOLDER_DOING = {"secret-set": "having a secret set", "remove": "being removed"}  # D102; deploys and rollbacks: the default
 
 
 def lock_refusal(app: str, info: dict | None, now: float) -> str:
@@ -900,7 +899,7 @@ def _deploy_module():
 
 
 def _apps_module():
-    """vm/annex_apps.py (secret set, remove, migrate-networks, run; D102), imported lazily like annex_deploy."""
+    """vm/annex_apps.py (secret set, remove, run; D102), imported lazily like annex_deploy."""
     sys.modules.setdefault("annex_vm", sys.modules[__name__])
     import annex_apps
     return annex_apps
@@ -1087,11 +1086,6 @@ def cmd_deprovision(a: argparse.Namespace) -> None:
 def cmd_remove(a: argparse.Namespace) -> None:
     """Remove an app (D102): the app's lock, then drain, compose down, deprovision; JSON lines on stdout."""
     sys.exit(_apps_module().serve("remove", a))
-
-
-def cmd_migrate_networks(a: argparse.Namespace) -> None:
-    """Move an app deployed before per-app networks (D88) onto its own network, without its source (D102)."""
-    sys.exit(_apps_module().serve("migrate-networks", a))
 
 
 def cmd_run_job(a: argparse.Namespace) -> None:
@@ -1728,12 +1722,6 @@ def main() -> None:
     s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
     s.add_argument("--keep-data", action="store_true")
     s.set_defaults(fn=cmd_remove)
-    s = sub.add_parser("migrate-networks", help="move an app deployed before per-app networks (D88) onto its own "
-                                                "network without its source (D102); JSON lines")
-    s.add_argument("app")
-    s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
-    s.add_argument("--egress", action="store_true", help="keep internet access (the old shared network had it)")
-    s.set_defaults(fn=cmd_migrate_networks)
     s = sub.add_parser("run-job", help="run one of the app's jobs now, with the command deploy.json holds (D102)")
     s.add_argument("app")
     s.add_argument("job")

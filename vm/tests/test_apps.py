@@ -1,4 +1,4 @@
-"""Secret set, remove, migrate-networks and run on the VM (control-plane V2, D102), against the `run` seam (D96): the
+"""Secret set, remove and run on the VM (control-plane V2, D102), against the `run` seam (D96): the
 order of the Docker calls, the app's lock (a held lock refuses naming the holder and changes nothing), and that
 `remove` never unlinks `.lock.guard`. Stdlib unittest: python3 -m unittest discover -s vm/tests"""
 import argparse
@@ -14,24 +14,8 @@ from deploy_fakes import FakeDocker, dep, vm
 
 import annex_apps as apps  # noqa: E402  (deploy_fakes put vm/ on the path)
 
-try:
-    import yaml
-except ImportError:  # the migrate-networks tests read a compose file with PyYAML, as the VM does
-    yaml = None
-
 RECORD = {"name": "demo", "type": "web", "postgres": True, "files": False, "views": ["orders"], "secrets": ["API_KEY"],
           "schedule": [], "notify_email": True, "notify_slack": ["#ops"], "webhooks": [], "port": 8080, "egress": []}
-OLD_COMPOSE = {
-    "name": "annex-app-demo",
-    "services": {"demo": {
-        "image": "annex-app/demo:r3", "container_name": "annex-app-demo",
-        "environment": {"ANNEX_GATEWAY_URL": "http://gateway:3000", "PORT": "8080"},
-        "labels": {"com.kaldi.annex": "true", "traefik.enable": "true"},
-        "networks": ["edge", "appdata"]}},
-    "networks": {"edge": {"external": True, "name": "annex-edge"}, "appdata": {"external": True, "name": "annex-appdata"}},
-}
-
-
 class Docker(FakeDocker):
     """FakeDocker plus what these operations ask: containers by label, `docker image ls`, compose down."""
 
@@ -69,8 +53,7 @@ class Base(DeployBase):
 
     def serve(self, command, pairs=None, **kw):
         out = io.StringIO()
-        a = argparse.Namespace(app="demo", actor="kim@mac", keep_data=kw.get("keep_data", False),
-                               egress=kw.get("egress", False))
+        a = argparse.Namespace(app="demo", actor="kim@mac", keep_data=kw.get("keep_data", False))
         code = apps.serve(command, a, pairs=pairs, stdout=out, base=self.base, signals=False)
         return code, [json.loads(x) for x in out.getvalue().splitlines()]
 
@@ -305,108 +288,6 @@ class Remove(Base):
         self.assertEqual(vm.dead_step(pending, vm.read_current(self.base, "demo")), "gate")
         self.serve("secret-set", [("API_KEY", "w")])  # and across a second one
         self.assertEqual(vm.dead_step(pending, vm.read_current(self.base, "demo")), "gate")
-
-
-@unittest.skipUnless(yaml, "PyYAML (the VM has python3-yaml)")
-class MigrateNetworks(Base):
-    def setUp(self):
-        super().setUp()
-        self.compose = self.d / "compose.yaml"
-        self.compose.write_text(yaml.safe_dump(OLD_COMPOSE, sort_keys=False))
-        self.record(egress=[])
-        self.synced = []
-        p = unittest.mock.patch.object(vm, "sync_app", side_effect=lambda *a: self.synced.append(a) or {"platform": ["traefik", "ops"]})
-        p.start()
-        self.addCleanup(p.stop)
-
-    def test_rewires_connects_and_recreates_in_that_order(self):
-        code, lines = self.serve("migrate-networks")
-        self.assertEqual(code, 0)
-        self.assertEqual(self.synced, [("demo", True, True, True, False)])  # web, postgres, views, egress
-        doc = json.loads(self.compose.read_text())
-        self.assertEqual(doc["services"]["demo"]["networks"], ["app"])
-        self.assertEqual(doc["networks"], {"app": {"external": True, "name": "annex-app-demo"}})
-        self.assertEqual(doc["services"]["demo"]["labels"]["traefik.docker.network"], "annex-app-demo")
-        self.assertEqual(self.docker.ran("compose", "up")[0], ["docker", "compose", "up", "-d", "--remove-orphans"])
-        drain = next(i for i, c in enumerate(self.docker.calls) if "logs-drain" in c)
-        up = next(i for i, c in enumerate(self.docker.calls) if c[:3] == ["docker", "compose", "up"])
-        self.assertLess(drain, up)
-        final = lines[-1]
-        self.assertEqual(final["uses"], {"web": True, "postgres": True, "views": True, "egress": False})
-        self.assertEqual(final["platform"], ["traefik", "ops"])
-        self.assertEqual(final["backup"], str(self.d / "compose.yaml.pre-d88"))
-        self.assertEqual(final["networks"], ["healthy"])  # FakeDocker's answer to any other `docker inspect`
-
-    def test_the_old_file_is_kept_once_and_egress_is_recorded(self):
-        self.serve("migrate-networks", egress=True)
-        backup = self.d / "compose.yaml.pre-d88"
-        self.assertEqual(yaml.safe_load(backup.read_text()), OLD_COMPOSE)
-        self.assertEqual(json.loads((self.d / "deploy.json").read_text())["egress"], ["*"])
-        self.assertEqual(self.synced[0][-1], True)
-        self.serve("migrate-networks")  # a second run must not overwrite the backup with the migrated file
-        self.assertEqual(yaml.safe_load(backup.read_text()), OLD_COMPOSE)
-        self.assertEqual(json.loads((self.d / "deploy.json").read_text())["egress"], [])
-
-    def test_no_compose_file_is_refused(self):
-        self.compose.unlink()
-        code, lines = self.serve("migrate-networks")
-        self.assertEqual(code, 1)
-        self.assertIn("has no compose file on the VM", lines[-1]["error"])
-        self.assertEqual(self.synced, [])
-
-    def test_a_held_lock_refuses_and_changes_nothing(self):
-        self.hold()
-        before = self.compose.read_text()
-        with self.assertRaises(vm.LockHeld):
-            self.serve("migrate-networks")
-        self.assertEqual(self.compose.read_text(), before)
-        self.assertEqual(self.synced, [])
-        self.assertEqual(self.docker.calls, [])
-
-    def test_a_failed_recreate_keeps_the_rewritten_file_and_the_backup(self):
-        self.docker.fail = ("compose up",)
-        code, lines = self.serve("migrate-networks")
-        self.assertEqual(code, 1)
-        self.assertIn("docker compose up failed", lines[-1]["error"])
-        self.assertTrue((self.d / "compose.yaml.pre-d88").exists())
-        self.assertTrue(self.lock_is_free())
-
-
-class Rewire(unittest.TestCase):
-    """Moved from cli/tests/test_networks.py with the function (rewire_compose is VM-side now)."""
-
-    def test_moves_a_web_app_with_postgres_and_views(self):
-        old = json.loads(json.dumps(OLD_COMPOSE))
-        doc, uses = dep.rewire_compose(OLD_COMPOSE, "demo", egress=False)
-        self.assertEqual(uses, {"web": True, "postgres": True, "views": True, "egress": False})
-        svc = doc["services"]["demo"]
-        self.assertEqual(svc["networks"], ["app"])
-        self.assertEqual(doc["networks"], {"app": {"external": True, "name": "annex-app-demo"}})
-        self.assertEqual(svc["labels"]["traefik.docker.network"], "annex-app-demo")
-        self.assertEqual(svc["image"], "annex-app/demo:r3")  # everything else is left alone
-        self.assertEqual(OLD_COMPOSE, old)  # the input isn't changed
-
-    def test_egress_keeps_internet_access(self):
-        doc, uses = dep.rewire_compose(OLD_COMPOSE, "demo", egress=True)
-        self.assertEqual(doc["services"]["demo"]["networks"], ["app", "egress"])
-        self.assertTrue(uses["egress"])
-
-    def test_an_edge_only_job(self):
-        old = {"services": {"jj": {"labels": {"traefik.enable": "false"}, "environment": {}, "networks": ["edge"]}},
-               "networks": {"edge": {"external": True, "name": "annex-edge"}}}
-        doc, uses = dep.rewire_compose(old, "jj", egress=False)
-        self.assertEqual(uses, {"web": False, "postgres": False, "views": False, "egress": False})
-        self.assertNotIn("traefik.docker.network", doc["services"]["jj"]["labels"])
-
-    def test_the_result_is_json_and_so_yaml_compose_can_read(self):
-        doc, _ = dep.rewire_compose(OLD_COMPOSE, "demo", egress=False)
-        self.assertEqual(json.loads(json.dumps(doc)), doc)
-
-    def test_refuses_a_file_annex_didnt_write(self):
-        with self.assertRaises(vm.Fail):
-            dep.rewire_compose({"services": {"a": {}, "b": {}}}, "demo", egress=False)
-        with self.assertRaises(vm.Fail):
-            dep.rewire_compose({"services": {"a": {"labels": ["traefik.enable=true"]}}}, "demo", egress=False)
 
 
 class RunJob(Base):

@@ -638,17 +638,6 @@ def remove(app: str, keep_data: bool = False, progress: Progress = _quiet) -> di
     return Remote().call("remove", app, "--actor", _who(), *(["--keep-data"] if keep_data else []), progress=progress)
 
 
-def migrate_networks(app: str, egress: bool = False, progress: Progress = _quiet) -> dict:
-    """Move an app deployed before per-app networks (D88) onto its own network without its source (human only): the
-    VM rewrites the networks of its compose file (the old file is kept as compose.yaml.pre-d88), records egress in
-    deploy.json, connects the platform containers it uses and recreates the container, under the app's lock (D102).
-    An app whose source is at hand should be redeployed instead. egress=True keeps internet access (the old shared
-    network had it)."""
-    _name(app)
-    return Remote().call("migrate-networks", app, "--actor", _who(), *(["--egress"] if egress else []),
-                         progress=progress)
-
-
 def users(action: str, login: str | None = None, **opts) -> dict:
     """Annex's own user accounts (human only, not over MCP; D57). action: list, add, set, remove or reset.
     Options are passed on as flags: name="x" -> --name x, print_password=True -> --print-password."""

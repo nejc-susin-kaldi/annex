@@ -86,7 +86,7 @@ macOS-specific.
 **Tools:** `git`, `ssh`, `rsync` (macOS ships `openrsync`, which has been enough; GNU rsync from Homebrew if it
 isn't), `curl`, `python3` (3.9 or newer for the scripts; uv fetches the CLI's own), `uv` (the CLI, the MCP server,
 the ops unit tests), `mkcert` (`local` mode: the certificate, and the suites' `curl --cacert`), `node` (optional:
-one test in `test-smoke.sh`, skipped without it), `docker` only for the local lane (`docs/setup.md` §9).
+one test in `test-smoke.sh`, skipped without it), `docker` only for the local lane (`docs/setup.md` §8).
 
 **SSH key and config.** One key for this instance, no passphrase (the scripts and the CLI open many connections):
 ```bash

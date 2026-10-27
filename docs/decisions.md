@@ -101,7 +101,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D90 | Alert engine robustness: an outbox, saved timers, a monotonic clock, one front-door incident | active |
 | D91 | CSRF check in the runtime and the contract | active |
 | D92 | Deploy lock and pending release record | revised by D101 (an flock held by the deploy process replaces the lock directory) |
-| D93 | Numbered schema migrations with a version table | active |
+| D93 | Numbered schema migrations with a version table | active; revised by D116 (one edit to `001_base.sql`: grants to a dropped role) |
 | D94 | Contract and runtime versions; generated summaries in the agent-facing copies | active |
 | D95 | Build limits: free disk, image size, pids_limit, cleanup warnings | active |
 | D96 | annex_vm.py test seam and quoted SQL | active |
@@ -110,7 +110,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D99 | A local stack on Docker Desktop (`ANNEX_ENV=local`) | active; revises D1 for the local case |
 | D100 | Every suite on the local lane | active (written after D101–D104: the number was reserved for L3) |
 | D101 | The deploy runs as one process on the VM | active; revises D17, D30, D64 and D92 |
-| D102 | Secret set, remove, migrate-networks and run on the VM | active; extends D101 and D64 to those commands |
+| D102 | Secret set, remove, migrate-networks and run on the VM | active; extends D101 and D64 to those commands; revised by D116 (`migrate-networks` removed) |
 | D103 | Version coupling and one manifest module | active |
 | D104 | CI: unit tests on every push, the local stack on pull requests | active (written, not run: no remote yet) |
 | D105 | Control-plane: final runs on both lanes and resource record | active |
@@ -123,7 +123,8 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D112 | Goat Arcade is the only product data: the wealth demo is retired | active; revises D14 (retired: the wealth data is gone) and D10 (what push re-applies) |
 | D113 | The Goat Arcade demo: its shape, the reset's order, the live build and its fallback; runs by hand stay out of the console (Nejc) | active; supersedes D28, revises D29; revised by D115 (two apps retired: the demo has four vibe-coded tools, and the bad deploy is league-desk's) |
 | D114 | Goat Arcade demo: final runs on the VM and resource record | active; its seven-app memory record predates D115 |
-| D115 | venue-pulse and weekly-takings retired: two dashboards instead of two apps | active; revises D113 |
+| D115 | venue-pulse and weekly-takings retired: two dashboards instead of two apps | active; revises D113; revised by D116 (`examples/archive/` is the git tag `examples-archive`) |
+| D116 | Tidying before a handover: finished one-off scripts, the `metabase_usage` role, `migrate-networks` and `examples/archive/` removed | active; revises D93, D102 and D115 |
 
 ## D1. Apps run through `ssh annex` and the VM's Compose (14 Oct)
 **What.** The CLI copies the app folder to `/srv/annex/deploy/<app>`, writes the generated compose file there and runs `docker compose` on the VM over SSH, the same way the platform runs. The brief said "built and run through the annex-vm Docker context, using the Mac's Compose".
@@ -1569,3 +1570,24 @@ The platform isn't changed in this step; `docs/demo.md` lists the symptom under 
   - **party-bookings "down" on both lanes.** The health checker had probed it during the suite's own redeploy (connection refused, seconds before `status_up` read it). `status_up` in `test-examples.sh` now waits up to 90 s for a probe that says up. It's the same race as D114's console check.
   - **On the local lane only, Kanboard's seed timed out** (30 s) calling its own JSON-RPC right after the redeploy. Run by hand it took 1.5 s, and on the rerun on both lanes it passed. It's a one-off; if it recurs, the seed should retry its first API call while php-fpm warms up.
 - `seed-usage.sh` was rerun on both lanes, so the synthetic rise is on league-desk.
+
+## D116. Tidying before a handover: finished one-off scripts, the `metabase_usage` role, `migrate-networks` and `examples/archive/` removed (27 Oct, Nejc)
+**What.**
+- `db/product/once/retire-wealth.sql` is gone, and `once/` with it: it ran on both lanes (product-db holds `src_arcade` and nothing of the wealth schema). `vm/metabase-retire-usage.sh` is gone: it ran on the VM (Metabase has no "Annex usage" dashboard, cards or connection), and the local stack never had them.
+- **The role `metabase_usage` is dropped** by migration `006_drop_metabase_usage.sql` and nothing creates it any more: its lines left `bootstrap.sql`, `push.sh` and `bootstrap-secrets.sh`. Dropping a role needs the superuser, so the migration does `RESET ROLE` for its one statement and `SET ROLE annex_ops` again; where the role never existed it does nothing. `APPDATA_DB_METABASE_USAGE_PASSWORD` stays in existing `master.env` files, unused and harmless.
+- **The one edit to an applied migration:** `001_base.sql` no longer grants to the role. A fresh instance runs 001 before 006 and would fail granting to a role that doesn't exist. `vm/migrate.py` records versions, not checksums, so existing stacks aren't affected; D93's rule stands for every other case, and 006 says so in its header.
+- **`annex migrate-networks` is gone**: the CLI command, `annex_vm.py migrate-networks`, `annex_apps.migrate_networks`, `annex_deploy.rewire_compose`, their tests and the docs' lines. Every app on both lanes was deployed after D88, no `compose.yaml.pre-d88` exists on either, and the one pre-D88 app without source (`vibe-leads`) was removed in GA.0. `secret set` and `remove` keep the shared lock (D102).
+- **`examples/archive/`** (vibe-leads, venue-pulse, weekly-takings) is out of the tree. The git tag `examples-archive` marks the last commit that holds it, and the tour's two "not everything needs an app" stops point there. `sync-runtime.sh` no longer needs to skip the folder.
+- **`docs/setup.md` trimmed**: §3 is one `/etc/hosts` line for the platform and one for Goat Arcade's tools (the names added per milestone, the retired ones and their notes are gone); the retire step (old §8) is gone; the `cm` migration left §9 (done 23 Oct, D107). The local stack is §8 and Goat Arcade's people §9; every reference updated. The titles of CLAUDE.md and README no longer say "M0 and M1".
+- Looked at and kept: `docs/plans/` as they are (Nejc), `config/homepage/`'s empty files (bind-mounted read-only, so they must exist), the three release images per app, the suites' `M0.x`/`M1.x` names.
+
+**Why.** Each removed piece had done its one job on every stack there is. For a developer taking the repo over (`docs/new-instance.md`) and for the agents that read CLAUDE.md, each was one more thing to read and explain; removing it before the handover is cheaper than explaining it after.
+
+**Alternatives.**
+- Keeping `metabase_usage` as a dead role rather than editing 001: every fresh instance would carry a role nobody uses, with a password in its secrets. One commented edit to 001 is the smaller debt.
+- A migration that only revokes (as `annex_ops`), with the drop in `bootstrap.sql`: `push.sh` runs `bootstrap.sql` before the migrations, so the drop would fail on the first push and succeed on the second. Rejected.
+- Keeping `examples/archive/` in the tree: a tag keeps the source reachable without a folder of apps that aren't built, tested or synced.
+
+**Not here.** On the VM, `/srv/annex/deploy/` holds 19 folders of removed apps and selftest variants (`.lock.guard` and `current.json` only, 744 KB); the local lane has the same kind. A human removes them while no deploy runs (operations.md, "`remove` leaves `.lock.guard` behind"). Nothing else on the VM changes: the migration drops the role on the next push.
+
+**D116, verification (27 Oct).** Unit tests green (vm 256, cli 123, ops 416). `push.sh` on both lanes applied `006_drop_metabase_usage.sql` (the role is gone on both; the bundle no longer carries `once/` or the retire script). Smoke: VM 54/54; local 52/54, the two failures being the local lane's nightly backup, which hadn't run at 02:00 that night (the Mac was asleep), so the newest backup was over 26 h old and the backup alert was open, as it should be. Not run: the long suites (nothing they prove changed).

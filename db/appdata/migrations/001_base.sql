@@ -114,11 +114,6 @@ LEFT JOIN r7 USING (app) LEFT JOIN rprev USING (app) LEFT JOIN r30 USING (app) L
 LEFT JOIN wk USING (app) LEFT JOIN annex_ops.app_signals g USING (app)
 WHERE s.removed_at IS NULL;
 
--- Metabase's usage connection: summaries and the view, and nothing else (not requests, sends, incidents or grants)
-REVOKE ALL ON ALL TABLES IN SCHEMA annex_ops FROM metabase_usage;
-GRANT USAGE ON SCHEMA annex_ops TO metabase_usage;
-GRANT SELECT ON annex_ops.usage_daily, annex_ops.usage_weekly, annex_ops.usage_apps TO metabase_usage;
-
 -- --- M1.5: incoming webhooks ----------------------------------------------------------------
 -- Every call to https://hooks.<domain>/h/<app>/<hook> that passed (or failed) its signature check. Bodies are kept
 -- for 7 days for retries and replay (so they are in the nightly dump for that long); rejected requests have none.

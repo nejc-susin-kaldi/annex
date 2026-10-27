@@ -43,11 +43,11 @@ rsync -rlpt --delete "$BUILD/platform/" "$(dest "$DATA/platform/")"
 log "Applying annex-ops database: roles (db/appdata/bootstrap.sql), then pending migrations (db/appdata/migrations, D93)"
 vm "cd $DATA/platform && docker compose up -d --wait appdata-db >/dev/null"
 networks_sync  # a recreated appdata-db is back on the networks of the apps with Postgres before the long start below
-vm "cd $DATA/platform && . $DATA/secrets/master.env 2>/dev/null && [ -n \"\${APPDATA_DB_OPS_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_METABASE_USAGE_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_HOOKS_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_CONSOLE_PASSWORD:-}\" ]" \
-  || { echo "push: APPDATA_DB_OPS_PASSWORD, APPDATA_DB_METABASE_USAGE_PASSWORD, APPDATA_DB_HOOKS_PASSWORD or APPDATA_DB_CONSOLE_PASSWORD is missing in $DATA/secrets/master.env: run scripts/bootstrap.sh first" >&2; exit 1; }
+vm "cd $DATA/platform && . $DATA/secrets/master.env 2>/dev/null && [ -n \"\${APPDATA_DB_OPS_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_HOOKS_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_CONSOLE_PASSWORD:-}\" ]" \
+  || { echo "push: APPDATA_DB_OPS_PASSWORD, APPDATA_DB_HOOKS_PASSWORD or APPDATA_DB_CONSOLE_PASSWORD is missing in $DATA/secrets/master.env: run scripts/bootstrap.sh first" >&2; exit 1; }
 # the passwords reach psql through its environment (`-e NAME` copies it from this shell), never through an argument list (D80)
 vm "cd $DATA/platform && set -a && . $DATA/secrets/master.env && set +a && docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' \
-      -e APPDATA_DB_OPS_PASSWORD -e APPDATA_DB_METABASE_USAGE_PASSWORD -e APPDATA_DB_HOOKS_PASSWORD -e APPDATA_DB_CONSOLE_PASSWORD appdata-db \
+      -e APPDATA_DB_OPS_PASSWORD -e APPDATA_DB_HOOKS_PASSWORD -e APPDATA_DB_CONSOLE_PASSWORD appdata-db \
       psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres -f - < db/appdata/bootstrap.sql"
 # numbered schema files, each in one transaction, recorded in annex_ops.schema_version; stops at the first failure and names it (D93)
 vm "cd $DATA/platform && python3 vm/migrate.py"

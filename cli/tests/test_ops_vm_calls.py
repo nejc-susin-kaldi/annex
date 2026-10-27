@@ -1,4 +1,4 @@
-"""secret set, remove, migrate-networks and run are validation plus one call to the VM (D102). A fake Remote stands in
+"""secret set, remove and run are validation plus one call to the VM (D102). A fake Remote stands in
 for the SSH call: what is sent, where the secret's value goes (stdin only), and how `run`'s trailer becomes the result."""
 import json
 import subprocess
@@ -38,16 +38,12 @@ class Calls(unittest.TestCase):
             ops.secret_set("demo", ["lower=1"])
         self.assertEqual(self.calls, [])
 
-    def test_remove_and_migrate_networks_are_one_call_each(self):
+    def test_remove_is_one_call(self):
         ops.remove("demo")
         ops.remove("demo", keep_data=True)
-        ops.migrate_networks("demo")
-        ops.migrate_networks("demo", egress=True)
         self.assertEqual([a for a, _ in self.calls], [
             ("remove", "demo", "--actor", "kim@mac"),
-            ("remove", "demo", "--actor", "kim@mac", "--keep-data"),
-            ("migrate-networks", "demo", "--actor", "kim@mac"),
-            ("migrate-networks", "demo", "--actor", "kim@mac", "--egress")])
+            ("remove", "demo", "--actor", "kim@mac", "--keep-data")])
 
 
 class RunJob(unittest.TestCase):

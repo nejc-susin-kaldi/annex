@@ -10,7 +10,7 @@ Nothing here is installed by Annex; check that each is present.
 - `mkcert` with its root CA trusted (section 2); `scripts/bootstrap.sh` issues the wildcard certificate with it.
 - `rsync` and `ssh` (the platform bundle is synced over SSH; `ssh annex` must work without a password prompt).
 - `node` (`scripts/test-smoke.sh` runs the runtime's logging tests with it and skips them when it is missing).
-- `docker`, only for the optional context in section 1, and Docker Desktop for the local stack (section 9).
+- `docker`, only for the optional context in section 1, and Docker Desktop for the local stack (section 8).
 
 **On the VM (`annex`):**
 - Docker with the Compose plugin, `jq` and `python3-yaml` (PyYAML, used by `vm/annex_vm.py users-*`). Installing packages is a system change: if one is missing, ask Nejc.
@@ -35,35 +35,18 @@ The mkcert root CA (`$(mkcert -CAROOT)/rootCA.pem`) was **already trusted** in t
 ## 3. Browser access through the SSH tunnel (`/etc/hosts`)
 Until the route through `dronky` exists. Port 443 on the Mac is already taken by another process (`node`), so the tunnel listens on **8443**, and `.env` sets `ANNEX_PUBLIC_PORT=8443` so every Annex URL and login redirect keeps the port.
 
-Add the hostnames (one line, tagged `# annex`). Apps need their own names because `/etc/hosts` has no wildcards; Goat Arcade's are the next line:
+`/etc/hosts` has no wildcards, so every name needs a line: the platform's hosts and one per app. Each line is tagged `# annex`, so one undo removes them all. Only a browser needs them: the suites go through `curl --connect-to`. Nejc's Mac has had them since 23 Oct, in several lines (a few retired names among them, harmless).
+The platform:
 ```bash
-echo '127.0.0.1 home.annex.home.arpa auth.annex.home.arpa metabase.annex.home.arpa logs.annex.home.arpa gateway.annex.home.arpa echo-test.annex.home.arpa # annex' | sudo tee -a /etc/hosts
+echo '127.0.0.1 home.annex.home.arpa auth.annex.home.arpa console.annex.home.arpa mail.annex.home.arpa hooks.annex.home.arpa gateway.annex.home.arpa metabase.annex.home.arpa logs.annex.home.arpa # annex' | sudo tee -a /etc/hosts
 ```
-Goat Arcade's tools (GA.7): the four vibe-coded ones, Kanboard and `tilt-watch`, the demo's live build. **Already done on Nejc's Mac on 23 Oct** (that line also has `venue-pulse` and `weekly-takings`, retired on 24 Oct, D115: harmless, and the undo below removes it with the rest). On another Mac, add them as their own line with the same tag:
+Goat Arcade's tools (the four vibe-coded ones, Kanboard and `tilt-watch`, the demo's live build):
 ```bash
 echo '127.0.0.1 tech-board.annex.home.arpa league-desk.annex.home.arpa high-score-wall.annex.home.arpa party-bookings.annex.home.arpa kanboard.annex.home.arpa tilt-watch.annex.home.arpa # annex' | sudo tee -a /etc/hosts
 ```
-The wealth demo's names (`client-lookup`, `monthly-report`, `vibe-dashboard`) are no longer used (D112). If a line has them, the undo below removes it with the rest; add back the lines you want.
 Undo (removes every line tagged `# annex`):
 ```bash
 sudo sed -i '' '/# annex$/d' /etc/hosts
-```
-Mailpit (M1.2) needs its own name, `mail.annex.home.arpa`. Add it as a new line with the same tag, so the undo above removes it too:
-```bash
-echo '127.0.0.1 mail.annex.home.arpa # annex' | sudo tee -a /etc/hosts
-```
-Undo (the same command as above):
-```bash
-sudo sed -i '' '/# annex$/d' /etc/hosts
-```
-The status page (M1.3) needed `status.annex.home.arpa`; since M2.6 the status page is the console's `/status`, so **that hosts line is no longer needed**. If you added it, it is harmless; remove it with the undo above (which removes every line tagged `# annex`) and add back the others you want.
-The console (M2.4) needs `console.annex.home.arpa`, again as its own line with the same tag (the undo above removes it too). Only a browser needs it: `scripts/test-console.sh` goes through `--connect-to` and works without it. The Homepage tiles "Console" and "Status" point at it.
-```bash
-echo '127.0.0.1 console.annex.home.arpa # annex' | sudo tee -a /etc/hosts
-```
-Incoming webhooks (M1.5) need `hooks.annex.home.arpa`, again as its own line with the same tag (the undo above removes it too). Only a browser or your own `curl` needs it: `scripts/test-hooks.sh` goes through `--connect-to` and works without it.
-```bash
-echo '127.0.0.1 hooks.annex.home.arpa # annex' | sudo tee -a /etc/hosts
 ```
 **Optional, recommended before a demo: a wildcard resolver instead of a line per name.** `/etc/hosts` has no wildcards, so every new app name (e.g. one an AI picks during the live build) needs a line. A local `dnsmasq` answering `*.annex.home.arpa` with 127.0.0.1 removes that. macOS sends only that domain to it (`/etc/resolver`); everything else resolves as before. Entries in `/etc/hosts` keep working and take precedence.
 ```bash
@@ -98,7 +81,7 @@ Then, with no system change:
 ```bash
 scripts/tunnel.sh up
 ```
-Added on 14 Oct. Open https://home.annex.home.arpa:8443 and sign in with a demo user. `scripts/show-users.sh` prints the passwords. Stop the tunnel with `scripts/tunnel.sh down`.
+Open https://home.annex.home.arpa:8443 and sign in with a demo user. `scripts/show-users.sh` prints the passwords. Stop the tunnel with `scripts/tunnel.sh down`.
 
 ## 4. Annex in Claude Code: MCP server and skill (M0.4)
 Both are user-scoped, so Claude Code can use Annex from any folder, including an empty one.
@@ -168,25 +151,7 @@ ssh annex 'cd /srv/annex/platform && docker compose up -d --force-recreate ops'
 ```
 Then delete the Slack app in the workspace (*Basic Information* → *Delete App*), or the test workspace. See `docs/teardown.md`.
 
-## 8. Retire Metabase's "Annex usage" dashboard (M2.9, only when you are ready)
-M2.9 moved usage to the console (an app's **Usage** tab; the **Overview** shows people and trends). The repo no longer sets the dashboard up, but an existing Metabase still has it: the "Annex usage" dashboard, its four cards, the "Annex" collection and the "Annex usage" connection. They are harmless; leaving them is fine. To remove them (this deletes things in Metabase's own database):
-```bash
-ssh annex 'ANNEX_DATA_DIR=/srv/annex bash /srv/annex/platform/vm/metabase-retire-usage.sh'
-```
-Run it after `scripts/push.sh --extras` (the script is synced with the platform). It is idempotent. The product-data connection, its questions and the demo users are not touched.
-
-The database role `metabase_usage` (read-only on the usage summaries) stays: nothing connects as it any more, and dropping it while Metabase still holds a connection that uses it would only make Metabase log errors. **After** the script above has run, you can drop it for good:
-```bash
-ssh annex 'docker exec -i annex-appdata-db-1 psql -U postgres -d annex_ops -v ON_ERROR_STOP=1' <<'SQL'
-DROP OWNED BY metabase_usage;
-DROP ROLE metabase_usage;
-SQL
-```
-and then tell the build agent to remove the role, `APPDATA_DB_METABASE_USAGE_PASSWORD` and `usage_pw` from `db/appdata/bootstrap.sql`, `scripts/push.sh` and `vm/bootstrap-secrets.sh` (until then a push would create the role again).
-
-Undo: check out the commit before M2.9 and run `scripts/push.sh --extras`; `vm/metabase-setup.sh` of that commit creates the connection, cards and dashboard again (the history in the usage tables is untouched, so the charts fill in at once).
-
-## 9. Local stack: the platform on Docker Desktop (D99)
+## 8. Local stack: the platform on Docker Desktop (D99)
 A second, private copy of the platform on the Mac, for development and the suites (control-plane plan, lane "local"). It has its own settings, data, hostnames and ports, so it runs alongside the VM's stack and the tunnel. Nothing here is a system change except the optional `/etc/hosts` lines at the end.
 
 **Selection is per command.** Every script and `./annex` take `ANNEX_ENV=local` in front; without it they talk to the VM as before. Don't export it in your shell profile.
@@ -245,8 +210,8 @@ unset DOCKER_CONTEXT
 ```
 `ANNEX_ENV=local scripts/bootstrap.sh && ANNEX_ENV=local scripts/push.sh` brings it back with new secrets and passwords, and Goat Arcade's database seeded afresh. The pinned platform images stay in Docker Desktop's cache; `docker --context desktop-linux image rm <image>` removes one if you want the space.
 
-## 10. Goat Arcade's people (GA.1, D107)
-Human-only commands: they create accounts and print passwords. Run them from the repo on the Mac. For the local stack put `ANNEX_ENV=local` in front of every `./annex` and `scripts/` command (per command, never exported).
+## 9. Goat Arcade's people (GA.1, D107)
+Done on both lanes on 23 Oct; this is the record, and the recipe for another instance. Human-only commands: they create accounts and print passwords. Run them from the repo on the Mac. For the local stack put `ANNEX_ENV=local` in front of every `./annex` and `scripts/` command (per command, never exported).
 
 **Before the first command**, `.env` (and `.env.local`) must list the new address domain, or Annex's emails to these people are refused:
 ```
@@ -270,12 +235,6 @@ ssh annex 'ANNEX_DATA_DIR=/srv/annex bash /srv/annex/platform/vm/metabase-setup.
 ```
 It is idempotent and skips anyone without a line in `users.txt`.
 
-**Remove `cm` last**, after the suites pass with `maja` (it also drops `cm`'s line from `users.txt`):
-```bash
-./annex users remove cm --yes
-```
-Then deactivate the old Metabase account `cm@annex.example` (Metabase, Admin, People).
-
-Undo: `./annex users remove <login> --yes` for each new account (the Metabase accounts stay until deactivated in Admin, People); to bring `cm` back, `./annex users add cm --name 'Maja Horvat' --email cm@annex.example --groups users --demo`.
+Undo: `./annex users remove <login> --yes` for each account (the Metabase accounts stay until deactivated in Admin, People).
 
 The branding (Homepage title, logo and groups; Authelia's logo and favicon) needs nothing from you beyond the push. Homepage groups an app's tile from `config/teams.json` when the app is next deployed.

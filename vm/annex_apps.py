@@ -1,20 +1,19 @@
 """The other operations that replace an app's container, on the VM (control-plane V2, D102): `secret set --recreate`,
-`remove`, `migrate-networks`; and `run-job`, which only runs a command in it.
+`remove`; and `run-job`, which only runs a command in it.
 
-Each of the first three is one process: it takes the app's lock (the flock on deploy/<app>/.lock.guard that deploys
+Each of the first two is one process: it takes the app's lock (the flock on deploy/<app>/.lock.guard that deploys
 hold, D101), so it can't interleave with a deploy, a rollback or another of them; it writes deploy/<app>/current.json
 like a deploy does (kind, actor, step) so a refused caller is told who holds the lock; it streams the deploy's line
 protocol on stdout ({"progress": ..., "step": ...}, {"note": ...}, one last {"ok": ...}); and it ignores SIGHUP and
 SIGPIPE, so a dropped SSH session doesn't stop it half-way through (a half-removed app is worse than a slow one).
 There is no detaching fork and no run.log: these finish in seconds, and the lock dies with the process.
 
-Stdlib only; the compose file is read with PyYAML (an old CLI wrote YAML) and written as JSON, like a deploy does.
+Stdlib only.
 """
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -26,7 +25,7 @@ from typing import Callable
 import annex_deploy as dep
 import annex_vm as vm
 
-LABELS = {"secret-set": "secret set", "remove": "removal", "migrate-networks": "network migration"}
+LABELS = {"secret-set": "secret set", "remove": "removal"}
 
 
 class Op:
@@ -104,7 +103,7 @@ def failure_message(op: Op, e: BaseException) -> str:
 
 def serve(command: str, a, pairs: list[tuple[str, str]] | None = None, stdout=None, base: Path | None = None,
           signals: bool = True) -> int:
-    """annex_vm.py secret-set --recreate | remove | migrate-networks. A held lock raises vm.LockHeld before any line
+    """annex_vm.py secret-set --recreate | remove. A held lock raises vm.LockHeld before any line
     (annex_vm prints it as the one {"ok": false} line, as a deploy's refusal); anything after the lock is a final
     line either way."""
     stdout = stdout if stdout is not None else sys.stdout
@@ -119,10 +118,8 @@ def serve(command: str, a, pairs: list[tuple[str, str]] | None = None, stdout=No
         job: Callable[[], dict]
         if command == "secret-set":
             job = lambda: secret_set(op, pairs or [])  # noqa: E731
-        elif command == "remove":
-            job = lambda: remove(op, a.keep_data)  # noqa: E731
         else:
-            job = lambda: migrate_networks(op, a.egress)  # noqa: E731
+            job = lambda: remove(op, a.keep_data)  # noqa: E731
         res = job()
     except BaseException as e:  # noqa: BLE001
         op.finish("failed")
@@ -217,36 +214,6 @@ def remove(op: Op, keep_data: bool) -> dict:
             op.note(f"Warning: couldn't restart the scheduler ({dep.OFELIA}); its jobs for {app} stay in its memory "
                     f"until it restarts")
     return res
-
-
-def migrate_networks(op: Op, egress: bool) -> dict:
-    """The old file is kept as compose.yaml.pre-d88; egress is recorded in deploy.json ("*": hosts unknown, networks-sync
-    only asks "any?"); the platform containers the app uses join its network; the container is recreated."""
-    app, d = op.app, op.base / "deploy" / op.app
-    path = d / "compose.yaml"
-    if not path.is_file():
-        raise vm.Fail(f"{app} has no compose file on the VM ({path}). See: annex list")
-    doc, uses = dep.rewire_compose(vm._yaml().safe_load(path.read_text()) or {}, app, egress)
-    record = read_record(op.base, app)
-    op.step("networks")
-    op.progress(f"Connecting the platform to {vm.app_network(app)}")
-    sync = vm.sync_app(app, uses["web"], uses["postgres"], uses["views"], uses["egress"])
-    if record is not None:
-        record["egress"] = ["*"] if egress else []
-        vm.write_atomic(d / "deploy.json", json.dumps(record, indent=2))
-    backup = d / "compose.yaml.pre-d88"
-    if not backup.exists():
-        shutil.copyfile(path, backup)
-    vm.write_atomic(path, json.dumps(doc, indent=2) + "\n")  # JSON is YAML
-    dep.drain(op, app)
-    op.step("switch")
-    op.progress(f"Recreating {dep.container(app)} on its own network")
-    compose_up(op, "--remove-orphans")
-    r = vm.run(["docker", "inspect", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}",
-                dep.container(app)], capture_output=True, text=True)
-    nets = (r.stdout or "").split() if r.returncode == 0 else []
-    return {"app": app, "uses": uses, "networks": sorted(nets), "platform": sync.get("platform", []),
-            "backup": str(backup)}
 
 
 # --- run-job: no lock (it replaces nothing) -----------------------------------------------------------------------

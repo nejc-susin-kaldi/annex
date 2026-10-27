@@ -1,5 +1,4 @@
-"""Per-app networks (D88): the egress check in the manifest. (The rewrite of a pre-D88 compose file moved to
-vm/tests/test_apps.py with migrate-networks, D102.)"""
+"""Per-app networks (D88): the egress check in the manifest."""
 import tempfile
 import unittest
 from pathlib import Path
