@@ -1,4 +1,4 @@
-// The cross-site check for Node, same cases as test_csrf.py. Run: node --test runtime/tests
+// The cross-site check for Node, same cases as test_csrf.py. Run: node --test toolkit/runtime/tests
 import assert from "node:assert/strict";
 import { test } from "node:test";
 

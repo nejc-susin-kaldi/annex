@@ -25,12 +25,12 @@ jobs:
       - uses: astral-sh/setup-uv@v6.0.1
       - uses: actions/setup-node@v4.4.0
         with:
-          node-version: "24"   # the node-web template's image is node:24 (templates/node-web/Dockerfile)
+          node-version: "24"   # the node-web template's image is node:24 (toolkit/templates/node-web/Dockerfile)
       # the same commands as scripts/test-all.sh (runtime, contract, unit, vm-unit, cli-unit, runtime-unit) and the
       # node half of scripts/test-smoke.sh. python3 here is the runner's system one, as on the VM; PyYAML as python3-yaml.
       - name: PyYAML for the system python3
         run: sudo apt-get update -qq && sudo apt-get install -y -qq python3-yaml
-      - name: runtime copies match runtime/
+      - name: runtime copies match toolkit/runtime/
         run: scripts/sync-runtime.sh --check
       - name: contract summaries match contract.md
         run: scripts/sync-contract.sh --check
@@ -38,12 +38,12 @@ jobs:
         run: uv run --quiet --python 3.13 --with-requirements platform/ops/requirements.txt --with pytest pytest platform/ops/tests -q
       - name: annex_vm (platform/vm/tests)
         run: python3 -m unittest discover -s platform/vm/tests -q
-      - name: CLI (cli/tests)
-        run: env PYTHONPATH=cli/src python3 -m unittest discover -s cli/tests -q
+      - name: CLI (toolkit/cli/tests)
+        run: env PYTHONPATH=toolkit/cli/src python3 -m unittest discover -s toolkit/cli/tests -q
       - name: runtime, Python
-        run: python3 -m unittest discover -s runtime/tests -q
+        run: python3 -m unittest discover -s toolkit/runtime/tests -q
       - name: runtime, Node
-        run: node --test runtime/tests/*.test.mjs
+        run: node --test toolkit/runtime/tests/*.test.mjs
 
   platform:
     name: platform (local stack)

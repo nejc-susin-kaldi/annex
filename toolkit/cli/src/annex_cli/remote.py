@@ -11,7 +11,7 @@ import threading
 from functools import cached_property
 from pathlib import Path
 
-REPO = Path(os.environ.get("ANNEX_REPO", Path(__file__).resolve().parents[3]))
+REPO = Path(os.environ.get("ANNEX_REPO", Path(__file__).resolve().parents[4]))  # toolkit/cli/src/annex_cli -> the repo
 ENVS = {"vm": ".env", "local": ".env.local"}  # ANNEX_ENV -> settings file, as in scripts/lib.sh and render.py
 TARGET_KEYS = ("ANNEX_TARGET", "ANNEX_SSH_HOST", "ANNEX_DATA_DIR", "ANNEX_DOCKER_CONTEXT")
 FILE_ONLY = ("ANNEX_TARGET", "ANNEX_DOCKER_CONTEXT")
@@ -89,7 +89,7 @@ class Remote:
             # so every method (and any later one built on _argv) runs the same script on either. The environment is
             # what the VM gives implicitly: the data dir for annex_vm.py, the Docker context (exported for these
             # commands only, never switching the user's current one), and this CLI's own Python first on PATH, so
-            # `python3 annex_vm.py` finds PyYAML (pinned in cli/pyproject.toml) whatever the system python3 has.
+            # `python3 annex_vm.py` finds PyYAML (pinned in toolkit/cli/pyproject.toml) whatever the system python3 has.
             env = ["env"]
             if self.docker_context:
                 env += ["-u", "DOCKER_HOST", f"DOCKER_CONTEXT={self.docker_context}"]

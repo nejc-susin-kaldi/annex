@@ -118,7 +118,7 @@ has "a Python app serves the script too (the self-test app's routes)" "unhandled
 expect "  ...and takes a report" 204 "$(as sam -o /dev/null -w '%{http_code}' -X POST -d '{"msg": "py app browser error"}' "$(url annex-selftest)/api/_errors")"
 S=err-static
 dir="$WORK/static"
-mkdir -p "$dir" && cp -R "$ROOT/templates/static/." "$dir/"
+mkdir -p "$dir" && cp -R "$ROOT/toolkit/templates/static/." "$dir/"
 sed -i.bak "s/__APP_NAME__/$S/g; s/__OWNER__/sam/g" "$dir/annex.yaml" "$dir/public/index.html" && rm "$dir/annex.yaml.bak" "$dir/public/index.html.bak"
 "$ANNEX" deploy "$dir" >/dev/null 2>&1 && ok "a static app deployed" || bad "static deploy" "failed"
 has "the page includes the error script" 'src="annex-errors.js"' "$(as sam "$(url $S)/")"

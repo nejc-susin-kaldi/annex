@@ -63,7 +63,7 @@ Plus annex-ops (`platform/ops/`: email and Slack for apps, incidents and alerts,
 | `scripts/test-alerts.sh` | M1.3 checks: stop, crash loop, 500 burst, failing job and platform outage each give one alert and one "resolved" (12-20 minutes) |
 | `scripts/test-host.sh` | disk, memory and backup alerts: one alert and one "resolved" each, admins only |
 | `scripts/test-users.sh` | accounts: invitation, self-service reset and change, groups, disable, last-admin guard, removal |
-| `scripts/sync-runtime.sh [--check]` | copies `runtime/annex_runtime.*` into templates, examples and fixtures (or checks they match) |
+| `scripts/sync-runtime.sh [--check]` | copies `toolkit/runtime/annex_runtime.*` into templates, examples and fixtures (or checks they match) |
 | `scripts/demo-bad-deploy.sh` | demo beat: a broken copy of `league-desk` fails its health check and is rolled back by itself; the live version stays |
 | `scripts/reset-demo.sh [--keep <app>] [--usage] [--no-check] [--yes]` | clean demo state (destructive, asks first): other apps removed with their data, Goat Arcade's data reseeded, the examples redeployed, checks run, the morning set up (see docs/demo.md, D113) |
 | `scripts/wipe-vm.sh` | removes everything Annex from the VM (asks first) |

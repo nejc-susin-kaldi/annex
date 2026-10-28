@@ -15,17 +15,17 @@ ctl() { vm "docker exec annex-ops-1 python -m annex_ops.ctl $* --json"; }
 py() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 echo "Local"
-"$ROOT/scripts/sync-runtime.sh" --check >/dev/null && ok "runtime helpers: every copy matches runtime/" \
+"$ROOT/scripts/sync-runtime.sh" --check >/dev/null && ok "runtime helpers: every copy matches toolkit/runtime/" \
   || bad "runtime helpers" "a copy differs: scripts/sync-runtime.sh"
 "$ROOT/scripts/sync-contract.sh" --check >/dev/null && ok "contract summaries: every copy matches contract.md" \
   || bad "contract summaries" "a copy is stale: scripts/sync-contract.sh"
 out=$(cd "$ROOT" && uv run --quiet --python 3.13 --with-requirements platform/ops/requirements.txt --with pytest pytest platform/ops/tests -q 2>&1 | tail -1)
 has "annex-ops unit tests" " passed" "$out"
 (cd "$ROOT" && python3 -m unittest discover -s platform/vm/tests -q >/dev/null 2>&1) && ok "annex_vm unit tests" || bad "annex_vm unit tests" "failed"
-(cd "$ROOT" && PYTHONPATH=cli/src python3 -m unittest discover -s cli/tests -q >/dev/null 2>&1) && ok "CLI unit tests (log check)" || bad "CLI unit tests" "failed"
-(cd "$ROOT" && python3 -m unittest discover -s runtime/tests -q >/dev/null 2>&1) && ok "runtime logging tests (python)" || bad "runtime logging tests (python)" "failed"
+(cd "$ROOT" && PYTHONPATH=toolkit/cli/src python3 -m unittest discover -s toolkit/cli/tests -q >/dev/null 2>&1) && ok "CLI unit tests (log check)" || bad "CLI unit tests" "failed"
+(cd "$ROOT" && python3 -m unittest discover -s toolkit/runtime/tests -q >/dev/null 2>&1) && ok "runtime logging tests (python)" || bad "runtime logging tests (python)" "failed"
 if command -v node >/dev/null; then
-  (cd "$ROOT" && node --test runtime/tests/*.test.mjs >/dev/null 2>&1) && ok "runtime logging tests (node)" || bad "runtime logging tests (node)" "failed"
+  (cd "$ROOT" && node --test toolkit/runtime/tests/*.test.mjs >/dev/null 2>&1) && ok "runtime logging tests (node)" || bad "runtime logging tests (node)" "failed"
 fi
 
 echo "Platform"

@@ -1,5 +1,5 @@
 """annex.yaml's owner is a login and description is one short line (D80).
-PYTHONPATH=cli/src python3 -m unittest discover -s cli/tests"""
+PYTHONPATH=toolkit/cli/src python3 -m unittest discover -s toolkit/cli/tests"""
 import sys
 import tempfile
 import unittest

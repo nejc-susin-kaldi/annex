@@ -1,5 +1,5 @@
 """The cross-site check: csrf_violation (any framework) and CsrfMiddleware (ASGI).
-Run: python3 -m unittest discover -s runtime/tests"""
+Run: python3 -m unittest discover -s toolkit/runtime/tests"""
 import asyncio
 import os
 import sys

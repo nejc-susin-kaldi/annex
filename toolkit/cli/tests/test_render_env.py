@@ -6,7 +6,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]  # the repo
 spec = importlib.util.spec_from_file_location("render", ROOT / "scripts" / "render.py")
 render = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(render)

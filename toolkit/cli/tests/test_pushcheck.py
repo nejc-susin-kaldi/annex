@@ -3,7 +3,7 @@ import importlib.util
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]  # the repo
 spec = importlib.util.spec_from_file_location("pushcheck", ROOT / "scripts" / "pushcheck.py")
 pushcheck = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pushcheck)

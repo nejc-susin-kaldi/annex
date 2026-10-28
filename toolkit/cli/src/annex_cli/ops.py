@@ -23,8 +23,8 @@ from . import logcheck, logview
 from . import manifest as mf
 from .remote import REPO, AnnexError, Remote
 
-TEMPLATES = REPO / "templates"
-RUNTIME = REPO / "runtime"  # the one source of annex_runtime.py/.js; scripts/sync-runtime.sh copies it
+TEMPLATES = REPO / "toolkit" / "templates"
+RUNTIME = REPO / "toolkit" / "runtime"  # the one source of annex_runtime.py/.js; scripts/sync-runtime.sh copies it
 CONTRACT = Path(__file__).with_name("contract.md")
 OPS_CONTAINER = "annex-ops-1"
 SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", ".DS_Store", ".pytest_cache", ".mypy_cache"}
@@ -300,7 +300,7 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
 
 
 def _local_warnings(m: mf.Manifest, folder: Path | None = None) -> list[str]:
-    """What only this side can tell a successful deploy: the app's runtime copies against this checkout's runtime/,
+    """What only this side can tell a successful deploy: the app's runtime copies against this checkout's toolkit/runtime/,
     and a raised memory limit. The VM adds the rest (reconcile notes, cleanup, alert recipients, Slack, log format)."""
     out = []
     for name in ("annex_runtime.py", "annex_runtime.js"):

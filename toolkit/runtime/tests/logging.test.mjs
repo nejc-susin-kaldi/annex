@@ -1,4 +1,4 @@
-// The Node logging convention, same as test_logging.py. Run: node --test runtime/tests
+// The Node logging convention, same as test_logging.py. Run: node --test toolkit/runtime/tests
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { EventEmitter } from "node:events";

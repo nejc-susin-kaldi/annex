@@ -182,7 +182,7 @@ def render_text(text: str, values: dict[str, str], src: Path) -> str:
 def contract_version() -> int:
     """`ANNEX_CONTRACT_VERSION: n` of the contract this checkout ships (0 if the line is missing). The VM compares it
     with the CLI's (platform/vm/annex_deploy.py check_versions, D103)."""
-    m = re.search(r"^ANNEX_CONTRACT_VERSION:\s*(\d+)\s*$", (ROOT / "cli/src/annex_cli/contract.md").read_text(), re.M)
+    m = re.search(r"^ANNEX_CONTRACT_VERSION:\s*(\d+)\s*$", (ROOT / "toolkit/cli/src/annex_cli/contract.md").read_text(), re.M)
     return int(m.group(1)) if m else 0
 
 
@@ -214,7 +214,7 @@ def main() -> None:
         shutil.copytree(PLATFORM / d, OUT / d)
     # the deploy runs on the VM (platform/vm/annex_deploy.py, D101) with the CLI's own manifest and log-convention modules
     for src, dest in (("manifest.py", "annex_manifest.py"), ("logcheck.py", "annex_logcheck.py")):
-        shutil.copy2(ROOT / "cli" / "src" / "annex_cli" / src, OUT / "vm" / dest)
+        shutil.copy2(ROOT / "toolkit" / "cli" / "src" / "annex_cli" / src, OUT / "vm" / dest)
     # annex-ops is the first platform image built from source on the VM
     shutil.copytree(PLATFORM / "ops", OUT / "ops",
                     ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "tests"))

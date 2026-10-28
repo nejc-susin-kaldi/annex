@@ -78,12 +78,12 @@ All Annex networks carry `com.kaldi.annex=true` and are `internal` (no route out
 
 ## The deploy sequence
 
-`annex deploy <folder>` is a thin client in front of one process on the VM (D101). The CLI (`cli/src/annex_cli/ops.py`, `deploy`) does only what is quick or only it can know; `platform/vm/annex_deploy.py` (stdlib, called by `platform/vm/annex_vm.py deploy <app>`, using `annex_vm.py`'s own functions for provision, snapshots and networks) does the rest. `annex rollback` has the same shape: `annex_vm.py rollback <app> [--to N] [--with-data]`, and the VM picks the target under the lock.
+`annex deploy <folder>` is a thin client in front of one process on the VM (D101). The CLI (`toolkit/cli/src/annex_cli/ops.py`, `deploy`) does only what is quick or only it can know; `platform/vm/annex_deploy.py` (stdlib, called by `platform/vm/annex_vm.py deploy <app>`, using `annex_vm.py`'s own functions for provision, snapshots and networks) does the rest. `annex rollback` has the same shape: `annex_vm.py rollback <app> [--to N] [--with-data]`, and the VM picks the target under the lock.
 
 **On the builder's machine (one call).**
 1. **Validate.** `annex.yaml` by `manifest.py` (name, `owner` login, env, egress hostnames, secrets declared) and the requested views against the live gateway allowlist (`annex_vm.py views`): fast, agent-readable errors before anything is uploaded.
 2. **Meta and tar.** The release line (who, via, source folder, git commit, contract and runtime versions, the manifest), `cli` (the CLI checkout's commit and contract version, D103), and the three limit overrides a test may set; then the folder as a tar.gz (50 MB check).
-3. **One `Remote.call`.** `annex_vm.py deploy <app> --actor <who> --via cli|mcp`, the meta as the first line on stdin and the tar after it. The call reads the VM's JSON lines as they arrive (`progress`, `note`, `heartbeat`, last `ok`), hands progress and notes to the caller, and returns the final `{"ok": true, ...}` object. The CLI adds the two warnings only it can give (the app's runtime copies against `runtime/`, a raised memory limit) and prints.
+3. **One `Remote.call`.** `annex_vm.py deploy <app> --actor <who> --via cli|mcp`, the meta as the first line on stdin and the tar after it. The call reads the VM's JSON lines as they arrive (`progress`, `note`, `heartbeat`, last `ok`), hands progress and notes to the caller, and returns the final `{"ok": true, ...}` object. The CLI adds the two warnings only it can give (the app's runtime copies against `toolkit/runtime/`, a raised memory limit) and prints.
 
 **On the VM (one process).**
 1. **Lock.** A non-blocking `flock` on `deploy/<app>/.lock.guard`, held by the process for its whole run, so it ends exactly when the process does. A second deploy, rollback, `secret set` or `remove` of the same app is refused, naming the holder from `current.json` (actor, release, step, age, pid). Different apps don't wait for each other.
@@ -105,7 +105,7 @@ A VM reboot or `kill -9` mid-deploy leaves the pending line and a **free** lock 
 
 ## Two places the platform runs
 
-The deploy, the scripts and the CLI don't know which machine they are on: `Remote` (`cli/src/annex_cli/remote.py`) and `vm()` in `scripts/lib.sh` put one prefix in front of every command, and everything after it is the same.
+The deploy, the scripts and the CLI don't know which machine they are on: `Remote` (`toolkit/cli/src/annex_cli/remote.py`) and `vm()` in `scripts/lib.sh` put one prefix in front of every command, and everything after it is the same.
 
 | | VM lane (the default) | Local lane (`ANNEX_ENV=local`, D99) |
 |---|---|---|
@@ -148,5 +148,5 @@ annex-ops's schema is migrations (D93): `platform/db/appdata/bootstrap.sql` (rol
 
 - Reasons and history: `docs/decisions.md` (index with status at the top).
 - Running it: `docs/operations.md`. Setting it up and undoing it: `docs/setup.md`, `docs/teardown.md`.
-- The app contract (what a builder or their agent must follow): `annex contract`, `cli/src/annex_cli/contract.md`.
+- The app contract (what a builder or their agent must follow): `annex contract`, `toolkit/cli/src/annex_cli/contract.md`.
 - What changes before production: the list at the end of `docs/plans/hardening.md`.

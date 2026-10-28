@@ -88,7 +88,7 @@ Both are user-scoped, so Claude Code can use Annex from any folder, including an
 
 **MCP server** (stdio, runs from this repo through uv):
 ```bash
-claude mcp add --scope user annex -- uv run --quiet --project "$(pwd)/mcp" annex-mcp
+claude mcp add --scope user annex -- uv run --quiet --project "$(pwd)/toolkit/mcp" annex-mcp
 ```
 Check (it should say "Connected"):
 ```bash
@@ -101,7 +101,7 @@ claude mcp remove --scope user annex
 
 **Skill** (a symlink, so edits in the repo apply right away):
 ```bash
-mkdir -p ~/.claude/skills && ln -s "$(pwd)/skills/annex" ~/.claude/skills/annex
+mkdir -p ~/.claude/skills && ln -s "$(pwd)/toolkit/skill" ~/.claude/skills/annex
 ```
 Undo:
 ```bash
@@ -119,7 +119,7 @@ Either way, the undo is to remove that router and service from `dronky`'s Traefi
 ## 6. `annex` on your PATH (optional)
 `./annex` in the repo needs no installation. If you want `annex` everywhere:
 ```bash
-uv tool install --editable ./cli
+uv tool install --editable ./toolkit/cli
 ```
 Undo:
 ```bash

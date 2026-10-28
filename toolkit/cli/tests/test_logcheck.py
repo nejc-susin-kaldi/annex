@@ -1,4 +1,4 @@
-"""Run: PYTHONPATH=cli/src python3 -m unittest discover -s cli/tests"""
+"""Run: PYTHONPATH=toolkit/cli/src python3 -m unittest discover -s toolkit/cli/tests"""
 import json
 import unittest
 

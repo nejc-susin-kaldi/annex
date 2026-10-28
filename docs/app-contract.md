@@ -1,1 +1,1 @@
-../cli/src/annex_cli/contract.md
+../toolkit/cli/src/annex_cli/contract.md

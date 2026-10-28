@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> None:
     sub = p.add_subparsers(dest="cmd", required=True, metavar="command")
 
     s = sub.add_parser("init", help="copy a template into a new folder")
-    s.add_argument("template", help="python-web, python-job, ... (see templates/)")
+    s.add_argument("template", help="python-web, python-job, ... (see toolkit/templates/)")
     s.add_argument("name")
     s.add_argument("--dir", type=Path, help="target folder (default ./<name>)")
     s.add_argument("--owner", default=os.environ.get("ANNEX_OWNER"), help="builder login (default $ANNEX_OWNER)")

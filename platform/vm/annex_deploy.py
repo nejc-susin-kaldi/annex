@@ -13,7 +13,7 @@ or {"ok": false, "error": "...", "step": "..."}.
 
 Stdlib only (the stock python3 on the VM). The manifest and log-convention modules are the CLI's own files, copied
 into the bundle as annex_manifest.py and annex_logcheck.py by scripts/render.py; in the repo checkout (unit tests)
-they are loaded from cli/src/annex_cli.
+they are loaded from toolkit/cli/src/annex_cli.
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def _module(name: str, filename: str):
         return importlib.import_module(name)
     except ImportError:
         pass
-    path = Path(__file__).resolve().parents[2] / "cli" / "src" / "annex_cli" / filename  # the repo on the Mac
+    path = Path(__file__).resolve().parents[2] / "toolkit" / "cli" / "src" / "annex_cli" / filename  # the repo on the Mac
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"{name}: neither in the bundle nor at {path}; run scripts/push.sh")

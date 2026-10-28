@@ -1,13 +1,13 @@
 """scripts/selftest.py: the variants of the self-test app that the platform tests deploy. Run:
-PYTHONPATH=cli/src python3 -m unittest discover -s cli/tests"""
+PYTHONPATH=toolkit/cli/src python3 -m unittest discover -s toolkit/cli/tests"""
 import importlib.util
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "cli" / "src"))
+ROOT = Path(__file__).resolve().parents[3]  # the repo
+sys.path.insert(0, str(ROOT / "toolkit" / "cli" / "src"))
 spec = importlib.util.spec_from_file_location("selftest", ROOT / "scripts" / "selftest.py")
 selftest = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(selftest)

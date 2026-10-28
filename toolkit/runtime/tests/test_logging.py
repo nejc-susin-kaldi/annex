@@ -1,5 +1,5 @@
 """The Python logging convention: one JSON object per line with ts, level, msg; request_id and user inside a request.
-Run: python3 -m unittest discover -s runtime/tests"""
+Run: python3 -m unittest discover -s toolkit/runtime/tests"""
 import io
 import json
 import logging
