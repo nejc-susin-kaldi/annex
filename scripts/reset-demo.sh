@@ -82,7 +82,7 @@ log "Platform"
 "$ROOT/scripts/push.sh" --extras
 
 # testlib after the push: logins, the tunnel and test mode (Slack to #annex-selftest while this runs)
-source "$ROOT/scripts/testlib.sh"
+source "$ROOT/tests/lib.sh"
 url() { echo "https://$(setting ANNEX_HOST_PATTERN | sed "s/{name}/$1/")$(setting ANNEX_PORT_SUFFIX)"; }
 
 for app in ${remove[@]+"${remove[@]}"}; do
@@ -115,8 +115,8 @@ LOGS=$ROOT/.build/reset-demo
 if [ -n "$check" ]; then
   log "Checks (output in ${LOGS#"$ROOT"/}/)"
   mkdir -p "$LOGS"
-  if pgrep -f 'scripts/test-[a-z-]*\.sh' >/dev/null; then
-    problem "a test suite is already running (pgrep -fl scripts/test-): checks skipped, run them when it's done"
+  if pgrep -f 'tests/[a-z-]*\.sh' >/dev/null; then
+    problem "a test suite is already running (pgrep -fl tests/): checks skipped, run them when it's done"
   else
     for suite in test-smoke test-examples; do
       # into a file, not a pipe: the suite's ssh tunnel would hold a pipe open

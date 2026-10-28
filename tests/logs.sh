@@ -10,8 +10,8 @@
 #   8. a job-only app that prints gets the logging warning in `annex status` after its first scheduled run;
 #   9. releases are in the database.
 # Deploys annex-selftest and two job-only variants of it (one that prints, one that logs properly) and removes them at the end.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 ANNEX="$ROOT/annex"
 APP=annex-selftest

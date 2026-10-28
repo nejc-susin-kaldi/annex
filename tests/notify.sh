@@ -4,8 +4,8 @@
 # outside recipients and other Slack channels are refused, every attempt is in `annex sends`
 # without a body, and Mailpit's UI is for admins only.
 # Deploys annex-selftest (notify: email + Slack) and annex-selftest-bare (the same without notify).
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 
 MAIL_URL=$(setting ANNEX_URL_MAIL)

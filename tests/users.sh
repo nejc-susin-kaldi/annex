@@ -2,8 +2,8 @@
 # Annex's own user accounts (D57): `annex users` add (with an emailed invitation), set, disable/enable, reset and
 # remove; self-service password reset and change through Authelia (emails caught by Mailpit); the guards that
 # keep an admin; and the user directory annex-ops reads. Uses a throwaway login and removes it. About 1 minute.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 ANNEX="$ROOT/annex"
 MAIL_URL=$(setting ANNEX_URL_MAIL)

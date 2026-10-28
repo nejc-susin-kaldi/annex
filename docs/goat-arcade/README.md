@@ -38,7 +38,7 @@ Everyone can open all of them and explore the views with the query builder (the 
 | The views (the allowlist) | `platform/db/product/clientlink/api_views_arcade.sql`, with a comment on every column; after a change, `scripts/push.sh`, then `scripts/democlient.sh dictionary` |
 | The people (Goat Arcade's staff) | [plan](../plans/goat-arcade-demo.md) 2.1; accounts: `annex users add ... --demo` ([setup](../setup.md) section 9, [operations](../operations.md) Accounts); Metabase groups: `platform/config/metabase/people.json`; tiles by team: `platform/config/teams.json` (D107) |
 | Metabase: connection, permissions, dashboards | `platform/config/metabase/goat-arcade/` (`model.json`, `collections.json`, `dashboards/`), applied by `platform/vm/metabase-setup.sh` on every push (D109) |
-| Tests | `scripts/test-platform.sh` ("Demo client database"); one check in `scripts/test-smoke.sh` |
+| Tests | `tests/platform.sh` ("Demo client database"); one check in `tests/smoke.sh` |
 | Why it's built this way | [decisions](../decisions.md) D77 (the link), D78 (the data); [plan](../plans/democlient.md) |
 | A real client's side of it | [connect-your-database.md](connect-your-database.md) |
 

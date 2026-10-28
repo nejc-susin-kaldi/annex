@@ -8,9 +8,9 @@
 #      (a secret set and a removal meanwhile are refused by the same lock, D102);
 #   6. the deploy process killed (SIGKILL on the VM) in the gate of a broken version: the release is pending, the lock
 #      free, and `annex rollback --to <live>` reconciles it (failed) and puts the live release back.
-# Variants are builds of the fixture (scripts/selftest.py). Removes the app at the end.
+# Variants are builds of the fixture (tests/selftest.py). Removes the app at the end.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 
 APP=$SELFTEST

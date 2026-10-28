@@ -26,8 +26,8 @@ jobs:
       - uses: actions/setup-node@v4.4.0
         with:
           node-version: "24"   # the node-web template's image is node:24 (toolkit/templates/node-web/Dockerfile)
-      # the same commands as scripts/test-all.sh (runtime, contract, unit, vm-unit, cli-unit, runtime-unit) and the
-      # node half of scripts/test-smoke.sh. python3 here is the runner's system one, as on the VM; PyYAML as python3-yaml.
+      # the same commands as tests/all.sh (runtime, contract, unit, vm-unit, cli-unit, runtime-unit) and the
+      # node half of tests/smoke.sh. python3 here is the runner's system one, as on the VM; PyYAML as python3-yaml.
       - name: PyYAML for the system python3
         run: sudo apt-get update -qq && sudo apt-get install -y -qq python3-yaml
       - name: runtime copies match toolkit/runtime/
@@ -58,7 +58,7 @@ jobs:
 
       # mkcert from Ubuntu's archive (signed packages: no checksum of ours to keep in step with a release). The CA is
       # never installed into a trust store: bootstrap.sh only issues the wildcard certificate (mkcert creates its CA
-      # under `mkcert -CAROOT` on first use), and the suites pass that CA to curl (--cacert, scripts/testlib.sh).
+      # under `mkcert -CAROOT` on first use), and the suites pass that CA to curl (--cacert, tests/lib.sh).
       - name: Tools the scripts check for (bootstrap.sh)
         run: |
           sudo apt-get update -qq
@@ -90,13 +90,13 @@ jobs:
         run: scripts/backup.sh > .build/ci/backup.log 2>&1 || { tail -n 40 .build/ci/backup.log; exit 1; }
 
       - name: Smoke
-        run: scripts/test-smoke.sh > .build/ci/smoke.log 2>&1 || { tail -n 80 .build/ci/smoke.log; exit 1; }
+        run: tests/smoke.sh > .build/ci/smoke.log 2>&1 || { tail -n 80 .build/ci/smoke.log; exit 1; }
 
       - name: Apps
-        run: scripts/test-apps.sh > .build/ci/apps.log 2>&1 || { tail -n 80 .build/ci/apps.log; exit 1; }
+        run: tests/apps.sh > .build/ci/apps.log 2>&1 || { tail -n 80 .build/ci/apps.log; exit 1; }
 
       - name: Rollback
-        run: scripts/test-rollback.sh > .build/ci/rollback.log 2>&1 || { tail -n 80 .build/ci/rollback.log; exit 1; }
+        run: tests/rollback.sh > .build/ci/rollback.log 2>&1 || { tail -n 80 .build/ci/rollback.log; exit 1; }
 
       - name: Collect container logs and state
         if: always()

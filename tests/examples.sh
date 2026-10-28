@@ -10,8 +10,8 @@
 # secret (`annex secret set party-bookings BOOKING_HOOK_SECRET`, human only): without it that block prints a skip line
 # and the suite goes on. Works on both lanes (ANNEX_ENV=local).
 # Leaves every app deployed, as the demo wants them.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 ANNEX="$ROOT/annex"
 url() { echo "https://$(setting ANNEX_HOST_PATTERN | sed "s/{name}/$1/")$(setting ANNEX_PORT_SUFFIX)"; }

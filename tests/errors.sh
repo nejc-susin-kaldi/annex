@@ -8,8 +8,8 @@
 #   6. a traceback an app printed (plain text, several lines) is one group, by exception type and last frame;
 #   7. removing an app removes its groups.
 # Scan times are shortened through state/ops/tuning.json (removed on exit). Deploys annex-selftest, annex-selftest-boom (for the printed traceback) and err-static (the static template); removes all three.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 ANNEX="$ROOT/annex"
 PATTERN=$(setting ANNEX_HOST_PATTERN)

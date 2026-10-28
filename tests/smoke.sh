@@ -3,9 +3,9 @@
 # It touches each part once, cheaply, and changes nothing that matters: one deploy of Annex's own test app
 # (annex-selftest, removed again at the end), two runs of its jobs (one email to maja in Mailpit, one Slack post on #annex-selftest).
 # It doesn't prove timings, retries or "exactly one alert": that's what the full suites are for
-# (scripts/test-all.sh, 30+ minutes: run them only when you changed those parts).
+# (tests/all.sh, 30+ minutes: run them only when you changed those parts).
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 ANNEX="$ROOT/annex"
 APP=$SELFTEST   # Annex's own test app: platform tests never use an example or a client's app

@@ -5,8 +5,8 @@
 # annex-selftest's notify job), an account added, changed and removed, a failed and a good sign-in, the app removed. The trail must show
 # each step once, in order, with the right actor, and no secret, password or body anywhere.
 # Gateway buckets and scan times are shortened through state/ops/tuning.json (removed on exit). Deploys annex-selftest; removes it at the end.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 export ANNEX_USER=audit-tester
 ANNEX="$ROOT/annex"

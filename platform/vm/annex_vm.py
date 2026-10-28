@@ -1444,7 +1444,7 @@ def save_users(users: dict) -> None:
     text = _yaml().safe_dump({"users": users}, sort_keys=False, default_flow_style=False, allow_unicode=True,
                              width=1000)
     # atomically (a new file renamed over the old one): Authelia's watcher reloads on every change, and an in-place
-    # rewrite let it read a half-written file and keep the old accounts (found by scripts/test-users.sh)
+    # rewrite let it read a half-written file and keep the old accounts (found by tests/users.sh)
     _replace_users_file(text)
     # Authelia skips a change that comes within about a second of its previous reload, and doesn't catch up later
     # (two quick `annex users` calls left a disabled user able to sign in). Writing the same content again after

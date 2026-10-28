@@ -9,7 +9,7 @@ Nothing here is installed by Annex; check that each is present.
 - `uv` (runs the CLI, the MCP server and the unit tests) and Python 3.12 or newer (uv fetches one; the scripts also use the system `python3`, 3.9+ is enough for them).
 - `mkcert` with its root CA trusted (section 2); `scripts/bootstrap.sh` issues the wildcard certificate with it.
 - `rsync` and `ssh` (the platform bundle is synced over SSH; `ssh annex` must work without a password prompt).
-- `node` (`scripts/test-smoke.sh` runs the runtime's logging tests with it and skips them when it is missing).
+- `node` (`tests/smoke.sh` runs the runtime's logging tests with it and skips them when it is missing).
 - `docker`, only for the optional context in section 1, and Docker Desktop for the local stack (section 8).
 
 **On the VM (`annex`):**
@@ -140,7 +140,7 @@ Without this, Annex works but Slack posts return a clear "Slack isn't connected"
    scripts/push.sh --extras
    ```
    Compose recreates ops when the token file appears. If `ctl info` (next step) still says `False`, force it with `ssh annex 'cd /srv/annex/platform && docker compose up -d --force-recreate ops'`. A plain `docker restart` does **not** re-read the env file.
-5. Check: `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl info` should say `slack_connected: True`, and `scripts/test-notify.sh` then posts for real to `#annex-selftest`.
+5. Check: `ssh annex docker exec annex-ops-1 python -m annex_ops.ctl info` should say `slack_connected: True`, and `tests/notify.sh` then posts for real to `#annex-selftest`.
 
 Undo (Annex goes back to "not connected"):
 ```bash
@@ -156,7 +156,7 @@ A second, private copy of the platform on the Mac, for development and the suite
 
 **Selection is per command.** Every script and `./annex` take `ANNEX_ENV=local` in front; without it they talk to the VM as before. Don't export it in your shell profile.
 ```bash
-ANNEX_ENV=local scripts/bootstrap.sh && ANNEX_ENV=local scripts/push.sh && ANNEX_ENV=local scripts/test-smoke.sh
+ANNEX_ENV=local scripts/bootstrap.sh && ANNEX_ENV=local scripts/push.sh && ANNEX_ENV=local tests/smoke.sh
 ```
 ```bash
 ANNEX_ENV=local ./annex list

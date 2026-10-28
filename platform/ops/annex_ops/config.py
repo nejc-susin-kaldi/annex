@@ -50,7 +50,7 @@ HOST_PATTERN = os.environ.get("ANNEX_HOST_PATTERN", "")
 PORT_SUFFIX = os.environ.get("ANNEX_PORT_SUFFIX", "")
 
 # test mode (D74): while the file holds a time in the future, every Slack post goes to the test channel instead,
-# marked [TEST]. Test scripts switch it on for the length of a run (scripts/testlib.sh) and off again at the end.
+# marked [TEST]. Test scripts switch it on for the length of a run (tests/lib.sh) and off again at the end.
 TEST_MODE_FILE = os.path.join(os.path.dirname(TUNING_FILE), "test-mode")
 TEST_SLACK_CHANNEL = os.environ.get("ANNEX_TEST_SLACK_CHANNEL", "#annex-selftest")
 

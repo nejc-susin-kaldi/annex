@@ -1,6 +1,6 @@
-# Annex's own test app (a fixture: scripts/test-*.sh deploy it, nobody should deploy it for real). It stands in for a
+# Annex's own test app (a fixture: tests/*.sh deploy it, nobody should deploy it for real). It stands in for a
 # client's app but has one job: use every feature Annex offers, on demand, so a test (or a person diagnosing a
-# problem) can drive it. See main.py for the endpoints and jobs, and scripts/selftest.py for the variants the tests
+# problem) can drive it. See main.py for the endpoints and jobs, and tests/selftest.py for the variants the tests
 # build from this file by dropping the sections between "# --- name ---" and "# --- end ---".
 name: annex-selftest
 owner: sam

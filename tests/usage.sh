@@ -4,8 +4,8 @@
 # the discovery tiles and the console's Usage tab, and match the script; requests that must not count don't;
 # nothing personal leaks; raw rows are deleted after 30 days; a restart neither loses nor repeats rows; the
 # weekly digest flags a dormant app. Deploys two throwaway static apps (usage-probe, usage-idle) and annex-selftest, and removes them.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 
 MAIL_URL=$(setting ANNEX_URL_MAIL)

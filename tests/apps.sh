@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # M0.2 acceptance checks: deploys annex-selftest from the Mac and verifies login + greeting, scoped
 # gateway access, the discovery entry with its owner, and list/status/logs. Removes it at the end.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 
 APP_URL="https://$(setting ANNEX_HOST_PATTERN | sed 's/{name}/annex-selftest/')$(setting ANNEX_PORT_SUFFIX)"

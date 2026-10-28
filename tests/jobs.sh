@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # M0.3 job checks on annex-selftest: scheduled runs happen, `annex run` works, and output (rows in the app's
 # database, files in /data) survives a redeploy.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 APP=$SELFTEST
 DB=app_annex_selftest
 C=annex-app-$APP

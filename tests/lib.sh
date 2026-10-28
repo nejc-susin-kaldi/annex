@@ -1,6 +1,6 @@
-# Shared helpers for scripts/test-*.sh. Source it after lib.sh:
+# Shared helpers for tests/*.sh. Source it after scripts/lib.sh:
+#   source "$(dirname "$0")/../scripts/lib.sh"
 #   source "$(dirname "$0")/lib.sh"
-#   source "$(dirname "$0")/testlib.sh"
 #   use_tunnel            # for suites that make HTTP requests through the SSH tunnel
 #   ...checks...
 #   finish                # prints "passed N, failed M" and sets the exit status
@@ -50,10 +50,10 @@ test_mode() { # test_mode on|off
 
 # --- the self-test app (tests/annex-selftest) -------------------------------------------------------------------
 # Platform tests deploy Annex's own test app, never an example or a client's app. selftest_build makes a variant of it
-# (scripts/selftest.py lists the options); selftest_deploy deploys a build, setting the webhook secrets first when it
+# (tests/selftest.py lists the options); selftest_deploy deploys a build, setting the webhook secrets first when it
 # declares them and the app isn't deployed yet (a missing secret fails the deploy, D19).
 SELFTEST=annex-selftest
-selftest_build() { python3 "$ROOT/scripts/selftest.py" build "$@"; }
+selftest_build() { python3 "$ROOT/tests/selftest.py" build "$@"; }
 selftest_deploy() { # selftest_deploy DIR -> annex deploy's output; exit status is the deploy's
   local dir=$1 app
   app=$(sed -n 's/^name: //p' "$dir/annex.yaml")

@@ -89,7 +89,7 @@ What the data holds:
 | tech-board shows someone "since" yesterday | A claim from a rehearsal. Click *Release*. The reset releases every claim the board shows |
 | boris sees no boards in Kanboard | He hadn't opened Kanboard before the last seed. Run `./annex run kanboard seed`; it adds everyone who has signed in, and creates no card twice |
 | The console says "no run seen yet" for tech-board's `watch` | Expected after a reset. The console and `annex status` count job runs from the scheduler's log, so a run by hand (`annex run`, which the reset uses) doesn't show there (D113) |
-| Something looks broken on the platform | Run `scripts/test-smoke.sh` after the demo, not during it |
+| Something looks broken on the platform | Run `tests/smoke.sh` after the demo, not during it |
 
 ## After the demo
 Nothing needs cleaning up. The live build stays until the next reset removes it. Run `scripts/reset-demo.sh` again before the next demo. When the demo stage is over, follow `docs/teardown.md`.

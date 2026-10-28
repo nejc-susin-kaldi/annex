@@ -5,8 +5,8 @@
 # and the admin get exactly ONE alert and ONE "resolved" (and a reminder if it stays open). Mail is read from
 # Mailpit. The health checker's interval is shortened through the same tuning file (5 s instead of 60 s), so it takes
 # a few minutes: the scheduled job (cron: once a minute) and the "nothing more follows" waits set the floor.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 
 MAIL_URL=$(setting ANNEX_URL_MAIL)

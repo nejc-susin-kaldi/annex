@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a variant of the Annex self-test app (tests/annex-selftest) for a test to deploy. Standard library only.
 
-  scripts/selftest.py build OUT [options]
+  tests/selftest.py build OUT [options]
 
 The fixture's annex.yaml is regular on purpose: optional parts sit between `# --- name ---` and `# --- end ---`
 lines, everything else is one `key: value` line, so a variant is a few text edits:
@@ -26,7 +26,7 @@ import shutil
 import sys
 from pathlib import Path
 
-FIXTURE = Path(__file__).resolve().parent.parent / "tests" / "annex-selftest"
+FIXTURE = Path(__file__).resolve().parent / "annex-selftest"
 SECTION = re.compile(r"^# --- (\w+) ---\n(.*?)^# --- end ---\n", re.S | re.M)
 
 

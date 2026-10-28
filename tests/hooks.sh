@@ -4,8 +4,8 @@
 # script's memory) and sent with curl --connect-to to hooks.<domain>.
 # Deploys annex-selftest, whose /hooks/* endpoints record what Annex forwards to it. Shortens the retry delays through
 # state/ops/tuning.json (removed on exit). About 8-10 minutes.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 
 MAIL_URL=$(setting ANNEX_URL_MAIL)

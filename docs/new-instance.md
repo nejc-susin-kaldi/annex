@@ -167,7 +167,7 @@ Once, right after the first push: the smoke test checks that the newest backup i
 instance has none until the nightly run at 02:00.
 
 ```bash
-scripts/test-smoke.sh > .build/smoke.log 2>&1; tail -5 .build/smoke.log
+tests/smoke.sh > .build/smoke.log 2>&1; tail -5 .build/smoke.log
 ```
 Under a minute: every part once, through the SSH tunnel it opens itself (no hosts entries needed). Write it to a
 file rather than through a pipe (the tunnel can hold a pipe open). Every line should be green; a red one names the

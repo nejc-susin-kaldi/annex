@@ -8,8 +8,8 @@
 #   6. nothing an app logs can inject markup into a page; the pages are read-only and carry security headers;
 #   7. the Homepage tiles point at the console.
 # Deploys annex-selftest (owner sam, with Postgres) and annex-selftest-other (owner kaldi-admin, no Postgres); removes both.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 ANNEX="$ROOT/annex"
 CON=$(setting ANNEX_URL_CONSOLE)

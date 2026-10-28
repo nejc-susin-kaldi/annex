@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Backup/restore proof on annex-selftest: write marker data to the app's database and /data, back up,
 # destroy both, restore, verify. Only touches the self-test app's own data, and removes the app at the end.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 APP=$SELFTEST
 DB=app_annex_selftest
 DIR=$ROOT/.build/selftest-restore

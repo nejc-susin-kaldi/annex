@@ -6,8 +6,8 @@
 #   database behind the gateway (D77; skipped when it isn't running).
 # Needs the extras profile running (scripts/extras.sh on) for the Metabase and
 # Dozzle checks; they are skipped otherwise.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 
 LOGS_URL=$(setting ANNEX_URL_LOGS)

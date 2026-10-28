@@ -2,8 +2,8 @@
 # Host and backup monitoring (D56): disk, memory and the newest backup's age each give admins exactly one
 # alert and one "resolved", and nothing to app owners. Thresholds are shortened through ops's tuning file
 # (state/ops/tuning.json, removed at the end). Runs scripts/backup.sh once. About 4 minutes.
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 use_tunnel
 SAM=sam@annex.example
 ADMIN=admin@annex.example

@@ -2,11 +2,11 @@
 # Run every check, in an order where each suite leaves what the next one needs, and
 # print a summary. Fast set by default (about 30 minutes); --slow adds test-alerts.sh
 # (the "exactly one alert" waits and the scheduled job's minute).
-# This is long: after a push, scripts/test-smoke.sh (under a minute) is the check to run.
-# Usage: scripts/test-all.sh [--slow] [--only name[,name]]
-#   e.g. scripts/test-all.sh --only unit,platform,apps
+# This is long: after a push, tests/smoke.sh (under a minute) is the check to run.
+# Usage: tests/all.sh [--slow] [--only name[,name]]
+#   e.g. tests/all.sh --only unit,platform,apps
+source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
-source "$(dirname "$0")/testlib.sh"
 
 slow= only=
 while [ $# -gt 0 ]; do
@@ -21,30 +21,30 @@ done
 # name and command. Every platform suite deploys (and removes) annex-selftest, so the order no longer matters much;
 # "examples" is the demo apps' own check (they are not used by any other suite) and leaves them deployed.
 suites=(
-  "smoke|scripts/test-smoke.sh"
+  "smoke|tests/smoke.sh"
   "runtime|scripts/sync-runtime.sh --check"
   "contract|scripts/sync-contract.sh --check"
   "unit|uv run --quiet --python 3.13 --with-requirements platform/ops/requirements.txt --with pytest pytest platform/ops/tests -q"
   "vm-unit|python3 -m unittest discover -s platform/vm/tests -q"
   "cli-unit|env PYTHONPATH=toolkit/cli/src python3 -m unittest discover -s toolkit/cli/tests -q"
   "runtime-unit|python3 -m unittest discover -s toolkit/runtime/tests -q"
-  "platform|scripts/test-platform.sh"
-  "apps|scripts/test-apps.sh"
-  "jobs|scripts/test-jobs.sh"
-  "restore|scripts/restore-test.sh"
-  "rollback|scripts/test-rollback.sh"
-  "notify|scripts/test-notify.sh"
-  "users|scripts/test-users.sh"
-  "usage|scripts/test-usage.sh"
-  "hooks|scripts/test-hooks.sh"
-  "logs|scripts/test-logs.sh"
-  "errors|scripts/test-errors.sh"
-  "console|scripts/test-console.sh"
-  "audit|scripts/test-audit.sh"
-  "host|scripts/test-host.sh"
-  "examples|scripts/test-examples.sh"
+  "platform|tests/platform.sh"
+  "apps|tests/apps.sh"
+  "jobs|tests/jobs.sh"
+  "restore|tests/restore.sh"
+  "rollback|tests/rollback.sh"
+  "notify|tests/notify.sh"
+  "users|tests/users.sh"
+  "usage|tests/usage.sh"
+  "hooks|tests/hooks.sh"
+  "logs|tests/logs.sh"
+  "errors|tests/errors.sh"
+  "console|tests/console.sh"
+  "audit|tests/audit.sh"
+  "host|tests/host.sh"
+  "examples|tests/examples.sh"
 )
-[ -n "$slow" ] && suites+=("alerts|scripts/test-alerts.sh")
+[ -n "$slow" ] && suites+=("alerts|tests/alerts.sh")
 
 results=()
 failed=0
