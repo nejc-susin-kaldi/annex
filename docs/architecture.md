@@ -68,12 +68,12 @@ All Annex networks carry `com.kaldi.annex=true` and are `internal` (no route out
 | Path | Content |
 |---|---|
 | `platform/` | synced repo bundle (compose, config, db, vm, ops); `.env` (settings), `VERSION` (commit, dirty flag, `.env` hash, contract version: `push.sh` refuses a checkout that lacks it, D85; a deploy compares the CLI's contract version with it, D103); its `platform/vm/` has the generated `annex_manifest.py` and `annex_logcheck.py` (D103) |
-| `secrets/` | `master.env`, per-service env files, `authelia/`, `hooks/<app>.json`, `apps/<app>/` (db password, gateway token, ops token, `secrets.env`, `runtime.env`); never in the repo |
-| `state/` | Postgres data directories, Authelia and Mailpit state, `directory/users.json`, `ops/` (test mode, tuning) |
+| `secrets/` | `master.env`, per-service env files (`ops.env`, `hooks-receiver.env`; `slack.env` once Slack is connected), `authelia/` (`users.yml`: the accounts, managed with `annex users`; Authelia rewrites it on a password reset or change), `users.txt` (the demo users' generated passwords), `hooks/<app>.json` (an app's webhook signing secrets and token; owned by uid 10001, read by ops), `apps/<app>/` (db password, gateway token, ops token, `secrets.env`, `runtime.env`); never in the repo |
+| `state/` | Postgres data directories, Authelia's sqlite, `mailpit/` (caught mail), `directory/users.json` (login → name, email, groups, no passwords; read by ops), `ops/` (test mode; `tuning.json` overrides alert thresholds, usage settings and webhook retry delays) |
 | `deploy/<app>/` | `src/` (uploaded source), `compose.yaml` (generated, JSON), `deploy.json` (what is live: type, postgres, views, egress, jobs; `run-job` reads its commands here), `.lock.guard` (an empty file the running operation holds an flock on; **never unlinked**, not even by `remove`, D102), `current.json` (the operation that holds the lock or held it last: pid, actor, kind, release, step, result; D101), `run.log` (that deploy's progress lines, one JSON object each; the run before is `run.log.1`), `run.err` (the worker's stderr), `build.log` (the last `docker build` output) |
-| `apps/<app>/` | `data/` (mounted at `/data`), `releases.jsonl` (the release history; only the VM writes it, D92) |
-| `snapshots/<app>/pre-r<N>/` | database dump and `/data` archive before release N; the last 3 |
-| `dumps/`, `backups/` | nightly `pg_dump` output with a `MARKER`; backup archives (mode 700; they contain `secrets/`, D87) |
+| `apps/<app>/` | `data/` (mounted at `/data`, backed up), `releases.jsonl` (the release history: image, manifest, who, when, git commit, result, `pending` while its deploy runs; only the VM writes it, D92; backed up) |
+| `snapshots/<app>/pre-r<N>/` | database dump and `/data` archive before release N; the last 3 are kept (not backed up) |
+| `dumps/`, `backups/` | nightly `pg_dump` output with a `MARKER` (the time `dump-all.sh` finished); backup archives (7 days, mode 700: they contain `secrets/` and `state/directory/`, D87). The `annex_ops` dump leaves out the stored logs and health-check results (D74): restored, those tables come back empty |
 | `certs/` | the mkcert wildcard certificate (local TLS mode) |
 
 ## The deploy sequence

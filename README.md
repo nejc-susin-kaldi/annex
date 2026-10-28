@@ -1,6 +1,6 @@
 # Kaldi Annex (homelab prototype)
 
-A small platform where builders (and their AI coding agents) deploy internal tools behind login onto one client's server. This repo targets a disposable VM, `annex`, on Nejc's homelab. The brief is in [docs/brief.md](docs/brief.md), the later build plans in [docs/plans/](docs/plans/), and decisions are in [docs/decisions.md](docs/decisions.md).
+A small platform where builders (and their AI coding agents) deploy internal tools behind login onto one client's server. This repo targets a disposable VM, `annex`, on Nejc's homelab. The brief is in [docs/brief.md](docs/brief.md) (historical), the milestone plans in [docs/plans/](docs/plans/), and decisions are in [docs/decisions.md](docs/decisions.md).
 
 ## Quick start (from the Mac)
 ```bash

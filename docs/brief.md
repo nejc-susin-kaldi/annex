@@ -1,5 +1,7 @@
 # Kaldi Annex: build brief, M0 homelab prototype
 
+> **Historical.** This is the brief as written on 14 Oct 2026, kept for the why and the ground rules (which CLAUDE.md repeats). What changed since: the product data is Goat Arcade's, not the wealth demo (D112); the milestones are done through M2 and the demo is `docs/demo.md`; the repo layout is D117 (`docs/architecture.md`, "The repository"), not the one suggested below. The current system is `docs/architecture.md`.
+
 For a build agent. [[Kaldi Annex]] explains the why; this brief is the how for the first milestone. Draft, 14 Oct 2026, owner Nejc Sušin.
 
 ## Goal

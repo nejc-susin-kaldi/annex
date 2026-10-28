@@ -1,6 +1,6 @@
 # Kaldi Annex (homelab prototype)
 
-The brief is `docs/brief.md` (historical). The current system on one page is `docs/architecture.md`: read both before changing anything. Later milestones' plans are in `docs/plans/` (`m1.md` is Nejc's M1 plan; `m1.2.md`–`m1.5.md` the step-by-step plans). Decisions and their reasons are in `docs/decisions.md` (an index with status at its top shows what was revised or superseded). `docs/new-instance.md` is the runbook for a fresh instance on another VM (VM preparation, operator machine, `.env`, first push); `docs/setup.md` is the homelab's.
+The brief is `docs/brief.md` (historical). The current system on one page is `docs/architecture.md`: read both before changing anything. `docs/plans/` holds the milestone plans (M0 to M2, the control plane, hardening, the demo client and the demo), historical except the production list at the end of `hardening.md`. Decisions and their reasons are in `docs/decisions.md` (an index with status at its top shows what was revised or superseded). `docs/new-instance.md` is the runbook for a fresh instance on another VM (VM preparation, operator machine, `.env`, first push); `docs/setup.md` is the homelab's.
 
 ## Ground rules (from the brief)
 - **Synthetic data only.** Never use, copy or connect to real client data or systems, Cadro included.
