@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run every check, in an order where each suite leaves what the next one needs, and
-# print a summary. Fast set by default (about 30 minutes); --slow adds test-alerts.sh
+# print a summary. Fast set by default (about 30 minutes); --slow adds tests/alerts.sh
 # (the "exactly one alert" waits and the scheduled job's minute).
 # This is long: after a push, tests/smoke.sh (under a minute) is the check to run.
 # Usage: tests/all.sh [--slow] [--only name[,name]]
@@ -67,5 +67,5 @@ done
 
 echo
 printf '%s\n' "${results[@]}"
-[ -z "$slow" ] && echo "(test-alerts.sh skipped; run with --slow)"
+[ -z "$slow" ] && echo "(tests/alerts.sh skipped; run with --slow)"
 exit "$failed"

@@ -2,7 +2,7 @@
 # The runtime helpers (annex_runtime.py / .js, annex-errors.js) have one source, toolkit/runtime/. Templates,
 # examples and test fixtures carry copies, because each app folder must build on its own.
 # Usage: scripts/sync-runtime.sh          copy toolkit/runtime/ over every copy
-#        scripts/sync-runtime.sh --check  exit 1 if any copy differs (run by test-all.sh)
+#        scripts/sync-runtime.sh --check  exit 1 if any copy differs (run by tests/all.sh)
 source "$(dirname "$0")/lib.sh"
 check=; [ "${1:-}" = --check ] && check=1
 stale=0

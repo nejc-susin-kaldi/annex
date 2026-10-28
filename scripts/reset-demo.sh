@@ -7,7 +7,7 @@
 #   3. Goat Arcade's database reseeded (scripts/democlient.sh reseed --yes): its data then ends yesterday
 #   4. the examples in demo/apps/ redeployed (a new container drops every in-memory cache of the old data);
 #      tilt-watch deployed from there too if --keep tilt-watch and it isn't deployed
-#   5. the checks, unless --no-check: test-smoke.sh, test-examples.sh (output in .build/reset-demo/)
+#   5. the checks, unless --no-check: tests/smoke.sh, tests/examples.sh (output in .build/reset-demo/)
 #   6. the demo's own state, after the checks so it is the newest: tech-board's claims released (as boris) and its
 #      watch job run once on the new data; kanboard's seed (after boris, maja and sam opened Kanboard once, so they're
 #      on the boards); one birthday-party request through the webhook (scripts/demo-booking.sh)
@@ -66,7 +66,7 @@ echo "  RESEED Goat Arcade's database (arcade-db): its data then ends yesterday"
 echo "  redeploy: ${examples[*]}"
 [ -n "$deploy_live" ] && echo "  deploy the live build's fallback: $LIVE (from demo/apps/$LIVE)"
 [ ${#as_is[@]} -gt 0 ] && echo "  keep as is: ${as_is[*]}"
-[ -n "$check" ] && echo "  run the checks: test-smoke.sh, test-examples.sh"
+[ -n "$check" ] && echo "  run the checks: tests/smoke.sh, tests/examples.sh"
 echo "  then: release tech-board's claims, run tech-board watch, kanboard seed; send one party booking"
 [ -n "$usage" ] && echo "  write synthetic usage history (seed-usage.sh)"
 echo "  start the tunnel"

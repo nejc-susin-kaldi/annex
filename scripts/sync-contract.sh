@@ -4,7 +4,7 @@
 # summary (version, core sections, topics) between <!-- contract:begin --> and <!-- contract:end --> markers,
 # so they can't drift: the rules themselves are fetched with `annex contract`.
 # Usage: scripts/sync-contract.sh          regenerate the summaries
-#        scripts/sync-contract.sh --check  exit 1 if any is stale (run by test-all.sh and test-smoke.sh)
+#        scripts/sync-contract.sh --check  exit 1 if any is stale (run by tests/all.sh and tests/smoke.sh)
 source "$(dirname "$0")/lib.sh"
 mode=write; [ "${1:-}" = --check ] && mode=check
 exec python3 - "$ROOT" "$mode" <<'PY'
