@@ -69,7 +69,7 @@ All Annex networks carry `com.kaldi.annex=true` and are `internal` (no route out
 |---|---|
 | `platform/` | synced repo bundle (compose, config, db, vm, ops); `.env` (settings), `VERSION` (commit, dirty flag, `.env` hash, contract version: `push.sh` refuses a checkout that lacks it, D85; a deploy compares the CLI's contract version with it, D103); its `platform/vm/` has the generated `annex_manifest.py` and `annex_logcheck.py` (D103) |
 | `secrets/` | `master.env`, per-service env files, `authelia/`, `hooks/<app>.json`, `apps/<app>/` (db password, gateway token, ops token, `secrets.env`, `runtime.env`); never in the repo |
-| `state/` | Postgres data directories, Authelia and Mailpit state, `directory/users.json`, `platform/ops/` (test mode, tuning) |
+| `state/` | Postgres data directories, Authelia and Mailpit state, `directory/users.json`, `ops/` (test mode, tuning) |
 | `deploy/<app>/` | `src/` (uploaded source), `compose.yaml` (generated, JSON), `deploy.json` (what is live: type, postgres, views, egress, jobs; `run-job` reads its commands here), `.lock.guard` (an empty file the running operation holds an flock on; **never unlinked**, not even by `remove`, D102), `current.json` (the operation that holds the lock or held it last: pid, actor, kind, release, step, result; D101), `run.log` (that deploy's progress lines, one JSON object each; the run before is `run.log.1`), `run.err` (the worker's stderr), `build.log` (the last `docker build` output) |
 | `apps/<app>/` | `data/` (mounted at `/data`), `releases.jsonl` (the release history; only the VM writes it, D92) |
 | `snapshots/<app>/pre-r<N>/` | database dump and `/data` archive before release N; the last 3 |

@@ -51,7 +51,7 @@ Take the stops in order. Each one names what it shows about Annex.
 
 ### 6. Cash and collections (a dashboard, not an app)
 **As `petra`**, open Metabase and *Finance → Cash and collections*: weekly cash by venue, the coins, tokens and card split, takings per machine by era, and counted cash against estimated plays per venue.
-- **What it shows:** the second thing that doesn't need an app. A weekly-takings tool (a Monday job, a CSV, an email) was built and retired (D115): finance reads a dashboard instead. The retired source is in git, at the tag `examples-archive` (`demo/apps/archive/weekly-takings/`).
+- **What it shows:** the second thing that doesn't need an app. A weekly-takings tool (a Monday job, a CSV, an email) was built and retired (D115): finance reads a dashboard instead. The retired source is in git, at the tag `examples-archive` (`git show examples-archive:examples/archive/weekly-takings/main.py`).
 
 ### 7. party-bookings (webhooks: the one way in from outside)
 **As `maja`**, open party-bookings. These are birthday-party requests that came from Goat Arcade's public website. Open one: it shows the details, the customer's email as a link to reply by hand, the history (who did what) and the actions *Confirm*, *Decline* and *Mark as contacted*. Confirming one emails the venue manager a summary to forward to the parents.
