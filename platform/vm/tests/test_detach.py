@@ -1,7 +1,7 @@
 """The detach (D101): the worker is a forked process in its own session that keeps the lock; the parent forwards
 run.log to the caller. A caller that goes away doesn't stop the worker; a worker that dies leaves its release pending,
 the lock free and a final line that says so. Real fork, real files; jobs are plain functions.
-Stdlib unittest, runs on the Mac: python3 -m unittest discover -s vm/tests"""
+Stdlib unittest, runs on the Mac: python3 -m unittest discover -s platform/vm/tests"""
 import io
 import json
 import os

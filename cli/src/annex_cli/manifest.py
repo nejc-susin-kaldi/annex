@@ -40,7 +40,7 @@ LOGIN_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
 # an egress entry: a hostname, optionally with a leading "*." (D88: documentation of what the app calls; the
 # network grants any host once the list isn't empty)
 EGRESS_HOST_RE = re.compile(r"^(\*\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$")
-SLACK_CHANNEL_RE = re.compile(r"^#[a-z0-9][a-z0-9_-]{0,79}$")  # same rule in vm/annex_vm.py and annex-ops
+SLACK_CHANNEL_RE = re.compile(r"^#[a-z0-9][a-z0-9_-]{0,79}$")  # same rule in platform/vm/annex_vm.py and annex-ops
 
 
 class ManifestError(Exception):

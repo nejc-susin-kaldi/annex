@@ -2,7 +2,7 @@
 
 The system as it is after the hardening and control-plane steps (D79-D103), on one page. `docs/brief.md` is the historical brief (its diagram is the M0 one); `docs/decisions.md` has the reasons and the history, with a status index at its top. Where this page and a decision disagree, the code wins, then this page, then the older decision (check the index for what was revised).
 
-One client's server: a single VM (x86_64, 4 GiB RAM) running Docker Compose. The platform is one Compose project (`annex`, from `/srv/annex/platform`); every app is its own project (`annex-app-<name>`). Builders deploy from their own machine with the `annex` CLI or the MCP server, which call `vm/annex_vm.py` on the VM over SSH (D1); a deploy is one such call and runs on the VM (D101). The same compose files, scripts, CLI and `annex_vm.py` also run a **local stack** on the Mac's Docker Desktop (`ANNEX_ENV=local`, D99), a development lane and not a second environment ("Two places the platform runs"). Nothing on the VM talks to the internet except where listed under "Networks".
+One client's server: a single VM (x86_64, 4 GiB RAM) running Docker Compose. The platform is one Compose project (`annex`, from `/srv/annex/platform`); every app is its own project (`annex-app-<name>`). Builders deploy from their own machine with the `annex` CLI or the MCP server, which call `platform/vm/annex_vm.py` on the VM over SSH (D1); a deploy is one such call and runs on the VM (D101). The same compose files, scripts, CLI and `annex_vm.py` also run a **local stack** on the Mac's Docker Desktop (`ANNEX_ENV=local`, D99), a development lane and not a second environment ("Two places the platform runs"). Nothing on the VM talks to the internet except where listed under "Networks".
 
 ```
  Mac: annex CLI / MCP ──ssh (via dronky)──▶ VM: annex_vm.py, docker, compose
@@ -67,9 +67,9 @@ All Annex networks carry `com.kaldi.annex=true` and are `internal` (no route out
 
 | Path | Content |
 |---|---|
-| `platform/` | synced repo bundle (compose, config, db, vm, ops); `.env` (settings), `VERSION` (commit, dirty flag, `.env` hash, contract version: `push.sh` refuses a checkout that lacks it, D85; a deploy compares the CLI's contract version with it, D103); its `vm/` has the generated `annex_manifest.py` and `annex_logcheck.py` (D103) |
+| `platform/` | synced repo bundle (compose, config, db, vm, ops); `.env` (settings), `VERSION` (commit, dirty flag, `.env` hash, contract version: `push.sh` refuses a checkout that lacks it, D85; a deploy compares the CLI's contract version with it, D103); its `platform/vm/` has the generated `annex_manifest.py` and `annex_logcheck.py` (D103) |
 | `secrets/` | `master.env`, per-service env files, `authelia/`, `hooks/<app>.json`, `apps/<app>/` (db password, gateway token, ops token, `secrets.env`, `runtime.env`); never in the repo |
-| `state/` | Postgres data directories, Authelia and Mailpit state, `directory/users.json`, `ops/` (test mode, tuning) |
+| `state/` | Postgres data directories, Authelia and Mailpit state, `directory/users.json`, `platform/ops/` (test mode, tuning) |
 | `deploy/<app>/` | `src/` (uploaded source), `compose.yaml` (generated, JSON), `deploy.json` (what is live: type, postgres, views, egress, jobs; `run-job` reads its commands here), `.lock.guard` (an empty file the running operation holds an flock on; **never unlinked**, not even by `remove`, D102), `current.json` (the operation that holds the lock or held it last: pid, actor, kind, release, step, result; D101), `run.log` (that deploy's progress lines, one JSON object each; the run before is `run.log.1`), `run.err` (the worker's stderr), `build.log` (the last `docker build` output) |
 | `apps/<app>/` | `data/` (mounted at `/data`), `releases.jsonl` (the release history; only the VM writes it, D92) |
 | `snapshots/<app>/pre-r<N>/` | database dump and `/data` archive before release N; the last 3 |
@@ -78,7 +78,7 @@ All Annex networks carry `com.kaldi.annex=true` and are `internal` (no route out
 
 ## The deploy sequence
 
-`annex deploy <folder>` is a thin client in front of one process on the VM (D101). The CLI (`cli/src/annex_cli/ops.py`, `deploy`) does only what is quick or only it can know; `vm/annex_deploy.py` (stdlib, called by `vm/annex_vm.py deploy <app>`, using `annex_vm.py`'s own functions for provision, snapshots and networks) does the rest. `annex rollback` has the same shape: `annex_vm.py rollback <app> [--to N] [--with-data]`, and the VM picks the target under the lock.
+`annex deploy <folder>` is a thin client in front of one process on the VM (D101). The CLI (`cli/src/annex_cli/ops.py`, `deploy`) does only what is quick or only it can know; `platform/vm/annex_deploy.py` (stdlib, called by `platform/vm/annex_vm.py deploy <app>`, using `annex_vm.py`'s own functions for provision, snapshots and networks) does the rest. `annex rollback` has the same shape: `annex_vm.py rollback <app> [--to N] [--with-data]`, and the VM picks the target under the lock.
 
 **On the builder's machine (one call).**
 1. **Validate.** `annex.yaml` by `manifest.py` (name, `owner` login, env, egress hostnames, secrets declared) and the requested views against the live gateway allowlist (`annex_vm.py views`): fast, agent-readable errors before anything is uploaded.
@@ -101,7 +101,7 @@ All Annex networks carry `com.kaldi.annex=true` and are `internal` (no route out
 
 A VM reboot or `kill -9` mid-deploy leaves the pending line and a **free** lock (the kernel released it): the next deploy or rollback reconciles it at step 2, or `annex_vm.py deploy-reconcile <app>` does, without deploying. `restart: unless-stopped` brings back whatever Compose last started. While a deploy runs, `annex status <app>` (its `deploy` line), `annex_vm.py deploy-state <app>` and `deploy/<app>/run.log` show where it is; the outcome is in `annex releases <app>` (`docs/operations.md`, "Releases and rollback").
 
-**The other container-replacing operations** (D102, `vm/annex_apps.py`, also called by `annex_vm.py`). `annex secret set` (with `--recreate`: store, provision from `deploy.json`, drain, switch) and `annex remove` (drain, compose down, remove the image, deprovision: role, database, networks; the folder goes, `.lock.guard` stays) are each one process that takes the **same flock** while it replaces or removes the container, so none of them can interleave with a deploy or with each other. They take seconds, so they don't fork and have no `run.log`; they ignore SIGHUP and SIGPIPE, so a dropped session never leaves an app half-removed. `annex run <app> <job>` takes **no lock**: `annex_vm.py run-job` reads the job's command from `deploy.json` (what the last deploy declared, whatever CLI asks) and runs `docker exec`; a deploy that replaces the container ends the job.
+**The other container-replacing operations** (D102, `platform/vm/annex_apps.py`, also called by `annex_vm.py`). `annex secret set` (with `--recreate`: store, provision from `deploy.json`, drain, switch) and `annex remove` (drain, compose down, remove the image, deprovision: role, database, networks; the folder goes, `.lock.guard` stays) are each one process that takes the **same flock** while it replaces or removes the container, so none of them can interleave with a deploy or with each other. They take seconds, so they don't fork and have no `run.log`; they ignore SIGHUP and SIGPIPE, so a dropped session never leaves an app half-removed. `annex run <app> <job>` takes **no lock**: `annex_vm.py run-job` reads the job's command from `deploy.json` (what the last deploy declared, whatever CLI asks) and runs `docker exec`; a deploy that replaces the container ends the job.
 
 ## Two places the platform runs
 
@@ -120,7 +120,7 @@ The lane is chosen per command and never a default. The local stack is a develop
 
 ## annex-ops threads
 
-One process, many threads, each registered in `ops/annex_ops/threads.py` with the longest time one pass may take (D81); `/healthz` answers 503 when one is `dead` or has not beaten for three periods. The console's Platform page shows the table.
+One process, many threads, each registered in `platform/ops/annex_ops/threads.py` with the longest time one pass may take (D81); `/healthz` answers 503 when one is `dead` or has not beaten for three periods. The console's Platform page shows the table.
 
 | Thread | Period | Does |
 |---|---|---|
@@ -142,7 +142,7 @@ Database access goes through a small own pool (`db.py`: ops 4 connections, conso
 
 ## Database schema
 
-annex-ops's schema is migrations (D93): `db/appdata/bootstrap.sql` (roles, passwords, `CREATE DATABASE`; every push) then `vm/migrate.py` applies `db/appdata/migrations/NNN_*.sql` not yet in `annex_ops.schema_version`, each in one transaction. An applied file is never edited.
+annex-ops's schema is migrations (D93): `platform/db/appdata/bootstrap.sql` (roles, passwords, `CREATE DATABASE`; every push) then `platform/vm/migrate.py` applies `platform/db/appdata/migrations/NNN_*.sql` not yet in `annex_ops.schema_version`, each in one transaction. An applied file is never edited.
 
 ## Where to look next
 

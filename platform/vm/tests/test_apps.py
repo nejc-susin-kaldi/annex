@@ -1,6 +1,6 @@
 """Secret set, remove and run on the VM (control-plane V2, D102), against the `run` seam (D96): the
 order of the Docker calls, the app's lock (a held lock refuses naming the holder and changes nothing), and that
-`remove` never unlinks `.lock.guard`. Stdlib unittest: python3 -m unittest discover -s vm/tests"""
+`remove` never unlinks `.lock.guard`. Stdlib unittest: python3 -m unittest discover -s platform/vm/tests"""
 import argparse
 import io
 import json

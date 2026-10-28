@@ -75,4 +75,4 @@ setting() {
   fi
   sed -n "s/^$1=//p" "$_settings_cache"
 }
-compose_image() { sed -n "s|^ *image: \($1:.*\)|\1|p" "$ROOT/compose.yaml" | head -1; }
+compose_image() { sed -n "s|^ *image: \($1:.*\)|\1|p" "$ROOT/platform/compose.yaml" | head -1; }

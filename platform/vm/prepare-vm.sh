@@ -4,7 +4,7 @@
 # changes the VM's system configuration; everything after it writes to Docker and the data directory only.
 #
 # From the operator machine, with an account that has sudo on the new VM (the script is sent over stdin):
-#   ssh <you>@<vm> "sudo bash -s -- --lan 192.168.1.0/24 --pubkey '$(cat ~/.ssh/annex_ed25519.pub)'" < vm/prepare-vm.sh
+#   ssh <you>@<vm> "sudo bash -s -- --lan 192.168.1.0/24 --pubkey '$(cat ~/.ssh/annex_ed25519.pub)'" < platform/vm/prepare-vm.sh
 #
 # Options:
 #   --pubkey 'ssh-ed25519 AAAA… comment'   the operator's public key, put in the annex user's authorized_keys (required)
@@ -36,7 +36,7 @@ main() {
       *) usage >&2; die "unknown option $1" ;;
     esac
   done
-  [ "$(id -u)" = 0 ] || die "run it as root: ssh <you>@<vm> sudo bash -s -- … < vm/prepare-vm.sh"
+  [ "$(id -u)" = 0 ] || die "run it as root: ssh <you>@<vm> sudo bash -s -- … < platform/vm/prepare-vm.sh"
   [ -n "$pubkey" ] || die "--pubkey is required: the operator's public key, e.g. --pubkey \"\$(cat ~/.ssh/annex_ed25519.pub)\""
   [[ "$pubkey" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|sk-ssh-ed25519@openssh.com)\ [A-Za-z0-9+/=]+ ]] \
     || die "--pubkey doesn't look like a public key line (ssh-ed25519 AAAA… comment)"
@@ -161,7 +161,7 @@ main() {
 usage() {
   cat <<'USAGE'
 usage (as root on the new VM; from the operator machine the script goes over stdin):
-  ssh <you>@<vm> "sudo bash -s -- --lan 192.168.1.0/24 --pubkey '$(cat ~/.ssh/annex_ed25519.pub)'" < vm/prepare-vm.sh
+  ssh <you>@<vm> "sudo bash -s -- --lan 192.168.1.0/24 --pubkey '$(cat ~/.ssh/annex_ed25519.pub)'" < platform/vm/prepare-vm.sh
   --pubkey 'ssh-ed25519 AAAA… comment'   the operator's public key (required)
   --lan 192.168.1.0/24                   the network allowed to reach 22, 80 and 443 (required unless --no-firewall)
   --user annex                           the account the scripts log in as (default annex)

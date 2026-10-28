@@ -44,11 +44,11 @@ DHCP reservation). The platform uses about 2.5 GiB with Metabase; a smaller VM r
 (`scripts/push.sh` without `--extras`). It was built with Docker Engine 29.9 and Compose 5.6; newer ones should
 work, older Compose may not (the scripts use `up --wait`).
 
-`vm/prepare-vm.sh` does the preparation: one idempotent script, run once as root on the fresh VM. Make the
+`platform/vm/prepare-vm.sh` does the preparation: one idempotent script, run once as root on the fresh VM. Make the
 operator's key first (section 3), then send the script over SSH from the repo, with an account that has sudo on
 the new VM:
 ```bash
-ssh <you>@<vm-ip> "sudo bash -s -- --lan 192.168.1.0/24 --pubkey '$(cat ~/.ssh/annex_ed25519.pub)'" < vm/prepare-vm.sh
+ssh <you>@<vm-ip> "sudo bash -s -- --lan 192.168.1.0/24 --pubkey '$(cat ~/.ssh/annex_ed25519.pub)'" < platform/vm/prepare-vm.sh
 ```
 `--lan` is the network allowed in; `--user` and `--data-dir` change the defaults `annex` and `/srv/annex` (then
 set the same in `.env`); `--no-firewall` leaves the host firewall alone where a security group does that job. It
@@ -57,7 +57,7 @@ changes nothing. What it does, and the undo of each (the usual undo is to destro
 
 | Step | Undo |
 |---|---|
-| Docker Engine and the Compose plugin from Docker's apt repository, as on the homelab VM; `jq` (the push's JSON) and `python3-yaml` (the user commands of `vm/annex_vm.py`) | `sudo apt-get purge -y docker-ce docker-ce-cli containerd.io docker-compose-plugin jq python3-yaml && sudo rm /etc/apt/sources.list.d/docker.list /etc/apt/keyrings/docker.asc` |
+| Docker Engine and the Compose plugin from Docker's apt repository, as on the homelab VM; `jq` (the push's JSON) and `python3-yaml` (the user commands of `platform/vm/annex_vm.py`) | `sudo apt-get purge -y docker-ce docker-ce-cli containerd.io docker-compose-plugin jq python3-yaml && sudo rm /etc/apt/sources.list.d/docker.list /etc/apt/keyrings/docker.asc` |
 | `/etc/docker/daemon.json`: each container's own log capped at 3 × 10 MB (the stored logs live in Postgres). An existing file is left alone, with a note | `sudo rm /etc/docker/daemon.json && sudo systemctl restart docker` |
 | the `annex` user in the `docker` and `sudo` groups. The scripts log in as it and never call sudo; sudo is for this script and the restore procedure in `docs/operations.md` ("Restore a whole VM"). Passwordless sudo is a convenience, not a requirement | `sudo deluser --remove-home annex` |
 | the data directory, owned by `annex`, mode 750 (its backups contain the secrets) | `sudo rm -rf /srv/annex` (everything Annex, secrets and backups included) |
@@ -92,7 +92,7 @@ one test in `test-smoke.sh`, skipped without it), `docker` only for the local la
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/annex_ed25519 -N '' -C annex
 ```
-`vm/prepare-vm.sh` puts `~/.ssh/annex_ed25519.pub` on the VM (section 2); then add the block to `~/.ssh/config`. The scripts and the
+`platform/vm/prepare-vm.sh` puts `~/.ssh/annex_ed25519.pub` on the VM (section 2); then add the block to `~/.ssh/config`. The scripts and the
 CLI only ever run `ssh annex` (the alias is `ANNEX_SSH_HOST` in `.env`), so everything about the path to the VM
 lives here:
 ```

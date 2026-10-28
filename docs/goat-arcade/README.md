@@ -27,17 +27,17 @@ Goat Arcade's staff also have **Metabase** ("Goat Arcade analytics", `metabase.`
 | Cash and collections | Finance | weekly cash by venue, coins, tokens and card, takings per machine by era, counted cash against estimated plays |
 | Players and tournaments | Community | sign-ups, active members per venue, most leaderboard spots, tournament entries, the last standings |
 
-Everyone can open all of them and explore the views with the query builder (the keys between views are set, so it joins them). Each team edits its own collection; only analysts (`sam`) and admins write SQL. Periods count back from the latest day in the data, not today. The dashboards are kept as code (`config/metabase/goat-arcade/`, D109): changes made in Metabase to them are overwritten at the next push, so save your own questions next to them. How to change one: [operations](../operations.md), "Metabase".
+Everyone can open all of them and explore the views with the query builder (the keys between views are set, so it joins them). Each team edits its own collection; only analysts (`sam`) and admins write SQL. Periods count back from the latest day in the data, not today. The dashboards are kept as code (`platform/config/metabase/goat-arcade/`, D109): changes made in Metabase to them are overwritten at the next push, so save your own questions next to them. How to change one: [operations](../operations.md), "Metabase".
 
 ## For the platform team
 | What | Where |
 |---|---|
 | The client's database | `democlient/`: compose project `democlient` on the VM, `arcade-db`; schema and seed in `initdb/` |
 | Run it | `scripts/push.sh` brings it up and links it (D112); by hand `scripts/democlient.sh up`, then `link`. Also `status`, `check` (the planted stories), `reseed` (data ends yesterday again), `psql`, `down` |
-| The link | `db/product/clientlink/link.sql`: postgres_fdw from product-db, the client's read-only login `annex_reader` |
-| The views (the allowlist) | `db/product/clientlink/api_views_arcade.sql`, with a comment on every column; after a change, `scripts/push.sh`, then `scripts/democlient.sh dictionary` |
-| The people (Goat Arcade's staff) | [plan](../plans/goat-arcade-demo.md) 2.1; accounts: `annex users add ... --demo` ([setup](../setup.md) section 9, [operations](../operations.md) Accounts); Metabase groups: `config/metabase/people.json`; tiles by team: `config/teams.json` (D107) |
-| Metabase: connection, permissions, dashboards | `config/metabase/goat-arcade/` (`model.json`, `collections.json`, `dashboards/`), applied by `vm/metabase-setup.sh` on every push (D109) |
+| The link | `platform/db/product/clientlink/link.sql`: postgres_fdw from product-db, the client's read-only login `annex_reader` |
+| The views (the allowlist) | `platform/db/product/clientlink/api_views_arcade.sql`, with a comment on every column; after a change, `scripts/push.sh`, then `scripts/democlient.sh dictionary` |
+| The people (Goat Arcade's staff) | [plan](../plans/goat-arcade-demo.md) 2.1; accounts: `annex users add ... --demo` ([setup](../setup.md) section 9, [operations](../operations.md) Accounts); Metabase groups: `platform/config/metabase/people.json`; tiles by team: `platform/config/teams.json` (D107) |
+| Metabase: connection, permissions, dashboards | `platform/config/metabase/goat-arcade/` (`model.json`, `collections.json`, `dashboards/`), applied by `platform/vm/metabase-setup.sh` on every push (D109) |
 | Tests | `scripts/test-platform.sh` ("Demo client database"); one check in `scripts/test-smoke.sh` |
 | Why it's built this way | [decisions](../decisions.md) D77 (the link), D78 (the data); [plan](../plans/democlient.md) |
 | A real client's side of it | [connect-your-database.md](connect-your-database.md) |

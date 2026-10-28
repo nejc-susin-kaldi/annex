@@ -268,7 +268,7 @@ def _webhook_urls(r: Remote, app: str, webhooks) -> list[dict]:
             for w in (x if isinstance(x, dict) else x.__dict__ for x in webhooks)]
 
 
-# Settings a test sets in the CLI's environment for one deploy; the VM honours exactly these (vm/annex_deploy.py).
+# Settings a test sets in the CLI's environment for one deploy; the VM honours exactly these (platform/vm/annex_deploy.py).
 DEPLOY_OVERRIDES = ("ANNEX_BUILD_MIN_FREE_GB", "ANNEX_IMAGE_MAX_MB", "ANNEX_HEALTH_TIMEOUT")
 
 
@@ -285,7 +285,7 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
     if bad:
         raise mf.ManifestError(folder / "annex.yaml", [
             f"data.views: {', '.join(bad)} not in the gateway allowlist. Available views: {', '.join(allow)}. "
-            "New views are added by the platform team in db/product/clientlink/api_views_arcade.sql"])
+            "New views are added by the platform team in platform/db/product/clientlink/api_views_arcade.sql"])
 
     line = {"manifest": m.to_dict(), "deployed_at": _now(), "deployed_by": _who(), "via": via,
             "source": str(folder).replace(str(Path.home()), "~", 1), "git": _git(folder), "snapshot": None,

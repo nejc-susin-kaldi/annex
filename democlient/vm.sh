@@ -74,7 +74,7 @@ do_link() {
   product -v reader_pw="$ANNEX_READER_PASSWORD" -f /docker-entrypoint-initdb.d/clientlink/link.sql
   if ! product -f /docker-entrypoint-initdb.d/clientlink/api_views_arcade.sql; then
     [ -n "$refresh" ] && echo "democlient: the views no longer fit the refreshed table(s); the old definition is kept as src_arcade.<t>__old." \
-      "Fix db/product/clientlink/api_views_arcade.sql, scripts/push.sh, then scripts/democlient.sh link (without --refresh)" >&2
+      "Fix platform/db/product/clientlink/api_views_arcade.sql, scripts/push.sh, then scripts/democlient.sh link (without --refresh)" >&2
     exit 1
   fi
   for t in ${refresh//,/ }; do

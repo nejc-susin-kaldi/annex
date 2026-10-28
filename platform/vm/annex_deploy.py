@@ -44,7 +44,7 @@ def _module(name: str, filename: str):
         return importlib.import_module(name)
     except ImportError:
         pass
-    path = Path(__file__).resolve().parents[1] / "cli" / "src" / "annex_cli" / filename
+    path = Path(__file__).resolve().parents[2] / "cli" / "src" / "annex_cli" / filename  # the repo on the Mac
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"{name}: neither in the bundle nor at {path}; run scripts/push.sh")

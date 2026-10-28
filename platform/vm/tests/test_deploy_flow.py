@@ -1,6 +1,6 @@
 """The deploy and rollback sequence on the VM (D101), without the fork: the order of the steps, the release line on
 every exit path, the gate's switch back, reconcile notes, rollback targets. Fakes in deploy_fakes.py.
-Stdlib unittest, runs on the Mac: python3 -m unittest discover -s vm/tests"""
+Stdlib unittest, runs on the Mac: python3 -m unittest discover -s platform/vm/tests"""
 import json
 import unittest
 import unittest.mock

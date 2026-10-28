@@ -158,7 +158,7 @@ class Remote:
         return " ".join([self.python, shlex.quote(f"{self.data}/platform/vm/annex_vm.py"), *map(shlex.quote, args)])
 
     def vm(self, *args: str, input: str | None = None) -> dict:
-        """Call vm/annex_vm.py on the VM; it always answers with one JSON object."""
+        """Call platform/vm/annex_vm.py on the VM; it always answers with one JSON object."""
         cmd = self.vm_command(*args)
         r = self.run(cmd, input=input, check=False)
         try:

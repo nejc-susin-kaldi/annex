@@ -1,6 +1,6 @@
 """Build limits (D95), on the VM since D101: free-disk and image-size verdicts are pure; build() applies them; apps get
 a pids_limit; a failed cleanup is a warning. Moved from cli/tests/test_build_limits.py.
-Stdlib unittest, runs on the Mac: python3 -m unittest discover -s vm/tests"""
+Stdlib unittest, runs on the Mac: python3 -m unittest discover -s platform/vm/tests"""
 import unittest
 import unittest.mock
 

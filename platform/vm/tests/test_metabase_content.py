@@ -1,5 +1,5 @@
 """vm/metabase_content.py's pure parts and the specs in config/metabase (GA.3, D109).
-Stdlib unittest, runs on the Mac: python3 -m unittest discover -s vm/tests"""
+Stdlib unittest, runs on the Mac: python3 -m unittest discover -s platform/vm/tests"""
 import json
 import os
 import sys

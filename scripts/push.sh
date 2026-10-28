@@ -40,7 +40,7 @@ rsync -rlpt --delete "$BUILD/platform/" "$(dest "$DATA/platform/")"
 
 # annex-ops's database goes in before the full start: its healthcheck needs the database, so
 # `up --wait` would time out on the first push. The password stays on the VM.
-log "Applying annex-ops database: roles (db/appdata/bootstrap.sql), then pending migrations (db/appdata/migrations, D93)"
+log "Applying annex-ops database: roles (platform/db/appdata/bootstrap.sql), then pending migrations (platform/db/appdata/migrations, D93)"
 vm "cd $DATA/platform && docker compose up -d --wait appdata-db >/dev/null"
 networks_sync  # a recreated appdata-db is back on the networks of the apps with Postgres before the long start below
 vm "cd $DATA/platform && . $DATA/secrets/master.env 2>/dev/null && [ -n \"\${APPDATA_DB_OPS_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_HOOKS_PASSWORD:-}\" ] && [ -n \"\${APPDATA_DB_CONSOLE_PASSWORD:-}\" ]" \
@@ -63,7 +63,7 @@ vm "python3 $DATA/platform/vm/annex_vm.py release-backfill >/dev/null"
 # the user directory for annex-ops follows Authelia's users.yml (users change it by resetting passwords; D57)
 vm "python3 $DATA/platform/vm/annex_vm.py users-sync >/dev/null"
 
-log "Applying gateway schema and log hook (db/product/annex_api.sql, gateway.sql)"
+log "Applying gateway schema and log hook (platform/db/product/annex_api.sql, gateway.sql)"
 vm "cd $DATA/platform && for f in annex_api.sql gateway.sql; do
       docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' product-db psql -q -v ON_ERROR_STOP=1 -U postgres -d product -f /docker-entrypoint-initdb.d/\$f
     done"
@@ -77,7 +77,7 @@ if [ -d "$ROOT/democlient" ]; then
   vm "ANNEX_DATA_DIR=$DATA bash $DATA/democlient/vm.sh ensure"
 # a checkout without democlient/: the views only, if product-db is linked already
 elif vm "cd $DATA/platform && docker compose exec -T product-db psql -XAt -U postgres -d product -c \"SELECT 1 FROM pg_namespace WHERE nspname = 'src_arcade'\"" | grep -qx 1; then
-  log "Applying the Goat Arcade views (db/product/clientlink/api_views_arcade.sql)"
+  log "Applying the Goat Arcade views (platform/db/product/clientlink/api_views_arcade.sql)"
   vm "cd $DATA/platform && docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' product-db psql -q -X -v ON_ERROR_STOP=1 -U postgres -d product -f /docker-entrypoint-initdb.d/clientlink/api_views_arcade.sql"
 fi
 

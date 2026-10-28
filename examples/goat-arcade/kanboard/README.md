@@ -2,7 +2,7 @@
 
 [Kanboard](https://kanboard.org) (MIT licence), an off-the-shelf open-source kanban board, self-hosted on Annex as
 an ordinary Annex app. Owner `sam`; used by `boris` (lead technician) and the venue managers. Team: Technical
-(`config/teams.json`).
+(`platform/config/teams.json`).
 
 ## What Goat Arcade uses it for
 

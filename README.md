@@ -35,7 +35,7 @@ People sign in with Annex's own accounts (no company SSO needed): `./annex users
 | Console (read-only: an overview of what needs attention, a page per app with Summary, Logs, Errors, Releases, Usage and Config tabs, activity and platform for admins; its own container) | `console` | signed in: `/status` for everyone, an app's pages for its owner and admins |
 | Incoming webhooks (the receiver, its own container; only `/h/`) | `hooks` | **nobody logs in**: callers are checked by signature |
 
-Plus annex-ops (`ops/`: email and Slack for apps, incidents and alerts, host and backup monitoring, usage stats and the weekly digest, webhook delivery, stored logs and error groups), product-db and appdata-db (Postgres 16), Ofelia (jobs), offen backup (nightly, 7 days) and two Docker socket proxies. Hostnames come from `ANNEX_HOST_PATTERN`, `{name}.annex.home.arpa` by default.
+Plus annex-ops (`platform/ops/`: email and Slack for apps, incidents and alerts, host and backup monitoring, usage stats and the weekly digest, webhook delivery, stored logs and error groups), product-db and appdata-db (Postgres 16), Ofelia (jobs), offen backup (nightly, 7 days) and two Docker socket proxies. Hostnames come from `ANNEX_HOST_PATTERN`, `{name}.annex.home.arpa` by default.
 
 ## Scripts
 | Script | Does |

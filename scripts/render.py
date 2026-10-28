@@ -5,8 +5,8 @@ ANNEX_ENV (an environment variable, per command) picks the settings file: unset 
 `vm` reads .env (falls back to .env.example) into .build/vm/platform; `local` reads
 .env.local (falls back to .env.local.example) into .build/local/platform, the stack
 on this machine's Docker (D99). It derives hostnames and mode-specific
-settings, renders every *.tmpl under config/ with {{VAR}} placeholders, and
-copies compose files, config, db/, vm/ and ops/ alongside. The resulting .env in the
+settings, renders every *.tmpl under platform/config/ with {{VAR}} placeholders, and
+copies compose files, config, platform/db/, platform/vm/ and platform/ops/ alongside. The resulting .env in the
 bundle holds non-secret settings only; it is used by Compose on the VM and read
 by the annex CLI as the source of truth for the deployed platform.
 
@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+PLATFORM = ROOT / "platform"   # the bundle's source: compose files, config/, db/, ops/, vm/
 ENVS = {"vm": ".env", "local": ".env.local"}  # ANNEX_ENV -> settings file (each falls back to <file>.example)
 TARGETS = ("ssh", "local")                     # ANNEX_TARGET: how scripts and the CLI reach the platform's Docker
 BIND_RE = re.compile(r"^(?:(\d{1,3}(?:\.\d{1,3}){3}):)?(\d{1,5})$")
@@ -153,7 +154,7 @@ def derive(env: dict[str, str], name: str = "vm", root: Path = ROOT) -> dict[str
         "ANNEX_EMAIL_ALLOW": env.get("ANNEX_EMAIL_ALLOW", ""),
         "ANNEX_EMAIL_FROM": env.get("ANNEX_EMAIL_FROM", "noreply@annex.example"),
         "ANNEX_ALERT_SLACK_CHANNEL": env.get("ANNEX_ALERT_SLACK_CHANNEL", "#annex-alerts"),
-        # per-app networks (D88): read by vm/annex_vm.py networks-sync from the platform .env
+        # per-app networks (D88): read by platform/vm/annex_vm.py networks-sync from the platform .env
         "ANNEX_APP_SUBNETS": app_subnets,
         # build limits (D95), read by the CLI from the platform .env; empty = the CLI's defaults (3 GB, 2048 MB)
         "ANNEX_BUILD_MIN_FREE_GB": env.get("ANNEX_BUILD_MIN_FREE_GB", ""),
@@ -180,7 +181,7 @@ def render_text(text: str, values: dict[str, str], src: Path) -> str:
 
 def contract_version() -> int:
     """`ANNEX_CONTRACT_VERSION: n` of the contract this checkout ships (0 if the line is missing). The VM compares it
-    with the CLI's (vm/annex_deploy.py check_versions, D103)."""
+    with the CLI's (platform/vm/annex_deploy.py check_versions, D103)."""
     m = re.search(r"^ANNEX_CONTRACT_VERSION:\s*(\d+)\s*$", (ROOT / "cli/src/annex_cli/contract.md").read_text(), re.M)
     return int(m.group(1)) if m else 0
 
@@ -208,14 +209,14 @@ def main() -> None:
         shutil.rmtree(OUT)
     OUT.mkdir(parents=True)
     for name in ("compose.yaml", "compose.tls-local.yaml"):
-        shutil.copy2(ROOT / name, OUT / name)
+        shutil.copy2(PLATFORM / name, OUT / name)
     for d in ("config", "db", "vm"):
-        shutil.copytree(ROOT / d, OUT / d)
-    # the deploy runs on the VM (vm/annex_deploy.py, D101) with the CLI's own manifest and log-convention modules
+        shutil.copytree(PLATFORM / d, OUT / d)
+    # the deploy runs on the VM (platform/vm/annex_deploy.py, D101) with the CLI's own manifest and log-convention modules
     for src, dest in (("manifest.py", "annex_manifest.py"), ("logcheck.py", "annex_logcheck.py")):
         shutil.copy2(ROOT / "cli" / "src" / "annex_cli" / src, OUT / "vm" / dest)
     # annex-ops is the first platform image built from source on the VM
-    shutil.copytree(ROOT / "ops", OUT / "ops",
+    shutil.copytree(PLATFORM / "ops", OUT / "ops",
                     ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "tests"))
 
     # Mode-specific Traefik files: keep the one for this mode, drop the other.

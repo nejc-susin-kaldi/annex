@@ -1,5 +1,5 @@
 """An image may not carry labels that route, schedule, list or back up (D83): the verdict is a pure function, on the
-VM since D101 (vm/annex_deploy.py). Stdlib unittest: python3 -m unittest discover -s vm/tests"""
+VM since D101 (vm/annex_deploy.py). Stdlib unittest: python3 -m unittest discover -s platform/vm/tests"""
 import sys
 import unittest
 from pathlib import Path

@@ -2,7 +2,7 @@
 
 The fake records every command (and the stdin it was given), so the tests assert the SQL that reaches psql, that no
 password is on a command line, and the order of the Docker calls. Stdlib unittest, runs on the Mac:
-python3 -m unittest discover -s vm/tests"""
+python3 -m unittest discover -s platform/vm/tests"""
 import argparse
 import contextlib
 import io

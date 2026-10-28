@@ -1,5 +1,5 @@
 """Per-app networks (D88): who joins an app's network, and the subnet picker. Stdlib unittest, runs on the Mac:
-python3 -m unittest discover -s vm/tests"""
+python3 -m unittest discover -s platform/vm/tests"""
 import sys
 import unittest
 from pathlib import Path

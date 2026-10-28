@@ -13,7 +13,7 @@ Nothing here is installed by Annex; check that each is present.
 - `docker`, only for the optional context in section 1, and Docker Desktop for the local stack (section 8).
 
 **On the VM (`annex`):**
-- Docker with the Compose plugin, `jq` and `python3-yaml` (PyYAML, used by `vm/annex_vm.py users-*`). Installing packages is a system change: if one is missing, ask Nejc.
+- Docker with the Compose plugin, `jq` and `python3-yaml` (PyYAML, used by `platform/vm/annex_vm.py users-*`). Installing packages is a system change: if one is missing, ask Nejc.
 
 ## 1. Docker context `annex-vm` (optional)
 Lets you run `docker --context annex-vm ps` from the Mac. The annex scripts and CLI don't need it: they use `ssh annex` (see decision D1).
@@ -166,7 +166,7 @@ The push also brings up Goat Arcade's database (compose project `democlient`) an
 **Prerequisites** (on top of the Mac list at the top):
 - Docker Desktop running, with the context `desktop-linux` (`docker --context desktop-linux info` answers). The scripts and the CLI set `DOCKER_CONTEXT=desktop-linux` for their own commands only; your current context is never switched, and a context that points at the VM is refused.
 - Memory for Docker Desktop: at least 4 GiB (Settings → Resources); the core platform is about 1.4 GiB (D97), each app 20–50 MiB.
-- `python3` with PyYAML (`python3 -c 'import yaml'`): the scripts run `vm/annex_vm.py users-sync` with it, as the VM does with `python3-yaml`. `./annex` uses its own Python (uv), which has it.
+- `python3` with PyYAML (`python3 -c 'import yaml'`): the scripts run `platform/vm/annex_vm.py users-sync` with it, as the VM does with `python3-yaml`. `./annex` uses its own Python (uv), which has it.
 - `mkcert`, `jq`, `rsync`, `openssl`, `uv`: `scripts/bootstrap.sh` checks them.
 
 **Settings.** `.env.local.example` is committed and used as it is; copy it to `.env.local` (gitignored) only to change something. It sets `ANNEX_TARGET=local` (commands run here with `bash -c` instead of `ssh annex`), `ANNEX_DATA_DIR=$HOME/.annex/local` (outside the repo, under your home folder so Docker Desktop shares it), hostnames `*.annex-local.home.arpa` (separate from the VM's, so a browser can be signed in to both), and Traefik on `127.0.0.1:9443` (HTTPS) and `127.0.0.1:9080` (HTTP), loopback only. The renders are apart too: `.build/vm/platform` and `.build/local/platform`. `scripts/tunnel.sh` says "local mode: no tunnel" and does nothing. The mkcert certificate is issued into `~/.annex/local/certs` by `bootstrap.sh`; the mkcert CA is already trusted (section 2).
@@ -237,4 +237,4 @@ It is idempotent and skips anyone without a line in `users.txt`.
 
 Undo: `./annex users remove <login> --yes` for each account (the Metabase accounts stay until deactivated in Admin, People).
 
-The branding (Homepage title, logo and groups; Authelia's logo and favicon) needs nothing from you beyond the push. Homepage groups an app's tile from `config/teams.json` when the app is next deployed.
+The branding (Homepage title, logo and groups; Authelia's logo and favicon) needs nothing from you beyond the push. Homepage groups an app's tile from `platform/config/teams.json` when the app is next deployed.

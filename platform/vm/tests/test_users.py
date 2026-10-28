@@ -1,4 +1,4 @@
-"""annex_vm.py's user-account rules (D57). Stdlib unittest, runs on the Mac: python3 -m unittest discover -s vm/tests"""
+"""annex_vm.py's user-account rules (D57). Stdlib unittest, runs on the Mac: python3 -m unittest discover -s platform/vm/tests"""
 import argparse
 import contextlib
 import io

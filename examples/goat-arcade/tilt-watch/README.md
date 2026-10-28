@@ -4,7 +4,7 @@ Which pinball cabinets tilt far more than their model does? For the last 30 days
 tilt rate (games that ended in a tilt, out of all its games) next to its model's average, with the ratio. Anything
 over 3x is flagged, worst first; below, every cabinet ranked.
 
-Owner `sam`. Goat Arcade data, all synthetic. Team: Technical (`config/teams.json`). **This is the demo's live build**
+Owner `sam`. Goat Arcade data, all synthetic. Team: Technical (`platform/config/teams.json`). **This is the demo's live build**
 (`docs/demo.md`): on stage Claude Code builds it from an empty folder; this copy is the fallback, deployed by
 `scripts/reset-demo.sh --keep tilt-watch`. On the data as seeded it flags the **Cyber Samurai in Graz** (Goat Arcade
 Lend, machine #108) at about 5x the other Cyber Samurai cabinets: one of the stories planted in the data (D78, story 6).

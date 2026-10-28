@@ -1,4 +1,4 @@
-"""annex_vm.py's release rows (M2.2). Stdlib unittest, runs on the Mac: python3 -m unittest discover -s vm/tests"""
+"""annex_vm.py's release rows (M2.2). Stdlib unittest, runs on the Mac: python3 -m unittest discover -s platform/vm/tests"""
 import json
 import sys
 import unittest

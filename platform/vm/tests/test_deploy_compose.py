@@ -1,6 +1,6 @@
 """The compose file a release runs with (generated on the VM since D101): per-app networks (D88), the JSON form
 Compose reads, and the route probe's port. Moved from cli/tests/test_networks.py (compose_for); rewire_compose and
-the networks-sync flags stay there. Stdlib unittest: python3 -m unittest discover -s vm/tests"""
+the networks-sync flags stay there. Stdlib unittest: python3 -m unittest discover -s platform/vm/tests"""
 import json
 import unittest
 

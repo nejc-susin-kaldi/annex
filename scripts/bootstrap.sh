@@ -19,7 +19,7 @@ if [ "$TARGET" = local ]; then
 fi
 vm "test -d $DATA && test -w $DATA" || { echo "$DATA missing or not writable on $WHERE" >&2; exit 1; }
 vm "mkdir -p $DATA/platform/vm"
-put "$ROOT/vm/bootstrap-secrets.sh" "$DATA/platform/vm/"
+put "$ROOT/platform/vm/bootstrap-secrets.sh" "$DATA/platform/vm/"
 vm "ANNEX_DATA_DIR=$DATA bash $DATA/platform/vm/bootstrap-secrets.sh $(compose_image authelia/authelia)"
 
 if [ "$(setting_local ANNEX_TLS_MODE)" = local ]; then   # before the first push there is no deployed .env: the local render

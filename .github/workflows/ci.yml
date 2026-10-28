@@ -35,9 +35,9 @@ jobs:
       - name: contract summaries match contract.md
         run: scripts/sync-contract.sh --check
       - name: annex-ops (pytest, Python 3.13)
-        run: uv run --quiet --python 3.13 --with-requirements ops/requirements.txt --with pytest pytest ops/tests -q
-      - name: annex_vm (vm/tests)
-        run: python3 -m unittest discover -s vm/tests -q
+        run: uv run --quiet --python 3.13 --with-requirements platform/ops/requirements.txt --with pytest pytest platform/ops/tests -q
+      - name: annex_vm (platform/vm/tests)
+        run: python3 -m unittest discover -s platform/vm/tests -q
       - name: CLI (cli/tests)
         run: env PYTHONPATH=cli/src python3 -m unittest discover -s cli/tests -q
       - name: runtime, Python

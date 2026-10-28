@@ -1,6 +1,6 @@
 -- Goat Arcade d.o.o.: the client's production schema (synthetic). Written the way a real one grows: some
 -- legacy columns, status kept as free text, soft deletes, JSON where someone was in a hurry. Annex never
--- changes it; the gateway's curated views (db/product/clientlink/api_views_arcade.sql) clean it up.
+-- changes it; the gateway's curated views (platform/db/product/clientlink/api_views_arcade.sql) clean it up.
 CREATE SCHEMA arcade;
 SET search_path = arcade;
 

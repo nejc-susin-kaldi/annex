@@ -1,5 +1,5 @@
 """The deploy lock and pending release (C1, D92; the flock and current.json of D101): file operations on a temp data
-dir. Stdlib unittest, runs on the Mac: python3 -m unittest discover -s vm/tests"""
+dir. Stdlib unittest, runs on the Mac: python3 -m unittest discover -s platform/vm/tests"""
 import argparse
 import contextlib
 import io

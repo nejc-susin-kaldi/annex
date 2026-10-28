@@ -186,7 +186,7 @@ One synthetic data set, Goat Arcade's. `GET $ANNEX_GATEWAY_URL/` with your token
 
 Views can't be joined on the gateway: read each one and join in your code, on venue_code, machine_id, model_id or nickname. The gateway doesn't group or sum either, so the views come pre-aggregated (per day, per week); filter them (`?day=gte.2026-10-01`) rather than reading everything.
 
-All data is synthetic. Adding a view is a reviewed change by the platform team, in `db/product/clientlink/api_views_arcade.sql`.
+All data is synthetic. Adding a view is a reviewed change by the platform team, in `platform/db/product/clientlink/api_views_arcade.sql`.
 
 ## Commands
 | Command | Does |

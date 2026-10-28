@@ -52,7 +52,7 @@ What the data holds:
 - The planted story is the **Cyber Samurai in Graz** (Goat Arcade Lend, machine #108). It tilts about 13% of its games; the other Cyber Samurai cabinets tilt about 2.5%, so it's about 5x.
 - **The catch:** if the AI averages the model over all its cabinets, the Graz one is part of its own yardstick. It pulls the average up to about 5% and shows only about 2.6x, so nothing is flagged. If the page flags nothing, ask Claude Code: *"Compare each cabinet with the other cabinets of its model, not including itself."* The fix is quick, and it shows a review pass. The fallback's README tells the same story.
 
-`tilt-watch` is in `/etc/hosts` and already in the Technical group on the discovery page (`config/teams.json`). A different name needs its own hosts entry (`docs/setup.md` §3) and lands under "Tools".
+`tilt-watch` is in `/etc/hosts` and already in the Technical group on the discovery page (`platform/config/teams.json`). A different name needs its own hosts entry (`docs/setup.md` §3) and lands under "Tools".
 
 ## Walkthrough
 | Time | Do | Say |
