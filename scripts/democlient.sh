@@ -10,8 +10,8 @@
 source "$(dirname "$0")/lib.sh"
 
 cmd=${1:-}; shift || true
-log "Syncing democlient/ to $DATA/democlient on $WHERE"
-rsync -rlpt --delete "$ROOT/democlient/" "$(dest "$DATA/democlient/")"
+log "Syncing demo/client-db/ to $DATA/democlient on $WHERE"
+rsync -rlpt --delete "$ROOT/demo/client-db/" "$(dest "$DATA/democlient/")"
 
 case "$cmd" in
   up|down|status|check) vm "bash $DATA/democlient/vm.sh $cmd" ;;

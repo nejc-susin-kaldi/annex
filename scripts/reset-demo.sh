@@ -5,7 +5,7 @@
 #      links it, D112, and rebuilds the Metabase dashboards)
 #   2. every app that isn't a Goat Arcade example removed with its data: tilt-watch (the live build) too, unless --keep
 #   3. Goat Arcade's database reseeded (scripts/democlient.sh reseed --yes): its data then ends yesterday
-#   4. the examples in examples/goat-arcade/ redeployed (a new container drops every in-memory cache of the old data);
+#   4. the examples in demo/apps/ redeployed (a new container drops every in-memory cache of the old data);
 #      tilt-watch deployed from there too if --keep tilt-watch and it isn't deployed
 #   5. the checks, unless --no-check: test-smoke.sh, test-examples.sh (output in .build/reset-demo/)
 #   6. the demo's own state, after the checks so it is the newest: tech-board's claims released (as boris) and its
@@ -23,7 +23,7 @@
 #   --no-check     skip the test suites
 source "$(dirname "$0")/lib.sh"
 ANNEX="$ROOT/annex"
-GA=$ROOT/examples/goat-arcade
+GA=$ROOT/demo/apps
 LIVE=tilt-watch   # the live build: an example folder (the fallback), but removed unless --keep
 
 examples=()
@@ -64,7 +64,7 @@ echo "  start the platform with extras (Metabase, Dozzle); Goat Arcade's databas
 [ ${#remove[@]} -gt 0 ] && echo "  REMOVE with their data: ${remove[*]}"
 echo "  RESEED Goat Arcade's database (arcade-db): its data then ends yesterday"
 echo "  redeploy: ${examples[*]}"
-[ -n "$deploy_live" ] && echo "  deploy the live build's fallback: $LIVE (from examples/goat-arcade/$LIVE)"
+[ -n "$deploy_live" ] && echo "  deploy the live build's fallback: $LIVE (from demo/apps/$LIVE)"
 [ ${#as_is[@]} -gt 0 ] && echo "  keep as is: ${as_is[*]}"
 [ -n "$check" ] && echo "  run the checks: test-smoke.sh, test-examples.sh"
 echo "  then: release tech-board's claims, run tech-board watch, kanboard seed; send one party booking"

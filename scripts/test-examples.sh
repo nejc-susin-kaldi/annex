@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Do the demo apps in examples/ still build, deploy and work? Run it before a demo, not as a platform check: the platform
+# Do the demo apps in demo/apps/ still build, deploy and work? Run it before a demo, not as a platform check: the platform
 # suites use annex-selftest and never touch these (they are stand-ins for client apps and change with the client).
-# Covers the four vibe-coded Goat Arcade apps in examples/goat-arcade/ (tech-board, high-score-wall, league-desk,
+# Covers the four vibe-coded Goat Arcade apps in demo/apps/ (tech-board, high-score-wall, league-desk,
 # party-bookings) and Kanboard (venue-pulse and weekly-takings are archived, D115): deploy, health check, the pages for the logins that use them, and the writes and jobs
 # each one has. Repeatable on a stack where the apps already ran:
 # sign-ups are withdrawn and claims released again; what stays behind is one party request (and its confirmation) from
@@ -34,7 +34,7 @@ deploy_app() {
 }
 # psql on the product database, through the VM (works on both lanes)
 pq() { vm "docker exec -i annex-product-db-1 psql -XAt -U postgres -d product -c \"$1\""; }
-GA="$ROOT/examples/goat-arcade"
+GA="$ROOT/demo/apps"
 
 expect "sam signs in" 200 "$(login sam)"
 expect "maja signs in" 200 "$(login maja)"

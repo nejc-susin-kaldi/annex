@@ -1,6 +1,6 @@
 # Connecting a client's database to the Annex gateway
 
-This is what a client (their DBA, or the DBA's coding agent) does so that Annex can read their database, and what Annex does on its side. Goat Arcade is the worked example: `democlient/initdb/00-roles.sh` and `03-grants.sql` are the client's part, and `platform/db/product/clientlink/` is Annex's part. In production the client's side points at a **read replica**, not the primary.
+This is what a client (their DBA, or the DBA's coding agent) does so that Annex can read their database, and what Annex does on its side. Goat Arcade is the worked example: `demo/client-db/initdb/00-roles.sh` and `03-grants.sql` are the client's part, and `platform/db/product/clientlink/` is Annex's part. In production the client's side points at a **read replica**, not the primary.
 
 ## What the client does
 1. **Create one read-only login for Annex.** It can read the schemas Annex needs and nothing else:

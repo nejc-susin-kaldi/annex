@@ -136,7 +136,7 @@ project until they're a member of it.
 Nothing on this app is human-only beyond the platform's usual ones (`annex remove`, `rollback --with-data`).
 
 ```bash
-annex deploy examples/goat-arcade/kanboard
+annex deploy demo/apps/kanboard
 annex run kanboard seed        # fills the boards; safe to repeat
 ```
 
@@ -153,7 +153,7 @@ more, `kaldi-admin` sets their role in Kanboard (Users).
 4. Compare the upstream image's `/etc/nginx/nginx.conf` and `/usr/local/bin/entrypoint.sh` with
    `annex/nginx.conf.tmpl` and `annex/entrypoint.sh`. Check also that `app/constants.php` still reads the settings
    `annex/config.php` defines.
-5. Deploy on the local lane first: `ANNEX_ENV=local annex deploy examples/goat-arcade/kanboard`. The entrypoint runs
+5. Deploy on the local lane first: `ANNEX_ENV=local annex deploy demo/apps/kanboard`. The entrypoint runs
    Kanboard's database migrations (`cli db:migrate`) before the web server starts.
 
    If the new release fails its health check, Annex switches back. The migrations it ran stay in the database, so

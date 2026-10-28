@@ -49,7 +49,7 @@ Compose project `annex` (`compose.yaml`; container names `annex-<service>-1`). M
 
 The extras profile is off by default (`scripts/push.sh --extras`). Per-container hardening: every platform container has a healthcheck; ops, hooks and console run as uid 10001, read-only root, no capabilities. The Docker socket is never mounted into anything that serves requests: the two proxies are the only holders, and only read-only access reaches ops.
 
-Outside the platform: `democlient/` is a separate Compose project (`democlient`, unlabelled) standing for a client's own database; its only network is `annex-clientlink`, shared with product-db (D77). `scripts/push.sh` brings it up and links it after the platform starts (D112).
+Outside the platform: `demo/client-db/` is a separate Compose project (`democlient`, unlabelled) standing for a client's own database; its only network is `annex-clientlink`, shared with product-db (D77). `scripts/push.sh` brings it up and links it after the platform starts (D112).
 
 Apps are separate containers, one per app, named `annex-app-<name>`: uid 10001, read-only root, `/tmp` as a 64 MB tmpfs, `cap_drop: ALL`, `no-new-privileges`, `pids_limit: 256`, 0.5 CPU, memory from `resources.memory` (default 256 MiB) (D16, D95). An app has no platform labels of its own: Annex writes them, and a deploy refuses an image that carries any (D83).
 

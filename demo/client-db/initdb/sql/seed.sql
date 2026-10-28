@@ -4,7 +4,7 @@
 -- depend on row order or query plans, so the same anchor gives the same rows. Dates are days before the
 -- anchor (pg_temp.ago(n)); the last day with data is the day before it.
 --
--- Planted stories (democlient/checks.sql proves each one):
+-- Planted stories (demo/client-db/checks.sql proves each one):
 --   1 dying machine: Haunted Lighthouse in Maribor, coil faults rising for six weeks, plays falling, now down
 --   2 the champion: goatmother (GOA) holds the top score on many models at three venues
 --   3 Celje lost its stars: Mountain Goat Mayhem and Dragon Heist moved to Zagreb 35 days ago; revenue fell

@@ -9,7 +9,7 @@
 | Browser access | `scripts/tunnel.sh up`, then https://home.annex.home.arpa:8443 |
 | Demo passwords | `scripts/show-users.sh` (the three demo users only) |
 | User accounts | `./annex users list`, `./annex users add <login> --name '…' --email … [--groups users,builders,admins]` (emails an invitation), `./annex users set <login> [--groups …] [--disable\|--enable]`, `./annex users reset <login>`, `./annex users remove <login>` (all human only) |
-| Deploy an app | `./annex deploy examples/goat-arcade/league-desk` |
+| Deploy an app | `./annex deploy demo/apps/league-desk` |
 | Inspect apps | `./annex list`, `./annex status <app>`, `./annex logs <app> -f` |
 | Run a job now | `./annex run <app> <job>` |
 | Releases of an app | `./annex releases <app>` |
@@ -37,7 +37,7 @@
 `./annex` runs the CLI from the repo through uv. To put `annex` on your PATH, see `docs/setup.md` §6.
 
 ## Two lanes: the VM and the local stack (D99)
-The platform runs in two places from the same files: the **VM** (the default, everything above) and a **local stack** on the Mac's Docker Desktop. Put `ANNEX_ENV=local` in front of any script or `./annex` command to use the local one: `ANNEX_ENV=local scripts/push.sh`, `ANNEX_ENV=local ./annex deploy examples/goat-arcade/league-desk`, `ANNEX_ENV=local scripts/test-smoke.sh`.
+The platform runs in two places from the same files: the **VM** (the default, everything above) and a **local stack** on the Mac's Docker Desktop. Put `ANNEX_ENV=local` in front of any script or `./annex` command to use the local one: `ANNEX_ENV=local scripts/push.sh`, `ANNEX_ENV=local ./annex deploy demo/apps/league-desk`, `ANNEX_ENV=local scripts/test-smoke.sh`.
 - **Per command, never a default.** Don't export it in a profile or a long-lived shell: a forgotten export would send `annex deploy` and `annex remove` to the wrong stack. Without it, nothing changes: `.env`, `ssh annex`, `/srv/annex`.
 - **What it is for.** Developing and proving a change quickly: wipe and rebuild in minutes, no shared environment to wait for, no effect on the VM. Settings in `.env.local` (else `.env.local.example`), data in `~/.annex/local`, Traefik on `127.0.0.1:9443`/`:9080`, its own hostnames (`*.annex-local.home.arpa`); the renders are apart (`.build/vm/platform`, `.build/local/platform`). Setup, browser access and wiping it: `docs/setup.md` §8.
 - **What it is not.** Not a second environment: no backups worth keeping, no Slack, arm64 images where the VM has amd64 (D98). **Prove a change on the local lane first when it allows it; run the suites on the VM before a demo and after platform changes.** Nothing proven only locally counts as proven for the VM.
@@ -134,7 +134,7 @@ ssh annex 'docker rm -f annex-restore-scratch; sudo rm -rf /srv/annex/restore-sc
 ## Tests, the self-test app and test mode (D74)
 - **One fixture:** the platform suites deploy `tests/annex-selftest` (and variants of it, `annex-selftest-<what>`), never an example app or a client's app, because those change per client. It is a `web+job` app that uses every feature on demand: `/whoami`, gateway reads (`/gateway/<view>`), Postgres (`/db`), files, `notify` email and Slack (`#annex-selftest`), webhooks (`/hooks/*`), error switches (`/raise`, `/boom`, `/emit` with fake secrets), alert switches (`/data/crashes`, `/data/failjob`, `/data/unhealthy`, `/fail500`), a plain-text logging mode and jobs `tick` (every minute), `work` and `notify` (by hand: `annex run annex-selftest work`). **To diagnose a platform feature in production-like conditions, deploy it** (`scripts/selftest.py build DIR`, then `annex deploy DIR`).
 - **Slack in tests:** while a suite runs, annex-ops is in **test mode**: the file `state/ops/test-mode` holds an end time (3 hours ahead, written by `scripts/testlib.sh` when a suite starts and removed when it exits), and every Slack post, the apps' and the platform's alerts alike, goes to `#annex-selftest` as `[TEST] ... (test run: this was meant for #channel)`. The send log marks the row "test mode: posted to ...". `ctl info` shows whether it is on. A suite that dies leaves the file behind, which stops mattering after its end time. `ANNEX_TEST_MODE=0` runs a suite without it. **`#annex-selftest` must exist and the Annex app must be invited to it**, or the posts fail (and `test-notify.sh` says so).
-- **The demo apps** (`examples/`) are checked by `scripts/test-examples.sh`, before a demo.
+- **The demo apps** (`demo/apps/`) are checked by `scripts/test-examples.sh`, before a demo.
 
 ## CI (D104)
 `.github/workflows/ci.yml` has two jobs. It is written but has not run yet: the repo has no remote.
@@ -247,12 +247,12 @@ Metabase (extras: `scripts/extras.sh on`, `metabase.<domain>`) is configured ent
 - **Run it without a push** (on the VM, e.g. to try a spec from a scratch copy): `cd /srv/annex/platform && METABASE_SPEC_DIR=/srv/annex/<copy>/config/metabase bash platform/vm/metabase-setup.sh`.
 
 ## The demo client's database: Goat Arcade (D77, D78)
-A stand-in for a client's own production database: compose project `democlient` (`democlient/`, on the VM in `/srv/annex/democlient`), and the only data the gateway and Metabase serve on this instance (D112). It isn't part of the platform: backups, alerts, the console and log shipping ignore it. product-db reads it through postgres_fdw, and apps see it only as the Goat Arcade views on the gateway. Handoff docs: `docs/goat-arcade/`.
+A stand-in for a client's own production database: compose project `democlient` (`demo/client-db/`, on the VM in `/srv/annex/democlient`), and the only data the gateway and Metabase serve on this instance (D112). It isn't part of the platform: backups, alerts, the console and log shipping ignore it. product-db reads it through postgres_fdw, and apps see it only as the Goat Arcade views on the gateway. Handoff docs: `docs/goat-arcade/`.
 - **Start and link:** `scripts/push.sh` does it, on both lanes (D112): after the platform is up it starts arcade-db if it isn't running (the first start seeds it, about a minute more), links product-db if it isn't linked, and otherwise only re-applies the views. The suites rely on it. By hand: `scripts/democlient.sh up`, then `scripts/democlient.sh link`.
 - **Before a demo or a handoff:** `scripts/democlient.sh reseed` (asks first). The data then ends yesterday. `scripts/democlient.sh check` should print seven `t` rows (the planted stories), and `status` prints the counts, the anchor date and the link.
 - **A view changed:** edit `platform/db/product/clientlink/api_views_arcade.sql`, then `scripts/push.sh` (it re-applies the views once linked) and `scripts/democlient.sh dictionary` (regenerates `docs/goat-arcade/data-dictionary.md`). `CREATE OR REPLACE VIEW` keeps apps' grants. A view whose columns change shape must be dropped, and every app reading it must be deployed again to get its grant back.
 - **A client table changed shape:** `scripts/democlient.sh link --refresh <t>[,<t>]` (D106): the foreign table is renamed aside, imported again, the views re-applied (apps keep their grants) and the old one dropped. If a view no longer fits, the old table stays as `src_arcade.<t>__old` and the message says what to fix. Never drop `src_arcade`: that drops the views and every app's grants on them.
 - **Stop:** `scripts/democlient.sh down` keeps the data. While it's down, the Goat Arcade views fail with a connection error, and everything else works; the next `push.sh` starts it again.
 - **Where:** `/srv/annex/democlient` (compose and SQL), `state/democlient-db` (its data), `state/democlient.env` (the client's own file: its admin password and the `annex_reader` login; not in Annex's backups), `secrets/democlient.env` (Annex's copy of the reader's password only, which product-db's user mapping also holds; archived with Annex's other credentials, D106).
-- **Connections:** the reader allows 25 (`democlient/role.sql`, applied on every `up`), for the gateway's pool of 6 (`PGRST_DB_POOL`) plus Metabase's; idle sessions close after 5 minutes and postgres_fdw reconnects by itself.
+- **Connections:** the reader allows 25 (`demo/client-db/role.sql`, applied on every `up`), for the gateway's pool of 6 (`PGRST_DB_POOL`) plus Metabase's; idle sessions close after 5 minutes and postgres_fdw reconnects by itself.
 

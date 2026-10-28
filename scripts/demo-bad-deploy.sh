@@ -3,12 +3,12 @@
 # Annex rolls it back by itself. The running version stays live the whole time; the failed release is recorded, its
 # image removed, and its logs (the error it wrote) stay searchable in the console and with `annex logs`.
 #
-# The broken version is a copy in .build/demo-bad-deploy: examples/goat-arcade/league-desk itself is never changed.
+# The broken version is a copy in .build/demo-bad-deploy: demo/apps/league-desk itself is never changed.
 # Needs league-desk deployed (scripts/reset-demo.sh does that). Works on both lanes (ANNEX_ENV=local in front).
 # Usage: scripts/demo-bad-deploy.sh
 source "$(dirname "$0")/lib.sh"
 APP=league-desk
-SRC=$ROOT/examples/goat-arcade/$APP
+SRC=$ROOT/demo/apps/$APP
 WORK=$ROOT/.build/demo-bad-deploy
 
 "$ROOT/annex" status "$APP" >/dev/null 2>&1 \

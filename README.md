@@ -10,7 +10,7 @@ scripts/push.sh --extras      # sync and start the platform, incl. Metabase and 
 scripts/test-smoke.sh         # quick check that every part works (under a minute)
 scripts/show-users.sh         # demo user passwords
 ```
-On a new VM, start with [docs/new-instance.md](docs/new-instance.md): what to decide, how to prepare the VM and the machine you run this from, and the first bootstrap, push and smoke test. `push.sh` also brings up Goat Arcade's database (`democlient/`), the synthetic client whose curated views the gateway and Metabase serve (D77, D112). For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo is in [docs/demo.md](docs/demo.md), and a self-guided tour for visitors in [docs/goat-arcade/tour.md](docs/goat-arcade/tour.md); teardown is in [docs/teardown.md](docs/teardown.md). Day-to-day commands are in [docs/operations.md](docs/operations.md).
+On a new VM, start with [docs/new-instance.md](docs/new-instance.md): what to decide, how to prepare the VM and the machine you run this from, and the first bootstrap, push and smoke test. `push.sh` also brings up Goat Arcade's database (`demo/client-db/`), the synthetic client whose curated views the gateway and Metabase serve (D77, D112). For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo is in [docs/demo.md](docs/demo.md), and a self-guided tour for visitors in [docs/goat-arcade/tour.md](docs/goat-arcade/tour.md); teardown is in [docs/teardown.md](docs/teardown.md). Day-to-day commands are in [docs/operations.md](docs/operations.md).
 
 ## Deploying apps
 ```bash
@@ -19,7 +19,7 @@ On a new VM, start with [docs/new-instance.md](docs/new-instance.md): what to de
 ./annex list
 ./annex releases my-tool                       # release history; ./annex rollback my-tool undoes a deploy
 ```
-The app contract is in [docs/app-contract.md](docs/app-contract.md), or run `./annex contract`. Example apps are Goat Arcade's tools in `examples/goat-arcade/`: `tech-board` (web+job, Postgres, email, Slack), `high-score-wall`, `league-desk`, `party-bookings` (a webhook) and `kanboard` (an off-the-shelf tool behind the same login), plus `tilt-watch`, the demo's live build kept as its fallback. Templates: `python-web`, `python-job`, `node-web`, `static`; any other stack works too (the contract's "Bring your own stack").
+The app contract is in [docs/app-contract.md](docs/app-contract.md), or run `./annex contract`. Example apps are Goat Arcade's tools in `demo/apps/`: `tech-board` (web+job, Postgres, email, Slack), `high-score-wall`, `league-desk`, `party-bookings` (a webhook) and `kanboard` (an off-the-shelf tool behind the same login), plus `tilt-watch`, the demo's live build kept as its fallback. Templates: `python-web`, `python-job`, `node-web`, `static`; any other stack works too (the contract's "Bring your own stack").
 
 People sign in with Annex's own accounts (no company SSO needed): `./annex users add ana --name 'Ana Kovač' --email ana@client.com` emails them an invitation. See [docs/operations.md](docs/operations.md#accounts-annexs-own-users-d57).
 
@@ -45,7 +45,7 @@ Plus annex-ops (`platform/ops/`: email and Slack for apps, incidents and alerts,
 | `scripts/extras.sh on\|off` | Metabase and Dozzle on or off |
 | `scripts/tunnel.sh up\|down` | SSH tunnel `127.0.0.1:8443 → annex:443` |
 | `scripts/test-smoke.sh` | **after every push**: every part once (login, deploy, gateway, job, email, ops, host, webhooks), under a minute |
-| `scripts/test-examples.sh` | before a demo: do the Goat Arcade apps in `examples/goat-arcade/` still build, deploy and work? The platform suites don't touch them: they use `annex-selftest` |
+| `scripts/test-examples.sh` | before a demo: do the Goat Arcade apps in `demo/apps/` still build, deploy and work? The platform suites don't touch them: they use `annex-selftest` |
 | `scripts/test-all.sh [--slow] [--only a,b]` | every check below in order, with a summary (30+ minutes; only when needed) |
 | `scripts/test-platform.sh` | M0.1 acceptance checks |
 | `scripts/backup.sh` | run the nightly backup now |

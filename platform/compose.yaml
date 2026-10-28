@@ -176,7 +176,7 @@ services:
       PGRST_OPENAPI_MODE: follow-privileges
       # the pool to product-db (D106): every pooled session that reads a Goat Arcade view holds one postgres_fdw
       # connection to the client's database for as long as it lives, so this and Metabase's pool (up to 15) are
-      # what annex_reader's connection limit is sized for (democlient/role.sql)
+      # what annex_reader's connection limit is sized for (demo/client-db/role.sql)
       PGRST_DB_POOL: "6"
       PGRST_DB_POOL_ACQUISITION_TIMEOUT: "10"
     # edge: Traefik's route for admins; product: its database. Apps with views reach it on their own networks, where
@@ -547,7 +547,7 @@ networks:
     name: annex-product
     internal: true
     labels: {com.kaldi.annex: "true"}
-  # product-db and a client's own database (democlient/, D77): product-db reads it through postgres_fdw
+  # product-db and a client's own database (demo/client-db/, D77): product-db reads it through postgres_fdw
   clientlink:
     name: annex-clientlink
     internal: true

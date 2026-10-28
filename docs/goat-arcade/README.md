@@ -32,7 +32,7 @@ Everyone can open all of them and explore the views with the query builder (the 
 ## For the platform team
 | What | Where |
 |---|---|
-| The client's database | `democlient/`: compose project `democlient` on the VM, `arcade-db`; schema and seed in `initdb/` |
+| The client's database | `demo/client-db/`: compose project `democlient` on the VM, `arcade-db`; schema and seed in `initdb/` |
 | Run it | `scripts/push.sh` brings it up and links it (D112); by hand `scripts/democlient.sh up`, then `link`. Also `status`, `check` (the planted stories), `reseed` (data ends yesterday again), `psql`, `down` |
 | The link | `platform/db/product/clientlink/link.sql`: postgres_fdw from product-db, the client's read-only login `annex_reader` |
 | The views (the allowlist) | `platform/db/product/clientlink/api_views_arcade.sql`, with a comment on every column; after a change, `scripts/push.sh`, then `scripts/democlient.sh dictionary` |

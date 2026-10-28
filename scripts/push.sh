@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Render, sync the platform bundle to the VM (or the local stack: ANNEX_ENV=local, D99) and (re)start it with its Compose;
-# then the demo client's database (democlient/, Goat Arcade) is brought up and linked if it isn't yet (D112).
+# then the demo client's database (demo/client-db/, Goat Arcade) is brought up and linked if it isn't yet (D112).
 # Usage: scripts/push.sh [--extras] [--force]
 #   --extras  also starts Metabase and Dozzle
 #   --force   push although the VM's last pushed commit is not an ancestor of this checkout
@@ -67,15 +67,15 @@ log "Applying gateway schema and log hook (platform/db/product/annex_api.sql, ga
 vm "cd $DATA/platform && for f in annex_api.sql gateway.sql; do
       docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' product-db psql -q -v ON_ERROR_STOP=1 -U postgres -d product -f /docker-entrypoint-initdb.d/\$f
     done"
-if [ -d "$ROOT/democlient" ]; then
+if [ -d "$ROOT/demo/client-db" ]; then
   # This instance's client is Goat Arcade (D77): its database comes up with the platform, so the suites can rely on
   # it (D112). Only now: its network, annex-clientlink, is the platform's and exists once the platform has started.
   # vm.sh ensure starts arcade-db if it isn't running (the first start seeds it: about a minute), links product-db
   # if it isn't linked, and otherwise only re-applies the views, as a push did before.
-  log "Goat Arcade, the demo client's database (democlient/, D77): up, linked, views applied"
-  rsync -rlpt --delete "$ROOT/democlient/" "$(dest "$DATA/democlient/")"
+  log "Goat Arcade, the demo client's database (demo/client-db/, D77): up, linked, views applied"
+  rsync -rlpt --delete "$ROOT/demo/client-db/" "$(dest "$DATA/democlient/")"
   vm "ANNEX_DATA_DIR=$DATA bash $DATA/democlient/vm.sh ensure"
-# a checkout without democlient/: the views only, if product-db is linked already
+# a checkout without demo/client-db/: the views only, if product-db is linked already
 elif vm "cd $DATA/platform && docker compose exec -T product-db psql -XAt -U postgres -d product -c \"SELECT 1 FROM pg_namespace WHERE nspname = 'src_arcade'\"" | grep -qx 1; then
   log "Applying the Goat Arcade views (platform/db/product/clientlink/api_views_arcade.sql)"
   vm "cd $DATA/platform && docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' product-db psql -q -X -v ON_ERROR_STOP=1 -U postgres -d product -f /docker-entrypoint-initdb.d/clientlink/api_views_arcade.sql"

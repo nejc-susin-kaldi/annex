@@ -42,7 +42,7 @@ All data is synthetic. Who's who and what each person can open is in [goat-arcad
    - Check that the `annex` MCP server is connected (`/mcp`).
    - Have the prompt below ready to paste.
 5. **Terminal** in the repo, with a large font, for `scripts/demo-booking.sh`, `scripts/demo-bad-deploy.sh` and `./annex` commands.
-6. **Fallback for the live build:** `examples/goat-arcade/tilt-watch` is a copy built from the same prompt. If the live build fails on stage, deploy it with `./annex deploy examples/goat-arcade/tilt-watch` (about a minute). To have it live from the start, run the reset with `--keep tilt-watch`. Its tile is then on the discovery page before the build, and the live build becomes a new release of it. If that release fails its health check, the copy stays live.
+6. **Fallback for the live build:** `demo/apps/tilt-watch` is a copy built from the same prompt. If the live build fails on stage, deploy it with `./annex deploy demo/apps/tilt-watch` (about a minute). To have it live from the start, run the reset with `--keep tilt-watch`. Its tile is then on the discovery page before the build, and the live build becomes a new release of it. If that release fails its health check, the copy stays live.
 
 ## The prompt for the live build
 > Build tilt-watch on Annex, owner sam: for the last 30 days, each pinball machine's tilt rate next to its model's average. Flag anything over 3x, worst first. Deploy it and give me the URL.
@@ -84,7 +84,7 @@ What the data holds:
 | Metabase is slow or shows a spinner | It's still starting (up to about 2 minutes after a reset). Warm it before the demo |
 | Claude Code asks who the owner is | Answer `sam` |
 | tilt-watch deploys but flags nothing | The model average includes the cabinet itself (see "The prompt for the live build"). Ask: "Compare each cabinet with the other cabinets of its model, not including itself." |
-| Claude Code's deploy fails repeatedly | Let it read the error once more. If it's stuck, show `./annex logs tilt-watch`, then deploy the fallback: `./annex deploy examples/goat-arcade/tilt-watch` |
+| Claude Code's deploy fails repeatedly | Let it read the error once more. If it's stuck, show `./annex logs tilt-watch`, then deploy the fallback: `./annex deploy demo/apps/tilt-watch` |
 | `demo-booking.sh` says BOOKING_HOOK_SECRET is not set | A human sets it once: `./annex secret set party-bookings BOOKING_HOOK_SECRET` (any long random value; the website and Annex share it) |
 | tech-board shows someone "since" yesterday | A claim from a rehearsal. Click *Release*. The reset releases every claim the board shows |
 | boris sees no boards in Kanboard | He hadn't opened Kanboard before the last seed. Run `./annex run kanboard seed`; it adds everyone who has signed in, and creates no card twice |
