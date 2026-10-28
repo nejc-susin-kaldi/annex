@@ -7,7 +7,7 @@ A small platform where builders (and their AI coding agents) deploy internal too
 cp .env.example .env          # then adjust; ANNEX_PUBLIC_PORT=8443 for tunnel testing
 scripts/bootstrap.sh          # VM layout, secrets, demo users, mkcert cert (idempotent)
 scripts/push.sh --extras      # sync and start the platform, incl. Metabase and Dozzle
-tests/smoke.sh         # quick check that every part works (under a minute)
+tests/smoke.sh                # quick check that every part works (under a minute)
 scripts/show-users.sh         # demo user passwords
 ```
 On a new VM, start with [docs/new-instance.md](docs/new-instance.md): what to decide, how to prepare the VM and the machine you run this from, and the first bootstrap, push and smoke test. `push.sh` also brings up Goat Arcade's database (`demo/client-db/`), the synthetic client whose curated views the gateway and Metabase serve (D77, D112). For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo is in [docs/demo.md](docs/demo.md), and a self-guided tour for visitors in [docs/goat-arcade/tour.md](docs/goat-arcade/tour.md); teardown is in [docs/teardown.md](docs/teardown.md). Day-to-day commands are in [docs/operations.md](docs/operations.md).
@@ -37,20 +37,41 @@ People sign in with Annex's own accounts (no company SSO needed): `./annex users
 
 Plus annex-ops (`platform/ops/`: email and Slack for apps, incidents and alerts, host and backup monitoring, usage stats and the weekly digest, webhook delivery, stored logs and error groups), product-db and appdata-db (Postgres 16), Ofelia (jobs), offen backup (nightly, 7 days) and two Docker socket proxies. Hostnames come from `ANNEX_HOST_PATTERN`, `{name}.annex.home.arpa` by default.
 
-## Scripts
+## Layout
+```
+platform/   what runs on the server: compose files, config/, db/, ops/, vm/ (push.sh syncs it as /srv/annex/platform)
+toolkit/    what a builder installs: cli/, mcp/, skill/, templates/, runtime/
+demo/       the synthetic client, Goat Arcade: client-db/ (its database), apps/ (its tools)
+tests/      what proves the platform: the suites (smoke.sh, all.sh, <area>.sh), lib.sh, selftest.py, annex-selftest/ (the fixture)
+scripts/    operator commands on the Mac: bootstrap, push, backup, restore, tunnel, demo
+docs/       architecture, operations, setup, decisions, plans
+```
+
+## Scripts (operator commands, from the Mac)
 | Script | Does |
 |---|---|
 | `scripts/bootstrap.sh` | prepares `/srv/annex`, generates secrets on the VM, pushes the cert in `local` TLS mode |
 | `scripts/push.sh [--extras]` | renders config, rsyncs to `/srv/annex/platform`, `docker compose up --wait`, brings up and links Goat Arcade's database if needed, applies gateway views, configures Metabase |
 | `scripts/extras.sh on\|off` | Metabase and Dozzle on or off |
 | `scripts/tunnel.sh up\|down` | SSH tunnel `127.0.0.1:8443 → annex:443` |
+| `scripts/backup.sh` | run the nightly backup now |
+| `scripts/restore.sh <app> [archive]` | restore one app's database and files |
+| `scripts/seed-usage.sh [--clear]` | optional demo prep: 8 weeks of synthetic usage history for the console's Usage pages |
+| `scripts/sync-runtime.sh [--check]` | copies `toolkit/runtime/annex_runtime.*` into templates, examples and fixtures (or checks they match) |
+| `scripts/demo-bad-deploy.sh` | demo beat: a broken copy of `league-desk` fails its health check and is rolled back by itself; the live version stays |
+| `scripts/reset-demo.sh [--keep <app>] [--usage] [--no-check] [--yes]` | clean demo state (destructive, asks first): other apps removed with their data, Goat Arcade's data reseeded, the examples redeployed, checks run, the morning set up (see docs/demo.md, D113) |
+| `scripts/wipe-vm.sh` | removes everything Annex from the VM (asks first) |
+| `scripts/show-users.sh` | prints the demo users' passwords |
+
+## Test suites
+Every suite deploys Annex's own test app (`tests/annex-selftest/`), never a demo app. `tests/smoke.sh` after every push; one suite for the part you changed; `tests/all.sh` only when needed (ask first). Redirect a suite's output to a file: the SSH tunnel keeps a pipe open.
+| Suite | Does |
+|---|---|
 | `tests/smoke.sh` | **after every push**: every part once (login, deploy, gateway, job, email, ops, host, webhooks), under a minute |
 | `tests/examples.sh` | before a demo: do the Goat Arcade apps in `demo/apps/` still build, deploy and work? The platform suites don't touch them: they use `annex-selftest` |
 | `tests/all.sh [--slow] [--only a,b]` | every check below in order, with a summary (30+ minutes; only when needed) |
 | `tests/platform.sh` | M0.1 acceptance checks |
-| `scripts/backup.sh` | run the nightly backup now |
-| `scripts/restore.sh <app> [archive]` | restore one app's database and files |
-| `tests/apps.sh`, `test-jobs.sh`, `restore-test.sh` | M0.2/M0.3 checks |
+| `tests/apps.sh`, `tests/jobs.sh`, `tests/restore.sh` | M0.2/M0.3 checks |
 | `tests/rollback.sh` | M1.1 checks: automatic rollback, `annex rollback`, `--with-data` |
 | `tests/notify.sh` | M1.2 checks: email through Mailpit, Slack allowlist, send log, grants |
 | `tests/logs.sh` | M2.2 checks (about 4 minutes): stored logs searchable by release, level, text and request id; secrets never stored; a failed release keeps its lines; gateway, platform and sign-in lines; ops restart without gap or duplicates; the rate cap; a paused annex-ops never blocks a deploy; partitions roll; the job-only logging warning |
@@ -59,12 +80,6 @@ Plus annex-ops (`platform/ops/`: email and Slack for apps, incidents and alerts,
 | `tests/errors.sh` | M2.3 checks (about 4 minutes): 50 identical errors are one group and one email, another kind another email, the hourly limit and its summary, quiet after a fix, back in a newer release, browser reports, printed tracebacks, groups removed with the app |
 | `tests/hooks.sh` | M1.5 checks: signed events reach the app, bad ones don't, retries after a stop, replay, a tight route |
 | `tests/usage.sh` | M1.4 checks: a scripted session shows the same numbers in `annex usage`, the tiles and the console; privacy, retention, restart, digest |
-| `scripts/seed-usage.sh [--clear]` | optional demo prep: 8 weeks of synthetic usage history for the console's Usage pages |
 | `tests/alerts.sh` | M1.3 checks: stop, crash loop, 500 burst, failing job and platform outage each give one alert and one "resolved" (12-20 minutes) |
 | `tests/host.sh` | disk, memory and backup alerts: one alert and one "resolved" each, admins only |
 | `tests/users.sh` | accounts: invitation, self-service reset and change, groups, disable, last-admin guard, removal |
-| `scripts/sync-runtime.sh [--check]` | copies `toolkit/runtime/annex_runtime.*` into templates, examples and fixtures (or checks they match) |
-| `scripts/demo-bad-deploy.sh` | demo beat: a broken copy of `league-desk` fails its health check and is rolled back by itself; the live version stays |
-| `scripts/reset-demo.sh [--keep <app>] [--usage] [--no-check] [--yes]` | clean demo state (destructive, asks first): other apps removed with their data, Goat Arcade's data reseeded, the examples redeployed, checks run, the morning set up (see docs/demo.md, D113) |
-| `scripts/wipe-vm.sh` | removes everything Annex from the VM (asks first) |
-| `scripts/show-users.sh` | prints the demo users' passwords |

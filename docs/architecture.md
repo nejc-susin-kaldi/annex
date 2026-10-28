@@ -144,6 +144,18 @@ Database access goes through a small own pool (`db.py`: ops 4 connections, conso
 
 annex-ops's schema is migrations (D93): `platform/db/appdata/bootstrap.sql` (roles, passwords, `CREATE DATABASE`; every push) then `platform/vm/migrate.py` applies `platform/db/appdata/migrations/NNN_*.sql` not yet in `annex_ops.schema_version`, each in one transaction. An applied file is never edited.
 
+## The repository
+Six folders at the root, one per job (D117):
+```
+platform/   what runs on the server: compose files, config/, db/, ops/, vm/ (push.sh syncs it as /srv/annex/platform)
+toolkit/    what a builder installs: cli/, mcp/, skill/, templates/, runtime/
+demo/       the synthetic client, Goat Arcade: client-db/ (its database), apps/ (its tools)
+tests/      what proves the platform: the suites (smoke.sh, all.sh, <area>.sh), lib.sh, selftest.py, annex-selftest/ (the fixture)
+scripts/    operator commands on the Mac: bootstrap, push, backup, restore, tunnel, demo
+docs/       architecture, operations, setup, decisions, plans
+```
+`platform/` is synced flat, so a path inside it (`vm/annex_vm.py`, `db/appdata/`) is the same in the repo under `platform/` and on the VM under `/srv/annex/platform/`.
+
 ## Where to look next
 
 - Reasons and history: `docs/decisions.md` (index with status at the top).

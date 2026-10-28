@@ -81,7 +81,7 @@ problem() { problems+=("$1"); printf '\033[31m  problem:\033[0m %s\n' "$1"; }
 log "Platform"
 "$ROOT/scripts/push.sh" --extras
 
-# testlib after the push: logins, the tunnel and test mode (Slack to #annex-selftest while this runs)
+# tests/lib.sh after the push: logins, the tunnel and test mode (Slack to #annex-selftest while this runs)
 source "$ROOT/tests/lib.sh"
 url() { echo "https://$(setting ANNEX_HOST_PATTERN | sed "s/{name}/$1/")$(setting ANNEX_PORT_SUFFIX)"; }
 

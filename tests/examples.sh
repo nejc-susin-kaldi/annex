@@ -6,7 +6,7 @@
 # each one has. Repeatable on a stack where the apps already ran:
 # sign-ups are withdrawn and claims released again; what stays behind is one party request (and its confirmation) from
 # scripts/demo-booking.sh. Jobs only email demo logins, and Slack posts go to
-# #annex-selftest because testlib switches test mode on while a suite runs (D74). party-bookings needs its
+# #annex-selftest because tests/lib.sh switches test mode on while a suite runs (D74). party-bookings needs its
 # secret (`annex secret set party-bookings BOOKING_HOOK_SECRET`, human only): without it that block prints a skip line
 # and the suite goes on. Works on both lanes (ANNEX_ENV=local).
 # Leaves every app deployed, as the demo wants them.

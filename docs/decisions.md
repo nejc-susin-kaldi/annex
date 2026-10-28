@@ -125,6 +125,7 @@ Status: active, superseded by Dn, retired, or revised by Dn (the entry still sta
 | D114 | Goat Arcade demo: final runs on the VM and resource record | active; its seven-app memory record predates D115 |
 | D115 | venue-pulse and weekly-takings retired: two dashboards instead of two apps | active; revises D113; revised by D116 (`examples/archive/` is the git tag `examples-archive`) |
 | D116 | Tidying before a handover: finished one-off scripts, the `metabase_usage` role, `migrate-networks` and `examples/archive/` removed | active; revises D93, D102 and D115 |
+| D117 | The repository in six folders: platform/, toolkit/, demo/, tests/, scripts/, docs/ | active |
 
 ## D1. Apps run through `ssh annex` and the VM's Compose (14 Oct)
 **What.** The CLI copies the app folder to `/srv/annex/deploy/<app>`, writes the generated compose file there and runs `docker compose` on the VM over SSH, the same way the platform runs. The brief said "built and run through the annex-vm Docker context, using the Mac's Compose".
@@ -1591,3 +1592,27 @@ The platform isn't changed in this step; `docs/demo.md` lists the symptom under 
 **Not here.** On the VM, `/srv/annex/deploy/` holds 19 folders of removed apps and selftest variants (`.lock.guard` and `current.json` only, 744 KB); the local lane has the same kind. A human removes them while no deploy runs (operations.md, "`remove` leaves `.lock.guard` behind"). Nothing else on the VM changes: the migration drops the role on the next push.
 
 **D116, verification (27 Oct).** Unit tests green (vm 256, cli 123, ops 416). `push.sh` on both lanes applied `006_drop_metabase_usage.sql` (the role is gone on both; the bundle no longer carries `once/` or the retire script). Smoke: VM 54/54; local 52/54, the two failures being the local lane's nightly backup, which hadn't run at 02:00 that night (the Mac was asleep), so the newest backup was over 26 h old and the backup alert was open, as it should be. Not run: the long suites (nothing they prove changed).
+
+## D117. The repository in six folders: platform/, toolkit/, demo/, tests/, scripts/, docs/ (28 Oct, Nejc)
+**What.** The root had fourteen folders side by side. Now it has six, one per job, in four commits (one per group, each pushed and smoke-tested on the local lane before the next):
+```
+platform/   what runs on the server: compose files, config/, db/, ops/, vm/ (push.sh syncs it as /srv/annex/platform)
+toolkit/    what a builder installs: cli/, mcp/, skill/ (was skills/annex), templates/, runtime/
+demo/       the synthetic client, Goat Arcade: client-db/ (was democlient/), apps/ (was examples/goat-arcade/)
+tests/      what proves the platform: <area>.sh (were scripts/test-<area>.sh), restore.sh, lib.sh (was testlib.sh), selftest.py, annex-selftest/
+scripts/    operator commands on the Mac, unchanged
+docs/       unchanged
+```
+- **The bundle is unchanged.** `render.py` copies `platform/*` flat into `.build/<env>/platform`, so `/srv/annex/platform/vm/annex_vm.py` and every path on the VM stay as they were, and references inside `platform/` files stay bundle-relative (`vm/migrate.py`, `./config/traefik`). Only repo-relative references outside it say `platform/...`. Likewise `demo/client-db/` is still synced to `/srv/annex/democlient` and keeps the compose project name `democlient`, and `scripts/democlient.sh` keeps its name.
+- **Lookups that reach the repo root** moved one level: `remote.py`'s `REPO` (`parents[4]`), `annex_deploy.py`'s checkout fallback for the manifest module, the CLI and VM unit tests that read `scripts/` or `toolkit/`. `tests/selftest.py` finds the fixture next to itself. `docs/app-contract.md` links to `toolkit/cli/src/annex_cli/contract.md`.
+- **Two things on a machine point at the old paths** and are re-done by hand: the MCP registration (`--project .../toolkit/mcp`) and the skill symlink (`~/.claude/skills/annex -> toolkit/skill`); `docs/setup.md` §4 says so. The `.venv` folders of `cli` and `mcp` were deleted (their editable installs held absolute paths); uv recreates them.
+- CLAUDE.md's layout is by group, README has the tree and separate tables for operator scripts and suites, architecture.md has "The repository".
+
+**Why.** Nejc: the root was daunting for someone picking the repo up, and templates and skills had no business at the top level. A root that reads "the platform, the toolkit, the demo, the tests, the scripts, the docs" needs no explanation, and `platform/` matches the name the VM already uses.
+
+**Alternatives.**
+- Moving only `templates/` and `skills/`: two conventions in one tree. The full grouping was the same mechanical work four times.
+- Putting the suites under `scripts/tests/`: keeps "scripts run on the Mac" true, but `tests/` already held the fixture, and "everything about testing in one folder" is the simpler rule.
+- Renaming `scripts/democlient.sh` and the compose project to match `client-db`: the VM folder, the project, the state files and the docs all say `democlient`; one rename there would have pulled the rest.
+
+**Verification.** After each group: `bash -n` and shellcheck on the changed scripts, the four unit suites, `sync-runtime.sh --check`, `sync-contract.sh --check`, both renders, a push and `tests/smoke.sh` on the local lane (54/54 each time); after group 2 also `./annex init` and an import of the MCP server; after group 3 `tests/examples.sh` (81/81). Then a push and smoke on the VM. `tests/all.sh` on the local lane is the last check, because a path missed in a rarely run suite only shows when that suite runs.

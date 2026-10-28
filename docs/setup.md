@@ -84,7 +84,7 @@ scripts/tunnel.sh up
 Open https://home.annex.home.arpa:8443 and sign in with a demo user. `scripts/show-users.sh` prints the passwords. Stop the tunnel with `scripts/tunnel.sh down`.
 
 ## 4. Annex in Claude Code: MCP server and skill (M0.4)
-Both are user-scoped, so Claude Code can use Annex from any folder, including an empty one.
+Both are user-scoped, so Claude Code can use Annex from any folder, including an empty one. Both point at a path in the repo, which moved to `toolkit/` on 28 Oct (D117): a registration or symlink made before that needs its undo and the command again.
 
 **MCP server** (stdio, runs from this repo through uv):
 ```bash
