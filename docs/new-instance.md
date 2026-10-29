@@ -264,7 +264,8 @@ Everything here changes the AWS account, so the operator runs it. The examples u
 3. **Security group.** Inbound TCP 443 and 80 from Kaldi's addresses (office, VPN), TCP 22 from the operators'.
    Nothing else; outbound as AWS's default (Let's Encrypt, Route53, the mail relay, Slack, apps with `egress:`). Open
    443 to everyone only if an app needs webhooks from a SaaS; two factors are then what guards every other route.
-   80 only redirects to 443.
+   80 only redirects to 443. With employee access over the tailnet (section 8.7) the group changes: 80 and 443
+   close, and TCP 8443 opens to everyone.
 4. **The instance.** Ubuntu 24.04 LTS **x86_64** (not Graviton: the images are pinned for amd64), `t3.medium`
    (2 vCPU, 4 GiB: the core platform without Metabase), a 40 GB encrypted gp3 volume, the instance profile
    `annex-kaldi`, the security group, the operator's EC2 key pair for the `ubuntu` user, and **IMDSv2 required with
@@ -275,13 +276,14 @@ Everything here changes the AWS account, so the operator runs it. The examples u
    ```
    Then an Elastic IP, associated with it.
 5. **DNS for the names.** In the zone: `*.annex.kaldi.si A <elastic IP>` (TTL 300). Every app gets a name under
-   it, so the wildcard is the only record.
+   it, so the wildcard is the only record. Section 8.7 later points the wildcard at the tailnet and adds two names.
 6. **Snapshots.** A Data Lifecycle Manager policy for the instance's volume: daily, keep 7. The nightly backups are
    on the same disk (D87); this is the copy that survives losing it.
 
 ### 8.2 The instance and the operator machine
 
-As sections 2 and 3, with a key and an alias of its own. `--no-firewall` because the security group does that job:
+As sections 2 and 3, with a key and an alias of its own. `--no-firewall` because the security group does that job;
+add `--tailscale` for employee access over the tailnet (section 8.7):
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/annex_kaldi_ed25519 -N '' -C annex-kaldi
 ```
@@ -390,6 +392,86 @@ ANNEX_ENV=kaldi tests/instance.sh > .build/instance.log 2>&1; tail -5 .build/ins
   Undo: `claude mcp remove --scope user annex-kaldi`.
 - **Slack:** `docs/setup.md` §7 in Kaldi's workspace, with `ssh annex-kaldi` and `ANNEX_ENV=kaldi scripts/push.sh`.
   `#annex-selftest` isn't needed: no suite runs there.
+
+### 8.7 Employee access: Annex's own tailnet (D120)
+
+Optional, and the recommended shape for a client's instance: the apps leave the internet, and employees reach them
+over a tailnet that Annex runs itself (Headscale, a container of the platform). From the internet only Headscale and
+the webhook receiver answer, on port 8443. Authelia still signs everyone in; the tailnet only decides which devices
+get that far. Every step here is a human's: it changes the instance, AWS or DNS.
+
+1. **Tailscale on the instance.** If section 8.2 ran without it, run it again with `--tailscale` (each step it has
+   done already is skipped):
+   ```bash
+   ssh ubuntu@<elastic IP> "sudo bash -s -- --no-firewall --tailscale --pubkey '$(cat ~/.ssh/annex_kaldi_ed25519.pub)'" < platform/vm/prepare-vm.sh
+   ```
+2. **The setting and the port.** In the security group, add inbound TCP 8443 from everyone now: Tailscale clients
+   reach Headscale there, the server itself included (80 and 443 close in step 6). In `.env.kaldi`,
+   `ANNEX_ACCESS=headscale` (the public port is `ANNEX_BIND_PUBLIC`, 8443 by default), then push. Headscale starts,
+   and the webhook URLs builders get carry `:8443`.
+   ```bash
+   ANNEX_ENV=kaldi scripts/push.sh
+   ```
+3. **The server joins the tailnet**, with a one-time key for the tag `tag:annex-server` (valid an hour) and then its
+   tailnet address:
+   ```bash
+   ssh annex-kaldi 'cd /srv/annex/platform && docker compose exec headscale headscale preauthkeys create --tags tag:annex-server --expiration 1h'
+   ```
+   ```bash
+   ssh -t annex-kaldi 'sudo tailscale up --login-server https://vpn.annex.kaldi.si:8443 --hostname annex --auth-key <the key>'
+   ```
+   ```bash
+   ssh annex-kaldi tailscale ip -4
+   ```
+   Until DNS changes (next step), `vpn.annex.kaldi.si` already points at the Elastic IP through the wildcard.
+4. **DNS.** In the zone: `*.annex.kaldi.si A <tailnet address>` instead of the Elastic IP, and two names that stay
+   public: `vpn.annex.kaldi.si A <elastic IP>` and `hooks.annex.kaldi.si A <elastic IP>` (a name beats the wildcard).
+   The certificate's challenge record is TXT and unaffected.
+5. **Your own device first**, before the security group closes 443:
+   ```bash
+   ANNEX_ENV=kaldi ./annex users device-invite nejc
+   ```
+   Follow the email (or `--print-key` and `tailscale login --login-server https://vpn.annex.kaldi.si:8443 --auth-key <key>`).
+   `https://home.annex.kaldi.si/` should then open from that device with Tailscale on, and `ANNEX_ENV=kaldi ./annex users devices`
+   list it.
+6. **Security group.** Inbound is then: TCP 8443 from everyone (Tailscale clients reach Headscale, webhook senders
+   the receiver) and TCP 22 from the operators'. Remove 80 and 443. Optionally UDP 41641 from everyone: devices then connect
+   to the server directly; without it their traffic goes through Tailscale's relays (slower, still end-to-end
+   encrypted). Where a webhook provider publishes its sending addresses (GitHub, Stripe), 8443 can be limited to
+   those plus the employees' networks.
+7. **Check**, from your device on the tailnet: `ANNEX_ENV=kaldi tests/instance.sh > .build/instance.log 2>&1; tail -5 .build/instance.log`.
+
+**People's devices.** One key per device, emailed with how to connect each kind of device:
+`ANNEX_ENV=kaldi ./annex users device-invite ana` (`--hours 1` to `168`, default 24; `--print-key` to hand it over
+yourself). `./annex users devices [ana]` lists the devices, online and last seen; `./annex users device-remove ana
+[--device ID]` takes one or all off the tailnet; `./annex users remove ana` does that too. A device signs in again
+after 180 days (a new key). The tailnet lets a device reach the server's 443 and nothing else, never another
+device (`platform/config/headscale/policy.hujson`).
+
+**Sign-in with the client's identity provider (optional).** Besides keys, people may join by signing in with the
+client's provider: `tailscale login --login-server https://vpn.annex.kaldi.si:8443` opens it in the browser. Register
+an app (a "web" client) at the provider with the redirect URI `https://vpn.annex.kaldi.si:8443/oidc/callback` and
+the scopes `openid profile email`, write its secret on the instance (paste, Enter, Ctrl-D), then set the three
+settings and push:
+```bash
+ssh annex-kaldi 'umask 077; cat > /srv/annex/secrets/headscale/oidc_client_secret'
+```
+```
+ANNEX_ACCESS_OIDC_ISSUER=https://login.microsoftonline.com/<tenant id>/v2.0
+ANNEX_ACCESS_OIDC_CLIENT_ID=<application (client) id>
+ANNEX_ACCESS_OIDC_DOMAINS=kaldi.si
+```
+Only addresses in `ANNEX_ACCESS_OIDC_DOMAINS` (space-separated) may join. Providers, as we meet them (none tried
+yet with Annex): **Microsoft Entra ID**, issuer `https://login.microsoftonline.com/<tenant id>/v2.0`; **Google
+Workspace**, issuer `https://accounts.google.com` (an OAuth client of type "Web application"; Google sends no
+`preferred_username`, so Headscale names the user from the address). People who join this way get a Headscale user
+named by the provider, not their Annex login: `annex users devices` shows them, and `device-remove <that name>`
+removes them. Headscale's own notes per provider: https://headscale.net/stable/ref/oidc/.
+
+**Undo.** Security group and DNS back to sections 8.1.3 and 8.1.5; `ANNEX_ACCESS=open` (and the
+`ANNEX_ACCESS_OIDC_*` lines removed), then push: Headscale's container goes. On the instance:
+`sudo tailscale logout`, `sudo apt-get remove -y tailscale`, `sudo rm /etc/apt/sources.list.d/tailscale.list
+/usr/share/keyrings/tailscale-archive-keyring.gpg`, and `rm -r /srv/annex/state/headscale /srv/annex/secrets/headscale`.
 
 **Start over or tear down:** `ANNEX_ENV=kaldi scripts/wipe-vm.sh` removes everything Annex from the instance (asks
 first); terminating the instance, releasing the Elastic IP and undoing section 8.1 removes the rest.

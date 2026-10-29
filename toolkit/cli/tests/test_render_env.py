@@ -152,3 +152,48 @@ class InstanceSettings(unittest.TestCase):
     def test_demo_on_needs_no_admin(self):
         v = derive({**VM, "ANNEX_DEMO": "on"})
         self.assertEqual(v["ANNEX_ADMIN_LOGIN"], "")
+
+
+class EmployeeAccess(unittest.TestCase):
+    """ANNEX_ACCESS=headscale (D120): Annex's own tailnet, Headscale and webhooks on a second, public entrypoint."""
+
+    def test_open_by_default(self):
+        v = derive(VM)
+        self.assertEqual((v["ANNEX_ACCESS"], v["ANNEX_BIND_PUBLIC"]), ("open", "8443"))
+        self.assertNotIn("headscale", v["COMPOSE_FILE"])
+        self.assertEqual(v["ANNEX_URL_HOOKS"], "https://hooks.annex.home.arpa" + v["ANNEX_PORT_SUFFIX"])
+        self.assertEqual(derive(LOCAL, "local")["ANNEX_BIND_PUBLIC"], "127.0.0.1:9444")
+
+    def test_headscale(self):
+        v = derive({**KALDI, "ANNEX_ACCESS": "headscale"}, "kaldi")
+        self.assertEqual(v["COMPOSE_FILE"],
+                         "compose.yaml:compose.tls-acme.yaml:compose.mail-relay.yaml:compose.access-headscale.yaml")
+        # Tailscale clients and webhook senders use the public entrypoint; everything else stays on 443
+        self.assertEqual((v["ANNEX_URL_VPN"], v["ANNEX_URL_HOOKS"], v["ANNEX_URL_HOME"]),
+                         ("https://vpn.annex.kaldi.si:8443", "https://hooks.annex.kaldi.si:8443", "https://home.annex.kaldi.si"))
+        v = derive({**KALDI, "ANNEX_ACCESS": "headscale", "ANNEX_BIND_PUBLIC": "443", "ANNEX_BIND_HTTPS": "10.0.0.5:4443"}, "kaldi")
+        self.assertEqual(v["ANNEX_URL_VPN"], "https://vpn.annex.kaldi.si")
+
+    def test_oidc(self):
+        v = derive({**KALDI, "ANNEX_ACCESS": "headscale", "ANNEX_ACCESS_OIDC_ISSUER": "https://login.microsoftonline.com/x/v2.0",
+                    "ANNEX_ACCESS_OIDC_CLIENT_ID": "abc", "ANNEX_ACCESS_OIDC_DOMAINS": "kaldi.si example.com"}, "kaldi")
+        self.assertTrue(v["COMPOSE_FILE"].endswith(":compose.access-headscale.yaml:compose.access-oidc.yaml"))
+        self.assertEqual(v["ANNEX_ACCESS_OIDC_DOMAINS"], "kaldi.si example.com")
+
+    def test_refusals(self):
+        hs = {**KALDI, "ANNEX_ACCESS": "headscale"}
+        oidc = {"ANNEX_ACCESS_OIDC_ISSUER": "https://idp.example", "ANNEX_ACCESS_OIDC_CLIENT_ID": "abc",
+                "ANNEX_ACCESS_OIDC_DOMAINS": "kaldi.si"}
+        for env in ({**KALDI, "ANNEX_ACCESS": "tailscale"},
+                    # in upstream mode Traefik has no certificate for the public entrypoint
+                    {**VM, "ANNEX_ACCESS": "headscale", "ANNEX_TLS_MODE": "upstream", "ANNEX_UPSTREAM_IP": "192.168.1.2"},
+                    {**hs, "ANNEX_BIND_PUBLIC": "443"},             # the apps' port
+                    {**hs, "ANNEX_BIND_PUBLIC": "x"},
+                    {**KALDI, **oidc},                              # OIDC is the tailnet's sign-in
+                    {**hs, "ANNEX_ACCESS_OIDC_ISSUER": "https://idp.example"},
+                    {**hs, **oidc, "ANNEX_ACCESS_OIDC_ISSUER": "http://idp.example"},
+                    {**hs, **oidc, "ANNEX_ACCESS_OIDC_DOMAINS": "kaldi.si,example.com"},
+                    {**hs, **oidc, "ANNEX_ACCESS_OIDC_DOMAINS": ""}):  # whoever the provider signs in
+            with self.subTest(env={k: v for k, v in env.items() if k.startswith("ANNEX_ACCESS") or k == "ANNEX_BIND_PUBLIC"}), \
+                    self.assertRaises(SystemExit):
+                derive(env, "kaldi")

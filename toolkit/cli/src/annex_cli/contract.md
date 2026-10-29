@@ -48,7 +48,7 @@ egress: []                    # hostnames the app calls on the internet; [] = no
 resources:
   memory: 512m                # optional; default 256m, 128m-512m
 ```
-Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `mail`, `ops`, `status`, `hooks`, `console`, `echo-test`, `www`, `api`.
+Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `mail`, `ops`, `status`, `hooks`, `console`, `vpn`, `echo-test`, `www`, `api`.
 
 ## Runtime rules
 - **Stateless container.** Persist only to `DATABASE_URL` or `/data`. Everything else is lost on redeploy and isn't backed up.

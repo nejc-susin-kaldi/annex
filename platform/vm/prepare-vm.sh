@@ -12,11 +12,15 @@
 #   --user annex                           the account the scripts log in as (default annex)
 #   --data-dir /srv/annex                  ANNEX_DATA_DIR of .env (default /srv/annex)
 #   --no-firewall                          leave the host firewall alone (the cloud's security group does that job)
+#   --tailscale                            also install the Tailscale client, for ANNEX_ACCESS=headscale (D120): the
+#                                          server joins Annex's own tailnet after the first push (docs/new-instance.md,
+#                                          "Employee access")
 #
 # What it does, each step skipped when already done: Docker Engine and the Compose plugin from Docker's apt
 # repository, jq and python3-yaml; container log rotation in /etc/docker/daemon.json (never overwrites an existing
 # file); the user in the docker and sudo groups; the data directory, mode 750; the key in authorized_keys; password
-# logins off in sshd (a drop-in file); ufw with 22, 80 and 443 TCP from the LAN. It prints one line per step.
+# logins off in sshd (a drop-in file); ufw with 22, 80 and 443 TCP from the LAN; with --tailscale, Tailscale from its
+# own apt repository (installed and enabled, not logged in). It prints one line per step.
 # Undo: docs/new-instance.md section 2.
 #
 # Running as `bash -s` reads this file from stdin, so the body is a function called on the last line with stdin
@@ -24,7 +28,7 @@
 set -euo pipefail
 
 main() {
-  local user=annex data_dir=/srv/annex lan='' pubkey='' firewall=1
+  local user=annex data_dir=/srv/annex lan='' pubkey='' firewall=1 tailscale=
   while [ $# -gt 0 ]; do
     case "$1" in
       --user) user=${2:?--user needs a name}; shift 2 ;;
@@ -32,6 +36,7 @@ main() {
       --lan) lan=${2:?--lan needs a network like 192.168.1.0/24}; shift 2 ;;
       --pubkey) pubkey=${2:?--pubkey needs the public key line}; shift 2 ;;
       --no-firewall) firewall=; shift ;;
+      --tailscale) tailscale=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) usage >&2; die "unknown option $1" ;;
     esac
@@ -74,6 +79,20 @@ main() {
   else
     step "Docker Engine and the Compose plugin"
     apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null
+  fi
+
+  # --- Tailscale (ANNEX_ACCESS=headscale, D120): the client only; it joins the tailnet once Headscale runs ---
+  if [ -n "$tailscale" ]; then
+    if command -v tailscale >/dev/null; then
+      already "Tailscale ($(tailscale version | head -1))"
+    else
+      step "Tailscale from its apt repository (pkgs.tailscale.com, stable)"
+      curl -fsSL "https://pkgs.tailscale.com/stable/ubuntu/${VERSION_CODENAME}.noarmor.gpg" -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+      curl -fsSL "https://pkgs.tailscale.com/stable/ubuntu/${VERSION_CODENAME}.tailscale-keyring.list" -o /etc/apt/sources.list.d/tailscale.list
+      apt-get update -qq
+      apt-get install -y -qq tailscale >/dev/null
+    fi
+    systemctl enable --now tailscaled >/dev/null 2>&1 || true
   fi
 
   # --- container log rotation (Annex never changes daemon.json later: D88) ---
@@ -155,6 +174,7 @@ main() {
   echo "  $data_dir: $(stat -c '%U:%G %a' "$data_dir")"
   echo "  sshd: $(sshd -T 2>/dev/null | grep -i '^passwordauthentication' || echo 'passwordauthentication ?')"
   [ -n "$firewall" ] && ufw status | sed 's/^/  ufw: /' | head -6
+  [ -n "$tailscale" ] && echo "  $(tailscale version | head -1 | sed 's/^/tailscale /'), not joined yet (docs/new-instance.md, \"Employee access\")"
   echo "Next, from the operator machine: a Host block in ~/.ssh/config, then 'ssh annex true', .env, scripts/bootstrap.sh (docs/new-instance.md sections 3 to 5)."
 }
 
@@ -167,6 +187,7 @@ usage (as root on the new VM; from the operator machine the script goes over std
   --user annex                           the account the scripts log in as (default annex)
   --data-dir /srv/annex                  ANNEX_DATA_DIR of .env (default /srv/annex)
   --no-firewall                          leave the host firewall alone
+  --tailscale                            also install the Tailscale client (ANNEX_ACCESS=headscale)
 USAGE
 }
 step() { printf 'prepare: %s\n' "$*"; }

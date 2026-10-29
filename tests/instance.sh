@@ -2,7 +2,8 @@
 # Read-only check of an instance for real use (ANNEX_DEMO=off, D118), e.g. ANNEX_ENV=kaldi tests/instance.sh.
 # It changes nothing: no deploy, no sign-in, no test mode (Slack alerts keep going where they go), no tunnel. HTTP goes
 # to the instance's public names with the system's trust store, as a colleague's browser does, so this machine must be
-# allowed in (the security group). The suites (tests/smoke.sh and the rest) are for the VM and the local lane.
+# allowed in (the security group; with ANNEX_ACCESS=headscale, the tailnet, D120). The suites (tests/smoke.sh and the
+# rest) are for the VM and the local lane.
 export ANNEX_READ_ONLY_CHECK=1 ANNEX_TEST_MODE=0
 source "$(dirname "$0")/../scripts/lib.sh"
 source "$(dirname "$0")/lib.sh"
@@ -30,7 +31,10 @@ has "annex users answers" "admins" "$("$ROOT/annex" users list 2>&1)"
 echo "Front door ($HOME_URL)"
 out=$(pub -o /dev/null -w '%{http_code} %{redirect_url}' "$HOME_URL/" 2>&1)
 has_re "anonymous is sent to the sign-in page, over a certificate this machine trusts" "^302 $(setting ANNEX_URL_AUTH)" "$out"
-expect "plain HTTP is redirected to HTTPS" 302 "$(pub -o /dev/null -w '%{http_code}' "http://$(setting ANNEX_HOST_HOME)/" 2>&1)"
+# on the tailnet only 443 is allowed, and the security group closes 80 (D120)
+if [ "$(setting ANNEX_ACCESS)" != headscale ]; then
+  expect "plain HTTP is redirected to HTTPS" 302 "$(pub -o /dev/null -w '%{http_code}' "http://$(setting ANNEX_HOST_HOME)/" 2>&1)"
+fi
 if [ "$MODE" = acme ]; then
   cert=$(echo | openssl s_client -connect "$(setting ANNEX_HOST_HOME):443" -servername "$(setting ANNEX_HOST_HOME)" 2>/dev/null \
            | openssl x509 -noout -issuer -ext subjectAltName -checkend $((14 * 86400)) 2>&1)
@@ -42,6 +46,17 @@ if [ "$MODE" = acme ]; then
 fi
 expect "the hooks host has no login, and an unknown hook is a 404" 404 \
   "$(pub -o /dev/null -w '%{http_code}' -X POST -d '{}' "$(setting ANNEX_URL_HOOKS)/h/no-such-app/x" 2>&1)"
+
+if [ "$(setting ANNEX_ACCESS)" = headscale ]; then
+  echo "Employee access (Headscale, $(setting ANNEX_URL_VPN))"
+  expect "Headscale answers on the public entrypoint" 200 "$(pub -o /dev/null -w '%{http_code}' "$(setting ANNEX_URL_VPN)/health" 2>&1)"
+  public_port=$(setting ANNEX_URL_VPN | sed -n 's/.*:\([0-9]*\)$/\1/p')
+  expect "the apps and the sign-in page don't answer there" 404 \
+    "$(pub -o /dev/null -w '%{http_code}' "https://$(setting ANNEX_HOST_HOME)${public_port:+:$public_port}/" 2>&1)"
+  has "the server is on the tailnet, tagged tag:annex-server" "tag:annex-server" \
+    "$(vm "docker exec annex-headscale-1 headscale nodes list -o json")"
+  expect "  ...and its Tailscale client is running" Running "$(vm "tailscale status --json" | py 'd["BackendState"]')"
+fi
 
 echo "Sign-in and mail"
 policy=$(setting ANNEX_AUTH_POLICY)

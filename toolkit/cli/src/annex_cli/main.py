@@ -84,10 +84,21 @@ def _users(a: argparse.Namespace, emit) -> None:
         rows = [{**u, "groups": ",".join(u["groups"]), "disabled": "disabled" if u["disabled"] else ""}
                 for u in res["users"]]
         return print(_table(rows, ["login", "name", "email", "groups", "disabled"]))
+    if c == "devices":
+        res = ops.users("devices", a.login)
+        if emit:
+            return emit(res["devices"])
+        if not res["devices"]:
+            return print("no devices on the tailnet" + (f" for {a.login}" if a.login else "")
+                         + ". Send a key with: annex users device-invite <login>")
+        rows = [{**d, "online": "online" if d["online"] else "", "last_seen": d["last_seen"] or "",
+                 "expires": d["expires"] or "never", "tags": ",".join(d["tags"])} for d in res["devices"]]
+        return print(_table(rows, ["id", "login", "device", "ip", "online", "last_seen", "expires", "tags"]))
     if c == "remove" and not a.yes:
         if input(f"Remove the account {a.login}? They can't sign in any more. Type the login to confirm: ") != a.login:
             sys.exit("Aborted.")
-    opts = {k: getattr(a, k) for k in ("name", "email", "groups", "print_password", "demo", "disable", "enable") if hasattr(a, k)}
+    opts = {k: getattr(a, k) for k in ("name", "email", "groups", "print_password", "demo", "disable", "enable",
+                                       "hours", "print_key", "device") if hasattr(a, k)}
     res = ops.users(c, a.login, **opts)
     if emit:
         return emit(res)
@@ -108,6 +119,20 @@ def _users(a: argparse.Namespace, emit) -> None:
               + (", DISABLED" if u["disabled"] else ""))
     elif c == "remove":
         print(f"removed {res['removed']}. {res['note']}")
+        if res.get("devices_removed"):
+            print(f"their devices left the tailnet: {', '.join(res['devices_removed'])}")
+    elif c == "device-invite":
+        until = f" (works once, until {res['expires']})" if res.get("expires") else " (works once)"
+        if res.get("key"):
+            print(f"one-time key for one of {res['login']}'s devices{until}; give it to them privately:\n  {res['key']}\n"
+                  f"they connect with: tailscale login --login-server {res['server']} --authkey <the key>")
+        else:
+            print(f"a one-time key for one device was emailed to {res['sent_to']}{until}, with how to connect")
+    elif c == "device-remove":
+        if res["removed"]:
+            print(f"{res['login']}: removed " + ", ".join(f"{d['device']} ({d['id']})" for d in res["removed"]))
+        else:
+            print(f"{res['login']} had no devices on the tailnet")
     elif c == "reset":
         if res.get("password"):
             print(f"new password for {res['login']} (shown once): {res['password']}"
@@ -197,7 +222,7 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("app")
     s.add_argument("--keep-data", action="store_true", help="keep its database, files and secrets")
     s.add_argument("--yes", action="store_true", help="don't ask for confirmation")
-    s = sub.add_parser("users", help="Annex's own user accounts: list, add, set, remove, reset (human only)")
+    s = sub.add_parser("users", help="Annex's own user accounts: list, add, set, remove, reset, and their devices on the tailnet (human only)")
     us = s.add_subparsers(dest="users_cmd", required=True)
     us.add_parser("list", help="every account, with groups and whether it's disabled")
     s = us.add_parser("add", help="create an account and email the person an invitation to set a password")
@@ -225,6 +250,19 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("login")
     s.add_argument("--print-password", action="store_true")
     s.add_argument("--demo", action="store_true", help="print a new password and keep it in secrets/users.txt (adds the line if missing)")
+    # employee devices on the tailnet (ANNEX_ACCESS=headscale, D120)
+    s = us.add_parser("devices", help="devices on the tailnet: whose, online, last seen (ANNEX_ACCESS=headscale)")
+    s.add_argument("login", nargs="?", help="only this person's")
+    s = us.add_parser("device-invite", help="email the person a one-time key that connects one device to the tailnet")
+    s.add_argument("login")
+    s.add_argument("--hours", type=int, default=24, help="how long the key works, 1 to 168 (default 24)")
+    s.add_argument("--print-key", action="store_true", help="print the key once instead of emailing it")
+    s = us.add_parser("device-remove", help="take a device off the tailnet, or all of the person's devices")
+    s.add_argument("login")
+    s.add_argument("--device", type=int, help="the device's id from `annex users devices` (default: all of theirs)")
+    s = sub.add_parser("connect", help="point this CLI and the MCP server at your Annex instance (human only), or show where they point")
+    s.add_argument("ssh_host", nargs="?", help="the SSH alias of the Annex server (a Host in ~/.ssh/config), e.g. annex-kaldi")
+    s.add_argument("--data-dir", default="/srv/annex", help="Annex's directory on the server (default /srv/annex)")
     s = sub.add_parser("contract", help="print the app contract: the core, or one topic (for agents)")
     s.add_argument("topic", nargs="?", help="notify, webhooks, logging, stack, or all")
 

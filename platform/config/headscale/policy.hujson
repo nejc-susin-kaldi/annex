@@ -1,0 +1,12 @@
+// Who may reach what on the tailnet (D120). Everything not accepted here is refused.
+// tag:annex-server is the Annex server itself, joined with a tagged one-time key (docs/new-instance.md); no person
+// owns the tag, so only a key an admin makes on the server can carry it.
+{
+  "tagOwners": {
+    "tag:annex-server": [],
+  },
+  "acls": [
+    // every person's device may open Annex's apps and pages over HTTPS; nothing else, and never another person's device
+    {"action": "accept", "src": ["autogroup:member"], "dst": ["tag:annex-server:443"]},
+  ],
+}

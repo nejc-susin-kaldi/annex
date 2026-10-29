@@ -4,7 +4,8 @@
 Runs ON THE VM with the stock python3 (stdlib only; the user commands also use Ubuntu's python3-yaml), called
 over SSH by the CLI. Database passwords and gateway tokens are generated and kept here, in
 /srv/annex/secrets/apps/<app>/. Every command prints one JSON object; secret values are never printed, with
-one exception: `users-add/users-reset --print-password` returns the new password once, for a human.
+two exceptions: `users-add/users-reset --print-password` returns the new password once, and
+`users-device-invite --print-key` a device's one-time key (D120), for a human.
 `deploy` and `rollback` are the exception to "one object": the whole sequence runs here (vm/annex_deploy.py, D101)
 and prints one JSON object per line, the last one the result.
 """
@@ -1653,9 +1654,18 @@ def cmd_users_remove(a: argparse.Namespace) -> None:
         del users[a.login]
         save_users(users)
     drop_demo_password(a.login)
-    audit("user.removed", a.actor, None, {"login": a.login})
-    out({"ok": True, "removed": a.login,
-         "note": "apps they own keep running; give them a new owner in annex.yaml and deploy again"})
+    res = {"ok": True, "removed": a.login,
+           "note": "apps they own keep running; give them a new owner in annex.yaml and deploy again"}
+    # their devices leave the tailnet with them (D120); the account is gone either way
+    devices: list[dict] = []
+    if platform_setting("ANNEX_ACCESS") == "headscale":
+        try:
+            devices = remove_devices(a.login)
+            res["devices_removed"] = [r["device"] for r in devices]
+        except Fail as e:
+            res["warning"] = f"their devices may still be on the tailnet ({e}); remove them with: annex users device-remove {a.login}"
+    audit("user.removed", a.actor, None, {"login": a.login, **({"devices": [r["device"] for r in devices]} if devices else {})})
+    out(res)
 
 
 def cmd_users_reset(a: argparse.Namespace) -> None:
@@ -1682,6 +1692,156 @@ def cmd_users_sync(_: argparse.Namespace) -> None:
     users = load_users()
     write_directory(users)
     out({"ok": True, "directory": len(directory_entries(users))})
+
+
+# --- people's devices on the tailnet (ANNEX_ACCESS=headscale, D120) ------------------------------------------------
+# A person's devices belong to a Headscale user with their login as its name. Admins send one-time keys
+# (users-device-invite); with ANNEX_ACCESS_OIDC_* set, people may also sign in with the client's identity provider,
+# and Headscale names those users itself. The key is the one secret here: emailed, or printed once for a human.
+HEADSCALE = "annex-headscale-1"
+OPS = "annex-ops-1"
+NO_TAILNET = ("this instance has no tailnet (ANNEX_ACCESS=open): whoever the network in front lets through reaches "
+              "the sign-in page. Set ANNEX_ACCESS=headscale in the instance's .env and push (docs/new-instance.md, "
+              "\"Employee access\")")
+
+
+def headscale(*args: str):
+    """Headscale's own CLI in its container, as JSON. Errors never carry a key: a failed create prints none."""
+    if platform_setting("ANNEX_ACCESS") != "headscale":
+        raise Fail(NO_TAILNET)
+    r = run(["docker", "exec", HEADSCALE, "headscale", *args, "-o", "json"], capture_output=True, text=True)
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout).strip()
+        if "No such container" in err or "is not running" in err:
+            raise Fail("Headscale isn't running; start the platform with scripts/push.sh")
+        raise Fail(f"headscale {' '.join(args[:2])} failed: {err[-300:]}")
+    return json.loads(r.stdout) if r.stdout.strip() else None
+
+
+def _ts(value) -> str | None:
+    """Headscale's {"seconds": n} times as ISO 8601 UTC; None for missing or the zero time (never expires)."""
+    seconds = (value or {}).get("seconds") if isinstance(value, dict) else None
+    if not seconds or seconds <= 0:
+        return None
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(seconds))
+
+
+def device_row(node: dict) -> dict:
+    """What `annex users devices` shows of one Headscale node (pure)."""
+    ips = node.get("ip_addresses") or []
+    return {"id": node.get("id"), "login": (node.get("user") or {}).get("name") or "",
+            "device": node.get("given_name") or node.get("name") or "",
+            "ip": next((ip for ip in ips if "." in ip), ips[0] if ips else ""),
+            "online": bool(node.get("online")), "last_seen": _ts(node.get("last_seen")),
+            "expires": _ts(node.get("expiry")), "tags": list(node.get("tags") or [])}
+
+
+def device_key_email(name: str, email: str, url_vpn: str, url_home: str, key: str, expires: str | None) -> dict:
+    """The message that brings a person's device onto the tailnet (pure): what to install, the server, the key."""
+    text = (f"Hello {name},\n\n"
+            "Annex's apps are on a private network. To open them, connect your device to it once with the Tailscale "
+            "app and the key below. The key adds one device, works once"
+            + (f" and expires at {expires} (UTC)" if expires else "") + ".\n\n"
+            f"  Server: {url_vpn}\n  Key:    {key}\n\n"
+            "1. Install Tailscale: https://tailscale.com/download\n"
+            "2. Connect it to Annex's server with the key:\n"
+            f"   - Mac, Windows or Linux, in a terminal: tailscale login --login-server {url_vpn} --authkey {key}\n"
+            "   - Android: Settings > Accounts > the three dots > Use an alternate server (the server above); "
+            "then the three dots again > Use an auth key (the key above)\n"
+            "   - iPhone or iPad: the account icon > Log in... > the options menu > Use custom coordination server "
+            "(the server above), and enter the key when it asks\n"
+            f"   More help for Apple devices and Windows: {url_vpn}/apple and {url_vpn}/windows\n"
+            f"3. Open {url_home} and sign in as usual.\n\n"
+            "Another device needs another key: ask an Annex admin. If this key reached you by mistake, tell them, "
+            "so they can remove the device.\n")
+    return {"to": email, "subject": "Your key to connect a device to Annex", "text": text}
+
+
+_SEND = """
+import json, smtplib, sys
+from email.message import EmailMessage
+from annex_ops import config
+m = json.load(sys.stdin)
+msg = EmailMessage()
+msg["From"], msg["To"], msg["Subject"] = config.EMAIL_FROM, m["to"], m["subject"]
+msg.set_content(m["text"])
+with smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT, timeout=10) as s:
+    s.send_message(msg)
+"""
+
+
+def send_platform_email(message: dict) -> None:
+    """One email from the platform through ops' own mail settings (Mailpit, relayed when ANNEX_MAIL_RELAY=on). The
+    message goes in on stdin, so the key never shows in a process list."""
+    r = run(["docker", "exec", "-i", OPS, "python", "-c", _SEND], input=json.dumps(message), capture_output=True,
+            text=True)
+    if r.returncode != 0:
+        raise Fail("the mail server didn't take the message: " + (r.stderr or r.stdout).strip()[-300:]
+                   + ". Use --print-key instead, and check: docker logs annex-mailpit-1")
+
+
+def headscale_user(login: str, u: dict | None = None) -> dict | None:
+    """The Headscale user of a login; with u (the Annex account), created if missing."""
+    found = next((x for x in headscale("users", "list") or [] if x.get("name") == login), None)
+    if found is None and u is not None:
+        found = headscale("users", "create", login, "--email", u.get("email", ""),
+                          "--display-name", u.get("displayname") or login)
+    return found
+
+
+def cmd_users_devices(a: argparse.Namespace) -> None:
+    rows = [device_row(n) for n in headscale("nodes", "list") or []]
+    if a.login:
+        rows = [r for r in rows if r["login"] == a.login]
+    out({"ok": True, "devices": sorted(rows, key=lambda r: (r["login"], r["device"]))})
+
+
+def cmd_users_device_invite(a: argparse.Namespace) -> None:
+    if not 1 <= a.hours <= 168:
+        raise Fail("--hours must be between 1 and 168 (a week): the key is for one device, soon")
+    u = load_users().get(a.login)
+    if u is None:
+        raise Fail(f"no user {a.login!r}: devices belong to Annex accounts. Add one first: annex users add {a.login} ...")
+    if u.get("disabled"):
+        raise Fail(f"{a.login} is disabled. Enable it first: annex users set {a.login} --enable")
+    hs = headscale_user(a.login, u)
+    key = headscale("preauthkeys", "create", "--user", str(hs["id"]), "--expiration", f"{a.hours}h")
+    expires = _ts(key.get("expiration"))
+    res = {"ok": True, "login": a.login, "expires": expires}
+    if a.print_key:
+        res["key"] = key["key"]  # human-only, printed once by the CLI
+        res["server"] = platform_setting("ANNEX_URL_VPN")
+    else:
+        send_platform_email(device_key_email(u.get("displayname") or a.login, u.get("email", ""),
+                                             platform_setting("ANNEX_URL_VPN"), platform_setting("ANNEX_URL_HOME"),
+                                             key["key"], expires))
+        res["sent_to"] = u.get("email", "")
+    audit("user.device_invited", a.actor, None, {"login": a.login, "hours": a.hours,
+                                                 "how": "key printed once" if a.print_key else "key emailed"})
+    out(res)
+
+
+def remove_devices(login: str, device: int | None = None) -> list[dict]:
+    """Delete one device of a login, or all of them and their Headscale user (offboarding); returns what went."""
+    rows = [device_row(n) for n in headscale("nodes", "list") or []]
+    mine = [r for r in rows if r["login"] == login]
+    if device is not None:
+        mine = [r for r in mine if r["id"] == device]
+        if not mine:
+            raise Fail(f"{login} has no device {device}. See: annex users devices {login}")
+    for r in mine:
+        headscale("nodes", "delete", "--identifier", str(r["id"]), "--force")
+    if device is None:
+        hs = headscale_user(login)
+        if hs is not None:
+            headscale("users", "destroy", "--identifier", str(hs["id"]), "--force")
+    return mine
+
+
+def cmd_users_device_remove(a: argparse.Namespace) -> None:
+    gone = remove_devices(a.login, a.device)
+    audit("user.device_removed", a.actor, None, {"login": a.login, "devices": [r["device"] for r in gone]})
+    out({"ok": True, "login": a.login, "removed": gone})
 
 
 def main() -> None:
@@ -1813,6 +1973,21 @@ def main() -> None:
     s.add_argument("--demo", action="store_true",
                    help="print a new password and keep it in secrets/users.txt (adds the line if missing)")
     s.set_defaults(fn=cmd_users_reset)
+    s = sub.add_parser("users-devices", help="devices on the tailnet (ANNEX_ACCESS=headscale)")
+    s.add_argument("login", nargs="?")
+    s.add_argument("--actor", default="unknown", help="accepted like the other users-* commands; listing isn't audited")
+    s.set_defaults(fn=cmd_users_devices)
+    s = sub.add_parser("users-device-invite", help="a one-time key for one more device, emailed (or printed once)")
+    s.add_argument("login")
+    s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
+    s.add_argument("--hours", type=int, default=24)
+    s.add_argument("--print-key", action="store_true")
+    s.set_defaults(fn=cmd_users_device_invite)
+    s = sub.add_parser("users-device-remove", help="take one device, or all of a person's devices, off the tailnet")
+    s.add_argument("login")
+    s.add_argument("--actor", default="unknown", help="who is doing this, for the audit trail")
+    s.add_argument("--device", type=int)
+    s.set_defaults(fn=cmd_users_device_remove)
     a = p.parse_args()
     if getattr(a, "app", None) is not None and not NAME_RE.fullmatch(a.app):  # fullmatch: '$' lets a newline through
         out({"ok": False, "error": f"invalid app name {a.app!r}"})

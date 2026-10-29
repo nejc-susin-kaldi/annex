@@ -9,8 +9,10 @@ One client's server: a single VM (x86_64, 4 GiB RAM) running Docker Compose. The
  browser ─▶ [dronky Traefik, optional] ─▶ VM :80/:443 ─▶ traefik ─forward-auth─▶ authelia
               traefik routes (labels) ─▶ homepage · console · mailpit · gateway · hooks (/h/, no login) ·
                                          [extras: metabase, dozzle] · each web app (own network)
+ [ANNEX_ACCESS=headscale, D120] employee's device ─tailnet─▶ VM tailscale0 ─▶ :443 as above
+              internet ─▶ VM :8443 (public entrypoint, no forward-auth) ─▶ headscale (vpn.) · hooks (/h/)
 
-   edge        traefik · gateway · ops · hooks                        (outbound allowed: ops reaches Slack)
+   edge        traefik · gateway · ops · hooks · [headscale]          (outbound allowed: ops reaches Slack)
    platform    traefik · authelia · homepage · ops · console · mailpit · metabase · dozzle   (internal)
    product     product-db · gateway · metabase                        (internal)
    clientlink  product-db · democlient-db                             (internal; the client's own database)
@@ -43,11 +45,12 @@ Compose project `annex` (`compose.yaml`; container names `annex-<service>-1`). M
 | console | same image, `console_app` | 96m | read-only web console; read-only DB role `annex_console`; no Docker, no secrets (D69, D76) | platform, console |
 | mailpit | Mailpit | 64m | catches all mail (SMTP on `platform`) | platform |
 | ofelia | Ofelia | 64m | runs each app's `schedule` entries by `exec` in the app's container | socket-exec |
-| backup | offen/docker-volume-backup | 128m | nightly archive at 02:00 of `apps/`, `dumps/`, `secrets/`, `state/directory/`; 7 days | socket-exec |
+| backup | offen/docker-volume-backup | 128m | nightly archive at 02:00 of `apps/`, `dumps/`, `secrets/`, `state/directory/` (and `state/headscale/` with it on); 7 days | socket-exec |
+| headscale (`ANNEX_ACCESS=headscale`) | Headscale | 128m | Annex's own Tailscale coordination server: people's devices and the server on one tailnet, policy in `config/headscale/policy.hujson`; devices managed with `annex users device-*` (D120) | edge |
 | metabase (extras) | Metabase | 1536m | Goat Arcade's dashboards on the `annex_api` views; its own login | platform, product, appdata |
 | dozzle (extras) | Dozzle | 64m | live logs of platform containers, admins | platform, socket-ro |
 
-The extras profile is off by default (`scripts/push.sh --extras`). Per-container hardening: every platform container has a healthcheck; ops, hooks and console run as uid 10001, read-only root, no capabilities. The Docker socket is never mounted into anything that serves requests: the two proxies are the only holders, and only read-only access reaches ops.
+The extras profile is off by default (`scripts/push.sh --extras`). Headscale comes with `ANNEX_ACCESS=headscale` (`compose.access-headscale.yaml`, plus `compose.access-oidc.yaml` for an OIDC sign-in), an instance setting like D118's. Per-container hardening: every platform container has a healthcheck; ops, hooks and console run as uid 10001, read-only root, no capabilities. The Docker socket is never mounted into anything that serves requests: the two proxies are the only holders, and only read-only access reaches ops.
 
 Outside the platform: `demo/client-db/` is a separate Compose project (`democlient`, unlabelled) standing for a client's own database; its only network is `annex-clientlink`, shared with product-db (D77). `scripts/push.sh` brings it up and links it after the platform starts (D112).
 
@@ -62,14 +65,15 @@ All Annex networks carry `com.kaldi.annex=true` and are `internal` (no route out
 - **Platform networks.** `edge` holds Traefik, gateway, ops (for Slack) and hooks; no app is on it. `platform` holds the UIs Traefik forward-authenticates plus ops (Mailpit, tiles). `appdata` holds appdata-db with ops and hooks (and Metabase), no apps. `console` holds only the console and appdata-db, so the console cannot reach anything an app can. `product` holds product-db, the gateway and Metabase. `clientlink` holds product-db and the democlient database. `socket-ro` and `socket-exec` hold a proxy and its clients.
 - **Runtime connections survive a restart, not a recreate.** `scripts/push.sh` runs `networks-sync` after its appdata-db step and again after the full start; after a manual recreate of traefik, ops, gateway or appdata-db, run it by hand (`docs/operations.md`, "App networks").
 - **Front door.** Only Traefik publishes a port (80, and 443 in TLS mode). Every route except the hooks receiver's `/h/` sits behind Authelia forward-auth; `strip-identity` blanks any `Remote-*` header from a browser first.
+- **Employee access** (`ANNEX_ACCESS=headscale`, D120). Traefik also publishes `ANNEX_BIND_PUBLIC` (8443), the `public` entrypoint: no forward-auth, and only `vpn.` (Headscale) and the hooks receiver's `/h/` are on it. The instance's security group admits only that port from the internet; employees reach 443 over the tailnet (the host's Tailscale client, `tailscale0`), where the policy allows their devices `tag:annex-server:443` and nothing else. Authelia still signs in every person. `annex users remove` takes their devices off the tailnet.
 
 ## Files on the VM (`/srv/annex`)
 
 | Path | Content |
 |---|---|
 | `platform/` | synced repo bundle (compose, config, db, vm, ops); `.env` (settings), `VERSION` (commit, dirty flag, `.env` hash, contract version: `push.sh` refuses a checkout that lacks it, D85; a deploy compares the CLI's contract version with it, D103); its `platform/vm/` has the generated `annex_manifest.py` and `annex_logcheck.py` (D103) |
-| `secrets/` | `master.env`, per-service env files (`ops.env`, `hooks-receiver.env`; `slack.env` once Slack is connected), `authelia/` (`users.yml`: the accounts, managed with `annex users`; Authelia rewrites it on a password reset or change), `users.txt` (the demo users' generated passwords), `hooks/<app>.json` (an app's webhook signing secrets and token; owned by uid 10001, read by ops), `apps/<app>/` (db password, gateway token, ops token, `secrets.env`, `runtime.env`); never in the repo |
-| `state/` | Postgres data directories, Authelia's sqlite, `mailpit/` (caught mail), `directory/users.json` (login → name, email, groups, no passwords; read by ops), `ops/` (test mode; `tuning.json` overrides alert thresholds, usage settings and webhook retry delays) |
+| `secrets/` | `master.env`, `headscale/oidc_client_secret` (a human's, with OIDC on), per-service env files (`ops.env`, `hooks-receiver.env`; `slack.env` once Slack is connected), `authelia/` (`users.yml`: the accounts, managed with `annex users`; Authelia rewrites it on a password reset or change), `users.txt` (the demo users' generated passwords), `hooks/<app>.json` (an app's webhook signing secrets and token; owned by uid 10001, read by ops), `apps/<app>/` (db password, gateway token, ops token, `secrets.env`, `runtime.env`); never in the repo |
+| `state/` | Postgres data directories, Authelia's sqlite, `mailpit/` (caught mail), `directory/users.json` (login → name, email, groups, no passwords; read by ops), `ops/` (test mode; `tuning.json` overrides alert thresholds, usage settings and webhook retry delays), `headscale/` (Headscale's database and Noise key, with `ANNEX_ACCESS=headscale`) |
 | `deploy/<app>/` | `src/` (uploaded source), `compose.yaml` (generated, JSON), `deploy.json` (what is live: type, postgres, views, egress, jobs; `run-job` reads its commands here), `.lock.guard` (an empty file the running operation holds an flock on; **never unlinked**, not even by `remove`, D102), `current.json` (the operation that holds the lock or held it last: pid, actor, kind, release, step, result; D101), `run.log` (that deploy's progress lines, one JSON object each; the run before is `run.log.1`), `run.err` (the worker's stderr), `build.log` (the last `docker build` output) |
 | `apps/<app>/` | `data/` (mounted at `/data`, backed up), `releases.jsonl` (the release history: image, manifest, who, when, git commit, result, `pending` while its deploy runs; only the VM writes it, D92; backed up) |
 | `snapshots/<app>/pre-r<N>/` | database dump and `/data` archive before release N; the last 3 are kept (not backed up) |
@@ -116,7 +120,7 @@ The deploy, the scripts and the CLI don't know which machine they are on: `Remot
 | Front door | Traefik on :80/:443 (the Mac's browser through the tunnel on :8443) | Traefik on `127.0.0.1:9080`/`:9443`, hostnames `*.annex-local.home.arpa` |
 | Images | amd64 | arm64 (D98) |
 
-A third kind of lane is another instance (D118): `ANNEX_ENV=kaldi` reads `.env.kaldi` and is the VM lane in every other respect. Kaldi's own instance on EC2 runs that way with `ANNEX_DEMO=off` (no Goat Arcade; the gateway and product-db run empty), `ANNEX_TLS_MODE=acme` (Traefik's own Let's Encrypt wildcard certificate, DNS-01 in Route53), `ANNEX_AUTH_FACTORS=two` and `ANNEX_MAIL_RELAY=on` (Mailpit, on `edge` as well, relays every message to a real SMTP server); `docs/new-instance.md` section 8.
+A third kind of lane is another instance (D118): `ANNEX_ENV=kaldi` reads `.env.kaldi` and is the VM lane in every other respect. Kaldi's own instance on EC2 runs that way with `ANNEX_DEMO=off` (no Goat Arcade; the gateway and product-db run empty), `ANNEX_TLS_MODE=acme` (Traefik's own Let's Encrypt wildcard certificate, DNS-01 in Route53), `ANNEX_AUTH_FACTORS=two` and `ANNEX_MAIL_RELAY=on` (Mailpit, on `edge` as well, relays every message to a real SMTP server); `docs/new-instance.md` section 8. `ANNEX_ACCESS=headscale` (D120) takes such an instance off the internet: employees reach it over Annex's own tailnet (`docs/new-instance.md` 8.7).
 
 The lane is chosen per command and never a default. The local stack is a development tool: no backups worth keeping, no Slack, arm64 builds. Nothing proven only locally counts as proven for the VM.
 

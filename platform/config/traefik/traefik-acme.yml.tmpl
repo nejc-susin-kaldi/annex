@@ -44,6 +44,18 @@ entryPoints:
       middlewares:
         - strip-identity@file
         - authelia@file
+  # Headscale and the webhook receiver for the internet (ANNEX_ACCESS=headscale, D120): published only by
+  # compose.access-headscale.yaml, and only routers that name it are on it. No forward-auth: Tailscale clients carry
+  # their own keys, and webhooks bypass the sign-in anyway
+  public:
+    address: ":8443"
+    http:
+      aliasHeadersStrategy: delete
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "{{ANNEX_CERT_DOMAIN}}"
+            sans: ["*.{{ANNEX_CERT_DOMAIN}}"]
 providers:
   docker:
     endpoint: tcp://socket-ro:2375

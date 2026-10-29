@@ -1,0 +1,56 @@
+# Added to COMPOSE_FILE when ANNEX_ACCESS=headscale (D120): Annex runs its own Tailscale coordination server, and
+# employees reach the apps over that tailnet. Traefik gets a second, public entrypoint (ANNEX_BIND_PUBLIC, 8443 by
+# default) that carries only Headscale and the webhook receiver; 443 stays the apps' entrypoint, which the security
+# group closes to the internet (docs/new-instance.md, "Employee access"). The server joins the tailnet with the host's
+# own Tailscale client (platform/vm/prepare-vm.sh), not from here.
+services:
+  traefik:
+    ports:
+      - "${ANNEX_BIND_PUBLIC}:8443"
+
+  headscale:
+    image: headscale/headscale:v0.29.6
+    restart: unless-stopped
+    command: ["serve"]
+    environment:
+      TZ: ${TZ}
+      ANNEX_CONFIG_HASH: ${ANNEX_CONFIG_HASH_HEADSCALE}
+    volumes:
+      - ./config/headscale:/etc/headscale:ro
+      # the database (people, devices, keys) and the server's Noise key; backed up nightly (below)
+      - ${ANNEX_DATA_DIR}/state/headscale:/var/lib/headscale
+    # edge: Traefik routes to it, and it fetches Tailscale's relay map (and the OIDC issuer) from the internet
+    networks: [edge]
+    read_only: true
+    tmpfs: [/var/run/headscale]
+    # the image runs as root; it only needs to write its state directory, which belongs to the annex user (mode 700)
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "headscale", "health"]
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      start_interval: 2s
+    labels:
+      com.kaldi.annex: "true"
+      traefik.enable: "true"
+      traefik.docker.network: annex-edge
+      # only on the public entrypoint, which has no forward-auth: Tailscale clients authenticate with their keys
+      traefik.http.routers.vpn.rule: Host(`${ANNEX_HOST_VPN}`)
+      traefik.http.routers.vpn.entrypoints: public
+      traefik.http.services.vpn.loadbalancer.server.port: "8080"
+
+  # webhook senders are on the internet: the receiver answers on the public entrypoint too (it already refuses
+  # everything but /h/, D51), and on 443 for anything on the tailnet
+  hooks:
+    labels:
+      traefik.http.routers.hooks.entrypoints: websecure,public
+
+  backup:
+    volumes:
+      # a new server needs it to keep every device enrolled (without it, everyone joins again)
+      - ${ANNEX_DATA_DIR}/state/headscale:/backup/state/headscale:ro

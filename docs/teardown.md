@@ -12,6 +12,7 @@ When the demo stage is over. Steps 1–3 come from the brief; build-specific ite
 - `deploy/<app>/.lock*` and the pending lines in `apps/<app>/releases.jsonl` (D92);
 - the `annex_ops.schema_version` table and the tables the migrations create (in the `annex_ops` database, which goes with appdata-db's data);
 - `platform/VERSION` (the push stamp, D85).
+- on an instance with `ANNEX_ACCESS=headscale` (D120), `state/headscale/` (the tailnet's devices and keys) and `secrets/headscale/`; the host's Tailscale client is system config: `docs/new-instance.md` 8.7, "Undo".
 
 On the Mac: `.build/settings.<pid>` (cached settings) goes with `.build`.
 

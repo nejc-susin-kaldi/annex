@@ -34,6 +34,15 @@ if [ "$(setting_local ANNEX_MAIL_RELAY)" = on ] && ! vm "test -s $DATA/secrets/m
   echo "push: ANNEX_MAIL_RELAY=on, but $DATA/secrets/mailpit/relay.yaml is missing on $WHERE: write it first (docs/new-instance.md, \"Mail\")" >&2
   exit 1
 fi
+# so is the tailnet's OIDC client secret (D120)
+if [ -n "$(setting_local ANNEX_ACCESS_OIDC_ISSUER)" ] && ! vm "test -s $DATA/secrets/headscale/oidc_client_secret"; then
+  echo "push: ANNEX_ACCESS_OIDC_ISSUER is set, but $DATA/secrets/headscale/oidc_client_secret is missing on $WHERE: write it first (docs/new-instance.md, \"Employee access\")" >&2
+  exit 1
+fi
+# Headscale's state directory, for an instance bootstrapped before D120 (bootstrap-secrets.sh makes it on new ones)
+if [ "$(setting_local ANNEX_ACCESS)" = headscale ]; then
+  vm "mkdir -p $DATA/state/headscale $DATA/secrets/headscale && chmod 700 $DATA/state/headscale $DATA/secrets/headscale"
+fi
 # the VM's stamp first: a checkout that doesn't contain what is deployed must not overwrite it
 vm_version=$(mktemp "$ROOT/.build/vm-version.XXXXXX")
 trap 'rm -f "$vm_version"' EXIT

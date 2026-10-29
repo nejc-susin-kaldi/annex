@@ -12,15 +12,16 @@ S=$D/secrets
 umask 077
 
 mkdir -p "$S/authelia" "$S/apps" "$S/hooks" "$D/state/authelia" "$D/state/product-db" "$D/state/appdata-db" \
-         "$D/state/mailpit" "$D/state/directory" "$D/state/ops" "$D/state/acme" "$S/mailpit" "$D/apps" "$D/deploy" "$D/backups" "$D/dumps" "$D/certs" "$D/platform"
+         "$D/state/mailpit" "$D/state/directory" "$D/state/ops" "$D/state/acme" "$S/mailpit" "$D/state/headscale" "$S/headscale" "$D/apps" "$D/deploy" "$D/backups" "$D/dumps" "$D/certs" "$D/platform"
 
 # incoming webhooks (M1.5): one JSON file per app with its signing secrets, written by annex_vm.py provision and
 # owned by uid 10001 (the ops container). The directory is the mount: replacing files in it never goes stale (D7).
 chmod 755 "$S/hooks"
 # the backup archives now hold secrets/ (D87): only the annex user (and root, which writes them) may enter
 chmod 700 "$D/backups"
-# Let's Encrypt's account key and certificate (ANNEX_TLS_MODE=acme), and the mail relay's credentials (D118)
-chmod 700 "$D/state/acme" "$S/mailpit"
+# Let's Encrypt's account key and certificate (ANNEX_TLS_MODE=acme), and the mail relay's credentials (D118);
+# Headscale's database and keys, and its OIDC client secret (ANNEX_ACCESS=headscale, D120)
+chmod 700 "$D/state/acme" "$S/mailpit" "$D/state/headscale" "$S/headscale"
 
 rand() { openssl rand -hex "${1:-24}"; }
 

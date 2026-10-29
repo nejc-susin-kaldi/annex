@@ -1,0 +1,16 @@
+# Added to COMPOSE_FILE when ANNEX_ACCESS_OIDC_ISSUER is set (D120): people may also join the tailnet by signing in
+# with the client's identity provider, besides the one-time keys admins send (`annex users device-invite`). The client
+# secret is in ${ANNEX_DATA_DIR}/secrets/headscale/oidc_client_secret, which a human writes (docs/new-instance.md,
+# "Employee access"); Headscale reads its HEADSCALE_* variables over config.yaml.
+services:
+  headscale:
+    environment:
+      HEADSCALE_OIDC_ISSUER: ${ANNEX_ACCESS_OIDC_ISSUER}
+      HEADSCALE_OIDC_CLIENT_ID: ${ANNEX_ACCESS_OIDC_CLIENT_ID}
+      HEADSCALE_OIDC_CLIENT_SECRET_PATH: /oidc/oidc_client_secret
+      HEADSCALE_OIDC_PKCE_ENABLED: "true"
+      # only people with an address in these domains (space-separated; render.py requires at least one)
+      HEADSCALE_OIDC_ALLOWED_DOMAINS: ${ANNEX_ACCESS_OIDC_DOMAINS}
+    volumes:
+      # the directory, not the file: a replaced single-file bind mount goes stale (D7)
+      - ${ANNEX_DATA_DIR}/secrets/headscale:/oidc:ro

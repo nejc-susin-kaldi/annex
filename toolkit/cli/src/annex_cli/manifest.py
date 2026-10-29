@@ -16,9 +16,9 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}[a-z0-9]$")
 KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 CRON_FIELD_RE = re.compile(r"^[0-9A-Za-z*/,\-]+$")
 CRON_DESCRIPTORS = {"@yearly", "@annually", "@monthly", "@weekly", "@daily", "@midnight", "@hourly"}
-# mail and ops exist as of M1.2; status, hooks and console are taken for M1.3, M1.5 and M2
+# mail and ops exist as of M1.2; status, hooks and console are taken for M1.3, M1.5 and M2; vpn is Headscale's (D120)
 RESERVED_NAMES = {"home", "auth", "metabase", "logs", "gateway", "mail", "ops", "status", "hooks", "console",
-                  "echo-test", "www", "api"}
+                  "vpn", "echo-test", "www", "api"}
 INJECTED_ENV = {"PORT", "ANNEX_APP_NAME", "ANNEX_BASE_URL", "DATABASE_URL", "DATA_DIR",
                 "ANNEX_GATEWAY_URL", "ANNEX_GATEWAY_TOKEN", "ANNEX_OPS_URL", "ANNEX_OPS_TOKEN", "ANNEX_HOOK_TOKEN",
                 "ANNEX_HOOKS_URL", "LOG_LEVEL"}

@@ -30,7 +30,7 @@ ENVS = {"vm": ".env", "local": ".env.local"}  # ANNEX_ENV -> settings file (each
 ENV_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,23}$")  # another instance (D118): .env.<name>, which must exist
 TARGETS = ("ssh", "local")                     # ANNEX_TARGET: how scripts and the CLI reach the platform's Docker
 BIND_RE = re.compile(r"^(?:(\d{1,3}(?:\.\d{1,3}){3}):)?(\d{1,5})$")
-PLATFORM_SERVICES = ["home", "auth", "metabase", "logs", "gateway", "mail", "hooks", "console"]
+PLATFORM_SERVICES = ["home", "auth", "metabase", "logs", "gateway", "mail", "hooks", "console", "vpn"]
 # Used in templates only; kept out of .env because Compose would try to interpolate "$".
 TEMPLATE_ONLY = {"ANNEX_HOST_REGEX"}
 
@@ -160,6 +160,30 @@ def derive(env: dict[str, str], name: str = "vm", root: Path = ROOT) -> dict[str
         die("ANNEX_AUTH_FACTORS=two needs ANNEX_MAIL_RELAY=on: registering a second factor sends a code by email, "
             "and Mailpit alone keeps it on the server")
 
+    # employee access (D120): open, whoever reaches Traefik's 443 gets the sign-in page (the network in front decides,
+    # D118's security group); headscale, Annex runs its own Tailscale coordination server (Headscale) and the apps are
+    # meant to be reached over the tailnet only. Headscale and the webhook receiver are then served on a second, public
+    # entrypoint (ANNEX_BIND_PUBLIC), so the security group can close 443 to the internet
+    access = env.get("ANNEX_ACCESS") or "open"
+    if access not in ("open", "headscale"):
+        die("ANNEX_ACCESS must be open (the network in front decides who reaches the sign-in page, the default) or "
+            "headscale (employees reach Annex over Annex's own tailnet)")
+    if access == "headscale" and mode == "upstream":
+        die("ANNEX_ACCESS=headscale needs ANNEX_TLS_MODE=acme (or local): Tailscale clients reach Headscale over HTTPS "
+            "on Traefik's public entrypoint, and in upstream mode Traefik has no certificate")
+    # optional sign-in to the tailnet with the client's identity provider (D120); one-time keys always work
+    oidc = {k: env.get(f"ANNEX_ACCESS_OIDC_{k}", "") for k in ("ISSUER", "CLIENT_ID", "DOMAINS")}
+    if any(oidc.values()):
+        if access != "headscale":
+            die("ANNEX_ACCESS_OIDC_* is the tailnet's sign-in: it needs ANNEX_ACCESS=headscale")
+        if not re.fullmatch(r"https://[^\s/]+(/\S*)?", oidc["ISSUER"]) or not oidc["CLIENT_ID"]:
+            die("ANNEX_ACCESS_OIDC_ISSUER (the identity provider's https issuer URL) and ANNEX_ACCESS_OIDC_CLIENT_ID "
+                "are both needed for an OIDC sign-in to the tailnet; leave all ANNEX_ACCESS_OIDC_* empty for one-time keys only")
+        # required: a provider like Google or Entra signs in far more people than the client's employees
+        if not re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}( [a-z0-9.-]+\.[a-z]{2,})*", oidc["DOMAINS"]):
+            die("ANNEX_ACCESS_OIDC_DOMAINS must name the client's email domains, separated by spaces (e.g. kaldi.si "
+                "example.com): only people with those addresses may join the tailnet by signing in")
+
     port = env.get("ANNEX_PUBLIC_PORT", "")
     if port and not port.isdigit():
         die("ANNEX_PUBLIC_PORT must be a number or empty")
@@ -171,6 +195,13 @@ def derive(env: dict[str, str], name: str = "vm", root: Path = ROOT) -> dict[str
     if local and mode == "local" and (port or "443") != BIND_RE.match(bind_https).group(2):
         die(f"ANNEX_PUBLIC_PORT={port} must be the port of ANNEX_BIND_HTTPS={bind_https}: a local stack is reached "
             "there directly, and every URL and login redirect carries that port")
+    # Traefik's public entrypoint (ANNEX_ACCESS=headscale, D120): Headscale and the webhook receiver only
+    bind_public = bind(env, "ANNEX_BIND_PUBLIC", "127.0.0.1:9444" if local else "8443")
+    public_port = BIND_RE.match(bind_public).group(2)
+    if access == "headscale" and public_port == BIND_RE.match(bind_https).group(2):
+        die(f"ANNEX_BIND_PUBLIC={bind_public} must use another port than ANNEX_BIND_HTTPS={bind_https}: the apps' "
+            "entrypoint is for the tailnet, the public one for Headscale and webhooks")
+    public_suffix = f":{public_port}" if public_port != "443" else ""
 
     app_subnets = env.get("ANNEX_APP_SUBNETS") or "10.213.0.0/16"
     try:
@@ -184,7 +215,9 @@ def derive(env: dict[str, str], name: str = "vm", root: Path = ROOT) -> dict[str
     out = {
         "COMPOSE_PROJECT_NAME": "annex",
         "COMPOSE_FILE": ":".join(["compose.yaml"] + ([f"compose.tls-{mode}.yaml"] if mode != "upstream" else [])
-                                 + (["compose.mail-relay.yaml"] if relay == "on" else [])),
+                                 + (["compose.mail-relay.yaml"] if relay == "on" else [])
+                                 + (["compose.access-headscale.yaml"] if access == "headscale" else [])
+                                 + (["compose.access-oidc.yaml"] if oidc["ISSUER"] else [])),
         "ANNEX_ENV": name,
         "ANNEX_TARGET": target,
         "ANNEX_DATA_DIR": data_dir,
@@ -206,6 +239,11 @@ def derive(env: dict[str, str], name: str = "vm", root: Path = ROOT) -> dict[str
         "ANNEX_MAIL_RELAY": relay,
         "ANNEX_AUTH_FACTORS": factors,
         "ANNEX_AUTH_POLICY": factors + "_factor",
+        "ANNEX_ACCESS": access,
+        "ANNEX_BIND_PUBLIC": bind_public,
+        "ANNEX_ACCESS_OIDC_ISSUER": oidc["ISSUER"],
+        "ANNEX_ACCESS_OIDC_CLIENT_ID": oidc["CLIENT_ID"],
+        "ANNEX_ACCESS_OIDC_DOMAINS": oidc["DOMAINS"],
         # the name on the sign-in page's authenticator entries
         "ANNEX_TOTP_ISSUER": "Goat Arcade" if demo == "on" else "Annex",
         "ANNEX_MAIL_TILE": ("Outgoing email: a copy of everything sent (relayed to the mail server). Admins only"
@@ -230,6 +268,10 @@ def derive(env: dict[str, str], name: str = "vm", root: Path = ROOT) -> dict[str
         host = pattern.replace("{name}", svc)
         out[f"ANNEX_HOST_{svc.upper()}"] = host
         out[f"ANNEX_URL_{svc.upper()}"] = f"https://{host}{port_suffix}"
+    if access == "headscale":
+        # served on the public entrypoint (D120): what Tailscale clients and webhook senders on the internet call
+        for svc in ("vpn", "hooks"):
+            out[f"ANNEX_URL_{svc.upper()}"] = f"https://{out[f'ANNEX_HOST_{svc.upper()}']}{public_suffix}"
     return out
 
 
@@ -303,7 +345,7 @@ def main() -> None:
 
     # A config change must recreate the container that reads it (Compose only
     # compares container config, not bind-mounted file contents).
-    for svc in ("traefik", "authelia", "homepage"):
+    for svc in ("traefik", "authelia", "homepage", "headscale"):
         h = hashlib.sha256()
         for f in sorted((OUT / "config" / svc).rglob("*")):
             if f.is_file():

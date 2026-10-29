@@ -1,0 +1,59 @@
+# Headscale, Annex's own Tailscale coordination server (ANNEX_ACCESS=headscale, D120). Rendered on every instance but
+# started only with compose.access-headscale.yaml. Tailscale clients reach it at {{ANNEX_URL_VPN}}, on Traefik's
+# public entrypoint, which terminates TLS; Headscale itself speaks plain HTTP on the edge network.
+# OIDC sign-in, when set, comes from compose.access-oidc.yaml as HEADSCALE_OIDC_* variables, not from this file.
+server_url: {{ANNEX_URL_VPN}}
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 127.0.0.1:9090
+# the admin API stays inside the container: the CLI there talks over the unix socket below
+grpc_listen_addr: 127.0.0.1:50443
+grpc_allow_insecure: false
+# Traefik reaches Headscale over a Docker network; these ranges hold every Docker network, so the logs show the
+# client's address from X-Forwarded-For (Traefik overwrites what a client sends)
+trusted_proxies: [172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16]
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+  allocation: sequential
+# Tailscale's public relays carry traffic only when two devices can't connect directly; it stays end-to-end encrypted.
+# No embedded relay: it would need UDP 3478 open to the internet
+derp:
+  server:
+    enabled: false
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  paths: []
+  auto_update_enabled: true
+  update_frequency: 3h
+# the image is pinned (compose.access-headscale.yaml); updates come with a push
+disable_check_updates: true
+node:
+  # a person's device signs in again after 180 days (Tailscale's own default); the server is tagged and never expires
+  expiry: 180d
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+    write_ahead_log: true
+log:
+  level: info
+  format: json
+policy:
+  mode: file
+  path: /etc/headscale/policy.hujson
+# No MagicDNS: employees keep their own DNS, and the instance's hostnames are public DNS records that point at the
+# server's tailnet address (docs/new-instance.md, "Employee access")
+dns:
+  magic_dns: false
+  override_local_dns: false
+  nameservers:
+    global: []
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
+logtail:
+  enabled: false
+# no file sharing between employees' devices
+taildrop:
+  enabled: false
