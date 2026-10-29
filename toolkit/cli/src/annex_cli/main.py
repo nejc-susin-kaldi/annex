@@ -270,7 +270,23 @@ def main(argv: list[str] | None = None) -> None:
     emit = (lambda obj: print(json.dumps(obj, indent=2, default=str))) if a.json else None
     progress = (lambda msg: print(f"==> {msg}", file=sys.stderr))
     try:
-        if a.cmd == "contract":
+        if a.cmd == "connect":
+            res = ops.connect(a.ssh_host, a.data_dir) if a.ssh_host else ops.connection()
+            if emit:
+                emit(res)
+            elif a.ssh_host:
+                print(f"Annex now points at {res['home']} (ssh {res['ssh_host']}, {res['data_dir']}). The annex CLI "
+                      "and the annex MCP server use it from now on, until you run annex connect again.")
+                for n in res["notes"]:
+                    print(f"note: {n}")
+            elif res["connected"]:
+                print(f"Points at {res['home']} (ssh {res['ssh_host']}, {res['data_dir']}), since {res['connected_at']}.")
+            else:
+                print("Not pointed at an Annex instance yet: annex connect <ssh-host>")
+            if not emit and res.get("annex_env", os.environ.get("ANNEX_ENV")):
+                print(f"note: ANNEX_ENV={os.environ.get('ANNEX_ENV')} is set in this shell: commands here use that lane "
+                      "of this checkout instead")
+        elif a.cmd == "contract":
             print(ops.contract(a.topic), end="")
         elif a.cmd == "init":
             dest = ops.init(a.template, a.name, a.dir, a.owner)

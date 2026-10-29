@@ -29,7 +29,8 @@ server = MCPServer(
         "health check is rolled back automatically; annex_rollback switches back to an earlier release. "
         "Never write login code, Docker labels or database credentials. Secrets, app removal and restoring "
         "data are human-only: ask the user to run `annex secret set`, `annex remove` or "
-        "`annex rollback --with-data`."
+        "`annex rollback --with-data`. The tools act on the one Annex instance this machine is pointed at; if they "
+        "say it isn't pointed at one, ask the user to run `annex connect <ssh-host>` (never run it yourself)."
     ),
 )
 

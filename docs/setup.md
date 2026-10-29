@@ -86,6 +86,15 @@ Open https://home.annex.home.arpa:8443 and sign in with a demo user. `scripts/sh
 ## 4. Annex in Claude Code: MCP server and skill (M0.4)
 Both are user-scoped, so Claude Code can use Annex from any folder, including an empty one. Both point at a path in the repo, which moved to `toolkit/` on 28 Oct (D117): a registration or symlink made before that needs its undo and the command again.
 
+This is the homelab's copy of `docs/install.md`, which is the same for every builder on every instance.
+
+**Point the CLI and the MCP server at the VM** (D119: without `ANNEX_ENV` they go where this points; the scripts
+keep choosing their lane with `ANNEX_ENV`). It reads the VM's settings over SSH and writes `~/.config/annex/instance`:
+```bash
+./annex connect annex
+```
+Undo: `rm ~/.config/annex/instance` (then `./annex` without `ANNEX_ENV` says it isn't pointed anywhere).
+
 **MCP server** (stdio, runs from this repo through uv):
 ```bash
 claude mcp add --scope user annex -- uv run --quiet --project "$(pwd)/toolkit/mcp" annex-mcp

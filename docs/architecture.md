@@ -122,7 +122,7 @@ The deploy, the scripts and the CLI don't know which machine they are on: `Remot
 
 A third kind of lane is another instance (D118): `ANNEX_ENV=kaldi` reads `.env.kaldi` and is the VM lane in every other respect. Kaldi's own instance on EC2 runs that way with `ANNEX_DEMO=off` (no Goat Arcade; the gateway and product-db run empty), `ANNEX_TLS_MODE=acme` (Traefik's own Let's Encrypt wildcard certificate, DNS-01 in Route53), `ANNEX_AUTH_FACTORS=two` and `ANNEX_MAIL_RELAY=on` (Mailpit, on `edge` as well, relays every message to a real SMTP server); `docs/new-instance.md` section 8. `ANNEX_ACCESS=headscale` (D120) takes such an instance off the internet: employees reach it over Annex's own tailnet (`docs/new-instance.md` 8.7).
 
-The lane is chosen per command and never a default. The local stack is a development tool: no backups worth keeping, no Slack, arm64 builds. Nothing proven only locally counts as proven for the VM.
+The lane is chosen per command and never a default. Builders don't use lanes: `./annex connect <ssh alias>` points their CLI and MCP server at one instance (`~/.config/annex/instance`), and `./annex` without `ANNEX_ENV` goes there (D119, `docs/install.md`). The local stack is a development tool: no backups worth keeping, no Slack, arm64 builds. Nothing proven only locally counts as proven for the VM.
 
 ## annex-ops threads
 

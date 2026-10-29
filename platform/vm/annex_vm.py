@@ -142,6 +142,23 @@ def api_views() -> list[str]:
     return [r for r in rows.splitlines() if r]
 
 
+def api_views_detail() -> dict:
+    """The data views for the contract (D119): the data set's description (the comment on schema annex_api, set by
+    the client's views file; none on an instance without a client database) and, per view, its comment and columns."""
+    rows = psql(PRODUCT_DB, "product", """
+        SELECT json_build_object(
+          'about', obj_description('annex_api'::regnamespace, 'pg_namespace'),
+          'views', coalesce(json_agg(json_build_object(
+            'name', c.relname,
+            'comment', obj_description(c.oid, 'pg_class'),
+            'columns', (SELECT json_agg(a.attname ORDER BY a.attnum) FROM pg_attribute a
+                        WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped)
+          ) ORDER BY c.relname), '[]'::json))
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'annex_api' AND c.relkind = 'v';""")
+    return json.loads(rows.strip() or "{}")
+
+
 def maintenance(app: str, minutes: int | None) -> None:
     """Hold annex-ops's alerts for the app while its container is stopped on purpose (None: release them).
     Best effort: a failure here must never block a restore."""
@@ -947,6 +964,10 @@ def cmd_deploy_reconcile(a: argparse.Namespace) -> None:
 
 def cmd_views(_: argparse.Namespace) -> None:
     out({"views": api_views()})
+
+
+def cmd_views_detail(_: argparse.Namespace) -> None:
+    out(api_views_detail())
 
 
 def cmd_provision(a: argparse.Namespace) -> None:
@@ -1852,6 +1873,7 @@ def main() -> None:
     p = argparse.ArgumentParser(prog="annex_vm")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("views").set_defaults(fn=cmd_views)
+    sub.add_parser("views-detail").set_defaults(fn=cmd_views_detail)
     s = sub.add_parser("provision")
     s.add_argument("app")
     s.add_argument("--postgres", action="store_true")

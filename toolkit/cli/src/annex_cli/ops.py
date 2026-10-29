@@ -21,7 +21,7 @@ from typing import Callable
 
 from . import logcheck, logview
 from . import manifest as mf
-from .remote import REPO, AnnexError, Remote
+from .remote import REPO, AnnexError, Remote, instance_file, read_env_file
 
 TEMPLATES = REPO / "toolkit" / "templates"
 RUNTIME = REPO / "toolkit" / "runtime"  # the one source of annex_runtime.py/.js; scripts/sync-runtime.sh copies it
@@ -151,21 +151,107 @@ def _contract_sections() -> tuple[str, list[tuple[str, str]]]:
     return parts[0], [(p.split("\n", 1)[0].strip(), "## " + p) for p in parts[1:]]
 
 
+VIEWS_HEADING = "Gateway views (allowlist)"
+
+
+def views_block(detail: dict | None, error: str | None = None) -> str:
+    """The instance's own views, appended to the contract's views section (D119, pure): the data set's description,
+    then one row per view (its comment, its columns). `error` when the instance couldn't be asked."""
+    if detail is None:
+        return ("### The views on this instance\nUnknown: the instance couldn't be asked "
+                f"({error}). Run `annex contract` again once it answers; until then don't declare views.\n")
+    views = detail.get("views") or []
+    if not views:
+        return ("### The views on this instance\nNone: this instance has no data views. Keep `data.views: []`; "
+                "the app keeps its own data in `storage`.\n")
+    about = (detail.get("about") or "").strip()
+    rows = "\n".join(f"| `{v['name']}` | {(v.get('comment') or '').strip() or '-'} | {', '.join(v.get('columns') or [])} |"
+                     for v in views)
+    return ("### The views on this instance\n" + (f"{about}\n\n" if about else "")
+            + "| View | What it is | Columns |\n|---|---|---|\n" + rows + "\n")
+
+
+def _live_views() -> str:
+    try:
+        return views_block(Remote().vm("views-detail"))
+    except AnnexError as e:
+        if "views-detail" in str(e) and "invalid choice" in str(e):  # a platform pushed before D119: names only
+            try:
+                return views_block({"views": [{"name": v} for v in Remote().vm("views")["views"]]})
+            except AnnexError as e2:
+                return views_block(None, str(e2))
+        return views_block(None, str(e))
+
+
 def contract(topic: str | None = None) -> str:
-    """The core of the contract (no topic), one topic, or "all"."""
+    """The core of the contract (no topic), one topic, or "all". The core and "all" end the views section with the
+    views of the instance this CLI points at, asked live (D119)."""
     intro, sections = _contract_sections()
     if topic == "all":
-        return CONTRACT.read_text()
+        text = CONTRACT.read_text()
+        head = "## " + VIEWS_HEADING
+        sec = next(t for h, t in sections if h == VIEWS_HEADING)
+        return text.replace(sec, sec.rstrip() + "\n\n" + _live_views(), 1) if head in text else text
     if topic:
         if topic not in CONTRACT_TOPICS:
             raise AnnexError(f"No contract topic {topic!r}. Topics: {', '.join(CONTRACT_TOPICS)}, or all")
         heading = CONTRACT_TOPICS[topic][0]
         return next(text for h, text in sections if h == heading).rstrip() + "\n"
     topic_headings = {h for h, _ in CONTRACT_TOPICS.values()}
-    core = [text.rstrip() for h, text in sections if h not in topic_headings]
+    core = [text.rstrip() + ("\n\n" + _live_views().rstrip() if h == VIEWS_HEADING else "")
+            for h, text in sections if h not in topic_headings]
     more = "\n".join(f"- `annex contract {t}` (MCP: `annex_contract(topic=\"{t}\")`): {what}"
                       for t, (_, what) in CONTRACT_TOPICS.items())
     return "\n\n".join([intro.rstrip(), *core, "## More, only when the app needs it\n" + more]) + "\n"
+
+
+SSH_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
+DATA_DIR_RE = re.compile(r"^/[A-Za-z0-9._/-]{1,200}$")
+
+
+def connect(host: str, data_dir: str = "/srv/annex", environ=None) -> dict:
+    """Point this user's CLI and MCP server at one Annex instance (D119): ask it for its settings over SSH, then
+    write the pointer (instance_file()). Every later command without ANNEX_ENV goes there. Human only: not over MCP."""
+    if not SSH_HOST_RE.match(host or ""):
+        raise AnnexError(f"{host!r} isn't an SSH host alias: give the `Host` name from your ~/.ssh/config, e.g. annex-kaldi")
+    if not DATA_DIR_RE.match(data_dir or "") or ".." in data_dir:
+        raise AnnexError(f"--data-dir {data_dir!r} must be an absolute path on the server, e.g. /srv/annex")
+    data_dir = data_dir.rstrip("/") or "/"
+    r = Remote(target={"ANNEX_ENV": "", "ANNEX_TARGET": "ssh", "ANNEX_SSH_HOST": host, "ANNEX_DATA_DIR": data_dir,
+                       "ANNEX_DOCKER_CONTEXT": ""})
+    found = r.run(f"cat {shlex.quote(data_dir)}/platform/.env {shlex.quote(data_dir)}/platform/VERSION", check=False)
+    text = found.stdout.decode(errors="replace")
+    settings = {k: v for k, _, v in (line.partition("=") for line in text.splitlines()) if v and not k.startswith("#")}
+    home = settings.get("ANNEX_URL_HOME", "")
+    if found.returncode != 0 or not home:
+        raise AnnexError(f"No Annex platform answers at ssh {host} ({data_dir}/platform/.env): "
+                         f"{Remote._msg(found) or 'no settings there'}. Check that `ssh {host} true` works without a "
+                         "prompt, and ask the platform team for the host alias and, if it isn't /srv/annex, the data directory")
+    notes = []
+    platform_v, mine = int(settings.get("contract", "0") or 0), contract_version()
+    if platform_v and mine > platform_v:
+        notes.append(f"this CLI's contract (v{mine}) is newer than the platform's (v{platform_v}): deploys are refused "
+                     "until the platform team pushes the platform")
+    elif platform_v and mine < platform_v:
+        notes.append(f"this CLI's contract (v{mine}) is older than the platform's (v{platform_v}): update this checkout (git pull)")
+    path = instance_file(environ)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text("# Written by `annex connect` (D119): the Annex instance this user's annex CLI and MCP server use.\n"
+                   f"ANNEX_SSH_HOST={host}\nANNEX_DATA_DIR={data_dir}\nANNEX_URL_HOME={home}\nANNEX_CONNECTED_AT={_now()}\n")
+    os.replace(tmp, path)
+    return {"ssh_host": host, "data_dir": data_dir, "home": home, "file": str(path), "notes": notes}
+
+
+def connection(environ=None) -> dict:
+    """Where this user's CLI points (D119), from the pointer alone (no SSH); `annex_env` when ANNEX_ENV overrides it."""
+    environ = os.environ if environ is None else environ
+    path = instance_file(environ)
+    conf = read_env_file(path) if path.is_file() else {}
+    return {"connected": bool(conf.get("ANNEX_SSH_HOST")), "ssh_host": conf.get("ANNEX_SSH_HOST", ""),
+            "data_dir": conf.get("ANNEX_DATA_DIR", ""), "home": conf.get("ANNEX_URL_HOME", ""),
+            "connected_at": conf.get("ANNEX_CONNECTED_AT", ""), "file": str(path),
+            "annex_env": environ.get("ANNEX_ENV", "")}
 
 
 def templates() -> list[str]:
@@ -284,8 +370,10 @@ def deploy(folder: Path, progress: Progress = _quiet, via: str = "cli") -> dict:
     bad = [v for v in m.views if v not in allow]
     if bad:
         raise mf.ManifestError(folder / "annex.yaml", [
-            f"data.views: {', '.join(bad)} not in the gateway allowlist. Available views: {', '.join(allow)}. "
-            "New views are added by the platform team in platform/db/product/clientlink/api_views_arcade.sql"])
+            f"data.views: {', '.join(bad)} not in the gateway allowlist. "
+            + (f"Available views: {', '.join(allow)}. " if allow else
+               "This instance has no data views: set `data.views: []` and keep the app's own data in `storage`. ")
+            + "A new view is added by the platform team: ask them (`annex contract` lists the views)"])
 
     line = {"manifest": m.to_dict(), "deployed_at": _now(), "deployed_by": _who(), "via": via,
             "source": str(folder).replace(str(Path.home()), "~", 1), "git": _git(folder), "snapshot": None,

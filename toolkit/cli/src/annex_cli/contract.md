@@ -26,7 +26,7 @@ storage:
   postgres: true              # dedicated database, injected as DATABASE_URL
   files: true                 # persistent directory at /data (DATA_DIR), backed up nightly
 data:
-  views: [revenue_weekly]     # gateway views to read; must be in the allowlist
+  views: []                   # gateway views to read, e.g. [revenue_weekly]: only views the instance lists (Gateway views)
 notify:                       # optional: what the app may send, through ANNEX_OPS_URL
   email: true                 # may send email (to company addresses only)
   slack: ["#ga-finance"]      # Slack channels it may post to
@@ -62,7 +62,7 @@ Reserved names: `home`, `auth`, `metabase`, `logs`, `gateway`, `mail`, `ops`, `s
   - `Remote-Groups`: comma-separated, e.g. `builders` or `admins,builders`
 
   Annex strips client-sent copies of these headers, so they can be trusted **on requests that come through the front door**, which is the only way a person's request reaches the app. They are trustworthy only there: never call another app directly (apps can't reach each other; each app is on its own network), and never accept these headers from a service your app calls.
-- **Product data only through the gateway**, never directly from a database. Call `GET $ANNEX_GATEWAY_URL/<view>` with `Authorization: Bearer $ANNEX_GATEWAY_TOKEN`. The gateway is PostgREST, so filters work as query parameters, e.g. `/machine_floor?venue_code=eq.LJ1&order=games_30d.desc&limit=20`. Requesting a view you didn't declare returns 401/403. Every call is logged with your app's identity.
+- **Product data only through the gateway**, never directly from a database. Call `GET $ANNEX_GATEWAY_URL/<view>` with `Authorization: Bearer $ANNEX_GATEWAY_TOKEN`. The gateway is PostgREST, so filters work as query parameters, e.g. `/<view>?city=eq.Ljubljana&order=day.desc&limit=20`. Requesting a view you didn't declare returns 401/403. Every call is logged with your app's identity.
 - **Email and Slack only through Annex.** Never run an SMTP client or hold a Slack token: declare `notify:` in `annex.yaml` and use the template helpers (`send_email`, `post_slack`). Recipients are logins or company addresses; no attachments. Details: `annex contract notify`.
 - **Incoming webhooks** (Trello, Stripe, GitHub, Slack, a shared secret) reach a tool that stays behind login: `annex contract webhooks`.
 - **Alerts.** Annex watches every app, and the owner (plus every admin, plus anyone in `alerts.to`) gets one email when:
@@ -164,29 +164,11 @@ If the deploy rejects something, the error says what to change.
 | each declared secret | `secrets` |
 
 ## Gateway views (allowlist)
-One synthetic data set, Goat Arcade's. `GET $ANNEX_GATEWAY_URL/` with your token returns an OpenAPI description of your app's views, with every column explained.
+An instance can give apps read-only data from the organisation's own systems through the gateway, as curated views. Which views exist depends on the instance you deploy to: `annex contract` (MCP: `annex_contract`) lists them below, asked live from that instance. An instance without such data lists none; then apps keep `data.views: []` and hold their own data (`storage`). `GET $ANNEX_GATEWAY_URL/` with your token returns an OpenAPI description of your app's views, with every column explained.
 
-**Goat Arcade** (a chain of pinball and retro arcades; the client's own database, read through the gateway; the data covers the last 180 days):
+Views can't be joined on the gateway: read each one and join in your code, on the ids they share. The gateway doesn't group or sum either, so views usually come pre-aggregated (per day, per week); filter them (`?day=gte.2026-10-01`) rather than reading everything.
 
-| View | Columns |
-|---|---|
-| `venues` | venue_code, venue_name, city, country, lat, lon, opened_on, opening_hours (JSON by weekday), machines, pinball_machines |
-| `machine_models` | model_id, title, manufacturer, manufacturer_country, release_year, era (EM, SS, DMD, LCD), era_name, machine_type (pinball, video, other), theme, designer, flippers, max_multiball, ramps, modes, toys, cabinets_on_floor |
-| `machine_floor` | machine_id, serial_no, venue_code, venue_name, city, model_id, title, manufacturer, release_year, era, machine_type, condition, price_per_play_eur, installed_on, games_7d, games_30d, last_played_at, open_ticket, out_of_order, last_service_at |
-| `leaderboard` | model_id, title, rank (1-10), handle, nickname, score, venue_code, played_at, machine_id |
-| `player_profiles` | player_id, handle, nickname, home_venue_code, member_since, rating, games_180d, venues_played, last_played_at, leaderboard_spots, best_rank |
-| `daily_plays` | day, venue_code, machine_id, title, era, machine_type, games, credits, revenue_eur, avg_duration_s, tilts, members |
-| `hourly_plays` | day, weekday (1 = Monday ... 7 = Sunday), hour (local, 0-23), venue_code, games, credits |
-| `machine_events_daily` | day, machine_id, title, current_venue_code, event_type (tilt, slam_tilt, ball_search, coil_fault, switch_fault, jackpot, replay, match), events |
-| `service_log` | ticket_id, machine_id, serial_no, title, current_venue_code, opened_at, closed_at, status, symptom, resolution, reported_by, took_machine_off_floor, downtime_hours, technician, labour_hours, parts_cost_eur, parts |
-| `revenue_weekly` | week_start, venue_code, venue_name, city, amount_eur, coins_eur, tokens, card_plays, machines |
-| `tournaments` | tournament_id, name, venue_code, venue_name, starts_on, format, status, entry_fee_eur, max_players, entries, winner_handle, winner_nickname |
-| `tournament_entries` | tournament_id, nickname, handle, seed, entered_at |
-| `tournament_standings` | tournament_id, tournament_name, starts_on, position, handle, nickname, points, games_played, best_score |
-
-Views can't be joined on the gateway: read each one and join in your code, on venue_code, machine_id, model_id or nickname. The gateway doesn't group or sum either, so the views come pre-aggregated (per day, per week); filter them (`?day=gte.2026-10-01`) rather than reading everything.
-
-All data is synthetic. Adding a view is a reviewed change by the platform team, in `platform/db/product/clientlink/api_views_arcade.sql`.
+Treat every row as the organisation's real data: don't paste rows into chat, logs or commits. A new view is a reviewed change by the platform team: ask them.
 
 ## Commands
 | Command | Does |

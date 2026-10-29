@@ -26,7 +26,7 @@ Use `log` from `annex_runtime.py`, not `print()`: every line becomes one JSON ob
 ```python
 from annex_runtime import log
 log.info("report written", rows=12, ms=340)
-log.warn("gateway slow", view="machine_floor", ms=2300)
+log.warn("gateway slow", view="<view>", ms=2300)
 log.error("could not send", status=e.status)   # inside `except`: log.exception("could not send") adds the stack
 ```
 - **Pick the level:** `debug` detail for you (hidden unless `env: {LOG_LEVEL: debug}`), `info` what happened, `warn` odd but handled, `error` failed.
@@ -38,11 +38,11 @@ log.error("could not send", status=e.status)   # inside `except`: log.exception(
 To email people or post to Slack, declare it in `annex.yaml` (`notify: {email: true, slack: ["#finance-reports"]}`) and use the helpers in `annex_runtime.py`. Never run an SMTP client or hold a Slack token of your own: Annex injects `ANNEX_OPS_URL` and a token that can do exactly what you declared.
 ```python
 from annex_runtime import NotifyError, send_email, post_slack
-send_email(["cm", "sam@annex.example"], "Report ready", template="notice",
+send_email(["ana", "sam@annex.example"], "Report ready", template="notice",
            data={"title": "Report ready", "body": "June is done.", "link": "https://...", "link_text": "Open"})
 post_slack("#finance-reports", "Report ready: https://...")
 ```
-- Recipients are logins (`"cm"`) or company addresses. Anyone else is refused, and if one recipient is refused nothing is sent.
+- Recipients are logins (`"ana"`) or company addresses. Anyone else is refused, and if one recipient is refused nothing is sent.
 - Give `text`, `html` or `template="notice"`. **No attachments**: save the file under `/data` and email a link to it in your app.
 - Limits: 60 emails and 60 Slack posts per hour per app. Slack only to the channels you declared.
 - Failures raise `NotifyError` (`.status`, and a message that says what to fix). Decide whether a failed notification should fail your job.

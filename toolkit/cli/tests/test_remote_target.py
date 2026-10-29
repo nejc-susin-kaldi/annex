@@ -1,4 +1,5 @@
-"""Remote's target (D99): settings from the file ANNEX_ENV selects; the local target is only another command prefix."""
+"""Remote's target (D99): settings from the file ANNEX_ENV selects, or without it the instance `annex connect` pointed
+at (D119); the local target is only another command prefix."""
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,9 @@ ANNEX_DATA_DIR=$HOME/.annex/local
 """
 
 
+VM = {"ANNEX_ENV": "vm"}  # the repo's .env lane, as scripts/lib.sh sets it
+
+
 class Repo(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -32,25 +36,25 @@ class Repo(unittest.TestCase):
 
 class TargetSettings(Repo):
     def test_vm_defaults_without_any_file(self):
-        t = target_settings({}, self.repo)
+        t = target_settings(VM, self.repo)
         self.assertEqual((t["ANNEX_ENV"], t["ANNEX_TARGET"], t["ANNEX_SSH_HOST"], t["ANNEX_DATA_DIR"]),
                          ("vm", "ssh", "annex", "/srv/annex"))
 
     def test_vm_reads_env_then_example(self):
         self.write(".env.example", "ANNEX_SSH_HOST=from-example\n")
-        self.assertEqual(target_settings({}, self.repo)["ANNEX_SSH_HOST"], "from-example")
+        self.assertEqual(target_settings(VM, self.repo)["ANNEX_SSH_HOST"], "from-example")
         self.write(".env", "ANNEX_SSH_HOST=from-env\nANNEX_DATA_DIR=/srv/x\n")
-        t = target_settings({}, self.repo)
+        t = target_settings(VM, self.repo)
         self.assertEqual((t["ANNEX_SSH_HOST"], t["ANNEX_DATA_DIR"]), ("from-env", "/srv/x"))
 
     def test_file_wins_and_environment_fills_gaps(self):
         self.write(".env", "ANNEX_SSH_HOST=file-host\n")
-        t = target_settings({"ANNEX_SSH_HOST": "shell-host", "ANNEX_DATA_DIR": "/shell/data"}, self.repo)
+        t = target_settings({**VM, "ANNEX_SSH_HOST": "shell-host", "ANNEX_DATA_DIR": "/shell/data"}, self.repo)
         self.assertEqual((t["ANNEX_SSH_HOST"], t["ANNEX_DATA_DIR"]), ("file-host", "/shell/data"))
 
     def test_target_never_from_the_shell(self):
         # a shell left with the local stack's variables must not send a VM command to the Mac's Docker
-        t = target_settings({"ANNEX_TARGET": "local", "ANNEX_DOCKER_CONTEXT": "desktop-linux"}, self.repo)
+        t = target_settings({**VM, "ANNEX_TARGET": "local", "ANNEX_DOCKER_CONTEXT": "desktop-linux"}, self.repo)
         self.assertEqual((t["ANNEX_TARGET"], t["ANNEX_DOCKER_CONTEXT"]), ("ssh", ""))
 
     def test_local_reads_env_local_and_expands_home(self):
@@ -76,12 +80,42 @@ class TargetSettings(Repo):
                 target_settings({"ANNEX_ENV": bad}, self.repo)
         self.write(".env", "ANNEX_TARGET=cloud\n")
         with self.assertRaises(AnnexError):
-            target_settings({}, self.repo)
+            target_settings(VM, self.repo)
+
+
+class Pointer(Repo):
+    """Without ANNEX_ENV the CLI goes where `annex connect` pointed this user (D119), never to the repo's .env."""
+    def env(self, **kw):
+        return {"ANNEX_INSTANCE_FILE": str(self.repo / "instance"), **kw}
+
+    def test_not_connected_says_what_to_run(self):
+        self.write(".env", "ANNEX_SSH_HOST=homelab\n")  # a checkout's .env is no fallback
+        with self.assertRaises(AnnexError) as e:
+            target_settings(self.env(), self.repo)
+        self.assertIn("annex connect <ssh-host>", str(e.exception))
+
+    def test_pointer_wins_and_the_shell_cannot_redirect_it(self):
+        self.write("instance", "# by annex connect\nANNEX_SSH_HOST=annex-kaldi\nANNEX_DATA_DIR=/srv/annex\n")
+        t = target_settings(self.env(ANNEX_TARGET="local", ANNEX_SSH_HOST="other", ANNEX_DOCKER_CONTEXT="x"), self.repo)
+        self.assertEqual((t["ANNEX_ENV"], t["ANNEX_TARGET"], t["ANNEX_SSH_HOST"], t["ANNEX_DATA_DIR"], t["ANNEX_DOCKER_CONTEXT"]),
+                         ("", "ssh", "annex-kaldi", "/srv/annex", ""))
+        r = Remote(self.env())
+        self.assertEqual((r.env_name, r.host, r.local), ("", "annex-kaldi", False))
+
+    def test_annex_env_still_selects_a_lane(self):
+        self.write("instance", "ANNEX_SSH_HOST=annex-kaldi\n")
+        self.write(".env", "ANNEX_SSH_HOST=homelab\n")
+        self.assertEqual(target_settings(self.env(ANNEX_ENV="vm"), self.repo)["ANNEX_SSH_HOST"], "homelab")
+
+    def test_instance_file_location(self):
+        self.assertEqual(remote.instance_file({"XDG_CONFIG_HOME": "/x"}), Path("/x/annex/instance"))
+        self.assertEqual(remote.instance_file({"ANNEX_INSTANCE_FILE": "/t/i"}), Path("/t/i"))
+        self.assertEqual(remote.instance_file({}), Path.home() / ".config" / "annex" / "instance")
 
 
 class Argv(Repo):
     def test_ssh_prefix_unchanged(self):
-        r = Remote({})
+        r = Remote(VM)
         self.assertFalse(r.local)
         argv = r._argv("echo 'hi'")
         self.assertEqual(argv[0], "ssh")

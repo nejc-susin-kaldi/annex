@@ -51,17 +51,13 @@ def healthz():
     return {"ok": True}
 
 
-# Plain `def` endpoints run in a thread pool, so blocking gateway calls are fine.
+# Plain `def` endpoints run in a thread pool, so blocking gateway calls are fine. To read a data view, list it under
+# data.views in annex.yaml (`annex contract` names this instance's views), then:
+#     rows = gateway("<view>", order="day.desc", limit=20)    # GatewayError when it fails: log.warn it with the view
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     user = current_user(request.headers)
-    try:
-        rows = gateway("machine_floor", order="games_30d.desc", limit=5)
-        items = "".join(f"<li>{html.escape(r['title'])} at {html.escape(r['venue_name'])}: {r['games_30d']:,} games</li>" for r in rows)
-        data = f"<h2>Busiest machines (30 days)</h2><ol>{items}</ol>"
-    except GatewayError as e:
-        log.warn("gateway read failed", view="machine_floor", status=e.status)
-        data = f"<p>Gateway: {html.escape(str(e))}</p>"
+    data = "<p>This is the start of __APP_NAME__.</p>"
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>__APP_NAME__</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem">

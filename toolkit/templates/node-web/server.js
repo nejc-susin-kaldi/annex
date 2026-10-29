@@ -13,17 +13,11 @@ app.get("/healthz", (req, res) => res.json({ ok: true }));
 // Reports this page's JavaScript errors (the <script src="/annex-errors.js"> below) as logged errors: keep it.
 mountBrowserErrors(app, express);
 
+// To read a data view, list it under data.views in annex.yaml (`annex contract` names this instance's views), then:
+//     const rows = await gateway("<view>", { order: "day.desc", limit: 20 });  // GatewayError when it fails: log.warn it
 app.get("/", async (req, res) => {
   const user = currentUser(req);
-  let data;
-  try {
-    const rows = await gateway("machine_floor", { order: "games_30d.desc", limit: 5 });
-    data = "<h2>Busiest machines (30 days)</h2><ol>" +
-      rows.map((r) => `<li>${esc(r.title)} at ${esc(r.venue_name)}: ${r.games_30d.toLocaleString()} games</li>`).join("") + "</ol>";
-  } catch (e) {
-    log.warn("gateway read failed", { view: "machine_floor", status: e instanceof GatewayError ? e.status : 0 });
-    data = `<p>Gateway: ${esc(e instanceof GatewayError ? e.message : "unavailable")}</p>`;
-  }
+  const data = "<p>This is the start of __APP_NAME__.</p>";
   res.send(`<!doctype html><html><head><meta charset="utf-8"><title>__APP_NAME__</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem">

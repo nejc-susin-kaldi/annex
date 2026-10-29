@@ -10,7 +10,7 @@ storage:
   postgres: false
   files: false
 data:
-  views: [machine_floor]
+  views: []                 # gateway views to read: `annex contract` lists this instance's
 env: {}
 secrets: []
 egress: []

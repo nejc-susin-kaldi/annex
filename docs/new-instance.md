@@ -194,8 +194,9 @@ is `https://home.<your domain>:8443/`.
 
 ## 7. After it runs
 
-- **Deploy an app:** `./annex init python-web my-tool --owner sam`, `./annex deploy my-tool`; the contract is
-  `./annex contract`. Claude Code gets the MCP server and the skill with `docs/setup.md` §4.
+- **Deploy an app:** `./annex connect <ssh alias>` once (D119), then `./annex init python-web my-tool --owner sam`,
+  `./annex deploy my-tool`; the contract is `./annex contract`. Builders install the CLI, the MCP server and the
+  skill with `docs/install.md`.
 - **Accounts:** `./annex users add <login> --name '…' --email … --groups users|builders|admins` emails an
   invitation (into Mailpit, until there is a real relay). The three demo users and Goat Arcade's database are what
   the test suites rely on: keep them while you use the suites, remove them (`./annex users remove`,
@@ -383,13 +384,10 @@ ANNEX_ENV=kaldi tests/instance.sh > .build/instance.log 2>&1; tail -5 .build/ins
 - **Everyone else:** `ANNEX_ENV=kaldi ./annex users add ana --name 'Ana Novak' --email ana@kaldi.si --groups builders`
   emails an invitation. `users` can open the apps; `builders` deploy and see their own apps in the console; `admins`
   see everything, Mailpit included.
-- **Builders' machines:** the repo, the SSH block and key of section 8.2 (the key is root on the instance: give it
-  only to people you'd give root), `.env.kaldi`, and the MCP server under its own name, with the lane in its
-  environment:
-  ```bash
-  claude mcp add --scope user annex-kaldi -e ANNEX_ENV=kaldi -- uv run --quiet --project "$(pwd)/toolkit/mcp" annex-mcp
-  ```
-  Undo: `claude mcp remove --scope user annex-kaldi`.
+- **Builders' machines:** `docs/install.md`, with the SSH block and key of section 8.2 (the key is root on the
+  instance: give it only to people you'd give root). They need no `.env.kaldi`: `./annex connect annex-kaldi`
+  points their CLI, MCP server and skill at the instance (D119). The same page serves a client's people on the
+  client's instance.
 - **Slack:** `docs/setup.md` §7 in Kaldi's workspace, with `ssh annex-kaldi` and `ANNEX_ENV=kaldi scripts/push.sh`.
   `#annex-selftest` isn't needed: no suite runs there.
 

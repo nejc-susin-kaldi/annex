@@ -19,12 +19,12 @@ All requests are relative to the page and go to this app's own server:
 - `fetch("api/me")` returns `{login, name, email, groups}` for the signed-in user. Use it for greetings. Never build a login form.
 - `fetch("api/data/<view>?<filters>")` returns a JSON array of rows from a gateway view. It only works for views listed under `data.views` in `annex.yaml`; others return 403. Filters use PostgREST syntax:
   - `?limit=10`
-  - `?order=games_30d.desc`
-  - `?venue_code=eq.LJ1`
+  - `?order=day.desc`
+  - `?city=eq.Ljubljana`
   - `?title=ilike.*monster*`
-  - `?select=title,venue_name,games_30d`
+  - `?select=day,city,amount`
   - `?day=gte.2026-10-01`
-- Views and their columns are in the contract (`annex contract`). All data is synthetic. Large views (e.g. `daily_plays`, one row per machine and day) should be filtered or limited.
+- The views this instance has, and their columns, are in the contract (`annex contract`); an instance may have none. Treat every row as real data. Large views (one row per item and day) should be filtered or limited.
 - Use relative URLs (`api/...`, not `/api/...` or a hostname), so the page works on any host.
 
 ## Logging

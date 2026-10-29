@@ -1,4 +1,9 @@
-"""Talking to the Annex platform: the VM over SSH (D1), or the local stack on this machine's Docker (D99)."""
+"""Talking to the Annex platform: the VM over SSH (D1), or the local stack on this machine's Docker (D99).
+
+Which platform (D119): without ANNEX_ENV, the instance this user pointed the CLI at with `annex connect <ssh-host>`
+(the file instance_file() names), so the CLI, the MCP server and the skill never need to know about instances. With
+ANNEX_ENV (the repo's scripts and suites always set it), a lane of this checkout: vm (.env), local (.env.local) or
+another instance's .env.<name> (D118)."""
 from __future__ import annotations
 
 import json
@@ -17,6 +22,9 @@ ENVS = {"vm": ".env", "local": ".env.local"}  # ANNEX_ENV -> settings file, as i
 ENV_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,23}$")  # another instance (D118): .env.<name>, which must exist
 TARGET_KEYS = ("ANNEX_TARGET", "ANNEX_SSH_HOST", "ANNEX_DATA_DIR", "ANNEX_DOCKER_CONTEXT")
 FILE_ONLY = ("ANNEX_TARGET", "ANNEX_DOCKER_CONTEXT")
+NOT_CONNECTED = ("Annex isn't pointed at an instance on this machine yet. A person runs, once: annex connect <ssh-host> "
+                 "(the SSH alias of their Annex server, from its platform team; `ssh <ssh-host> true` must work without "
+                 "a prompt). Agents: ask the user to run it; never run it yourself")
 
 
 class AnnexError(Exception):
@@ -34,14 +42,34 @@ def read_env_file(path: Path) -> dict[str, str]:
     return out
 
 
+def instance_file(environ=None) -> Path:
+    """This user's pointer (D119): ~/.config/annex/instance ($XDG_CONFIG_HOME respected; ANNEX_INSTANCE_FILE for tests)."""
+    environ = os.environ if environ is None else environ
+    if environ.get("ANNEX_INSTANCE_FILE"):
+        return Path(environ["ANNEX_INSTANCE_FILE"])
+    base = Path(environ["XDG_CONFIG_HOME"]) if environ.get("XDG_CONFIG_HOME") else Path.home() / ".config"
+    return base / "annex" / "instance"
+
+
 def target_settings(environ=None, repo: Path | None = None) -> dict[str, str]:
-    """Where the platform is, from the settings file ANNEX_ENV selects: the file scripts/lib.sh sources, so `./annex`
-    and the scripts agree (D99). The file wins over the process environment, as in lib.sh; the environment only fills
-    keys the file leaves out, except ANNEX_TARGET and ANNEX_DOCKER_CONTEXT, which come from the file alone (a value
-    left in a shell by the other stack must never redirect this one)."""
+    """Where the platform is. Without ANNEX_ENV: the instance `annex connect` pointed this user at (D119), over SSH,
+    and nothing from the process environment. With ANNEX_ENV: the settings file it selects, the file scripts/lib.sh
+    sources, so `./annex` and the scripts agree (D99). That file wins over the process environment, as in lib.sh; the
+    environment only fills keys the file leaves out, except ANNEX_TARGET and ANNEX_DOCKER_CONTEXT, which come from the
+    file alone (a value left in a shell by the other stack must never redirect this one). ANNEX_ENV is "" for the
+    pointer."""
     environ = os.environ if environ is None else environ
     repo = REPO if repo is None else repo
-    name = environ.get("ANNEX_ENV") or "vm"
+    name = environ.get("ANNEX_ENV") or ""
+    if not name:
+        path = instance_file(environ)
+        if not path.is_file():
+            raise AnnexError(NOT_CONNECTED)
+        conf = read_env_file(path)
+        if not conf.get("ANNEX_SSH_HOST"):
+            raise AnnexError(f"{path} has no ANNEX_SSH_HOST. {NOT_CONNECTED}")
+        return {"ANNEX_ENV": "", "ANNEX_TARGET": "ssh", "ANNEX_SSH_HOST": conf["ANNEX_SSH_HOST"],
+                "ANNEX_DATA_DIR": conf.get("ANNEX_DATA_DIR") or "/srv/annex", "ANNEX_DOCKER_CONTEXT": ""}
     if name in ENVS:
         path = repo / ENVS[name]
         if not path.exists():
@@ -78,11 +106,11 @@ def docker_endpoint(context: str) -> str:
 class Remote:
     local = False            # the local stack (D99) instead of the VM
     python = "python3"       # the interpreter of annex_vm.py (on the local stack it resolves through the prefix's PATH)
-    env_name = "vm"
+    env_name = "vm"          # "" when this is the instance `annex connect` pointed at (D119)
 
-    def __init__(self, environ=None) -> None:
+    def __init__(self, environ=None, target: dict[str, str] | None = None) -> None:
         environ = os.environ if environ is None else environ
-        t = target_settings(environ)
+        t = target or target_settings(environ)
         self.env_name = t["ANNEX_ENV"]
         self.local = t["ANNEX_TARGET"] == "local"
         self.host = t["ANNEX_SSH_HOST"]
@@ -280,6 +308,10 @@ class Remote:
         """The deployed platform's settings (.env written by scripts/render.py)."""
         r = self.run(f"cat {self.data}/platform/.env", check=False)
         if r.returncode != 0:
+            if not self.env_name:
+                raise AnnexError(f"No Annex platform answers on {self.where} ({self.data}/platform/.env): "
+                                 f"{self._msg(r)}. Check that `ssh {self.host} true` works without a prompt; if the "
+                                 "server moved, a person runs `annex connect <ssh-host>` again")
             pre = "" if self.env_name == "vm" else f"ANNEX_ENV={self.env_name} "
             raise AnnexError(f"No Annex platform found on {self.where} ({self.data}/platform/.env). "
                              f"Run {pre}scripts/bootstrap.sh and {pre}scripts/push.sh first.")

@@ -8,7 +8,7 @@ storage:
   postgres: false
   files: true
 data:
-  views: [revenue_weekly]
+  views: []                 # gateway views to read: `annex contract` lists this instance's
 schedule:
   - name: daily
     cron: "0 6 * * *"

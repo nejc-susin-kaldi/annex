@@ -10,7 +10,7 @@ scripts/push.sh --extras      # sync and start the platform, incl. Metabase and 
 tests/smoke.sh                # quick check that every part works (under a minute)
 scripts/show-users.sh         # demo user passwords
 ```
-On a new VM, start with [docs/new-instance.md](docs/new-instance.md): what to decide, how to prepare the VM and the machine you run this from, and the first bootstrap, push and smoke test. `push.sh` also brings up Goat Arcade's database (`demo/client-db/`), the synthetic client whose curated views the gateway and Metabase serve (D77, D112). For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo is in [docs/demo.md](docs/demo.md), and a self-guided tour for visitors in [docs/goat-arcade/tour.md](docs/goat-arcade/tour.md); teardown is in [docs/teardown.md](docs/teardown.md). Day-to-day commands are in [docs/operations.md](docs/operations.md).
+To build apps on an existing instance, install the CLI, MCP server and skill with [docs/install.md](docs/install.md). On a new VM, start with [docs/new-instance.md](docs/new-instance.md): what to decide, how to prepare the VM and the machine you run this from, and the first bootstrap, push and smoke test. `push.sh` also brings up Goat Arcade's database (`demo/client-db/`), the synthetic client whose curated views the gateway and Metabase serve (D77, D112). For browser access, see [docs/setup.md](docs/setup.md) §3. The management demo is in [docs/demo.md](docs/demo.md), and a self-guided tour for visitors in [docs/goat-arcade/tour.md](docs/goat-arcade/tour.md); teardown is in [docs/teardown.md](docs/teardown.md). Day-to-day commands are in [docs/operations.md](docs/operations.md).
 
 ## Deploying apps
 ```bash

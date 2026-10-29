@@ -12,24 +12,15 @@
 </head>
 <body>
   <h1 id="hello">Hello</h1>
-  <h2>Busiest machines (30 days)</h2>
-  <table id="machines"><tr><th>#</th><th>Machine</th><th>Venue</th><th>Games</th></tr></table>
+  <p>This is the start of __APP_NAME__.</p>
   <script src="annex-errors.js"></script>
   <script>
     // Identity and data come from this app's own server (same origin), never from the browser directly.
     fetch("api/me").then(r => r.json()).then(me => {
       document.getElementById("hello").textContent = `Hello, ${me.name}`;
     });
-    fetch("api/data/machine_floor?order=games_30d.desc&limit=10").then(r => r.json()).then(rows => {
-      const t = document.getElementById("machines");
-      rows.forEach((r, i) => {
-        const tr = t.insertRow();
-        tr.insertCell().textContent = i + 1;
-        tr.insertCell().textContent = r.title;
-        tr.insertCell().textContent = r.venue_name;
-        const c = tr.insertCell(); c.className = "n"; c.textContent = r.games_30d.toLocaleString();
-      });
-    });
+    // A data view, once it is listed under data.views in annex.yaml (`annex contract` names this instance's views):
+    //   fetch("api/data/<view>?order=day.desc&limit=10").then(r => r.json()).then(rows => { ... });
   </script>
 </body>
 </html>

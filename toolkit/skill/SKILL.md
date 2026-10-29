@@ -1,11 +1,11 @@
 ---
 name: annex
-description: Build and deploy small internal tools (web pages, dashboards, scheduled jobs) to the client's Kaldi Annex server, behind their login, using the annex MCP tools. Use when the user asks to make an internal tool, dashboard, report or job "on Annex", to deploy or redeploy an Annex app, or to check an Annex app's status or logs.
+description: Build and deploy small internal tools (web pages, dashboards, scheduled jobs) to the organisation's Annex server, behind its login, using the annex MCP tools. Use when the user asks to make an internal tool, dashboard, report or job "on Annex", to deploy or redeploy an Annex app, or to check an Annex app's status or logs.
 ---
 
 # Annex: build and deploy internal tools
 
-Annex runs small internal tools on the client's own server, behind their login, with read-only access to curated product data. You write a small folder; Annex handles hosting, login, discovery page, storage, schedules, backups and data access.
+Annex runs small internal tools on the organisation's own server, behind its login, with read-only access to curated data views where the instance has them. You write a small folder; Annex handles hosting, login, discovery page, storage, schedules, backups and data access.
 
 ## Tools (MCP server `annex`)
 | Tool | Use |
@@ -30,7 +30,7 @@ Removing apps, setting secrets, restoring data and managing user accounts are **
 Prefer a template when the user hasn't asked for a specific stack: it already follows the rules.
 
 ## Workflow
-1. `annex_contract` (the core). Note the gateway views and their columns. If the app sends email or Slack, receives webhooks, or uses its own stack, also fetch that topic.
+1. `annex_contract` (the core). Note the data views this instance lists at the end of its views section, and their columns; an instance may have none, and then the app keeps `data.views: []`. If the app sends email or Slack, receives webhooks, or uses its own stack, also fetch that topic.
 2. Ask for the **owner** (the builder's Annex login, e.g. `sam`) if you don't know it. Choose a short **name** (lowercase, `-`); it becomes the hostname.
 3. `annex_init` into the current folder (or a new subfolder) using its **absolute** path. Read the returned AGENTS.md; it says which files you may change.
 4. Build the app. Keep to the template's structure: don't touch the Dockerfile, server/runtime helpers, users or ports. Use only the views you list under `data.views`, and set `description`.
@@ -47,12 +47,12 @@ Contract version 2 (`ANNEX_CONTRACT_VERSION`). The contract is the authority: `a
 
 ## Rules that matter (a digest; the contract wins)
 - **No login code.** The user is already signed in. Identity comes from `Remote-*` headers (python/node helpers), or from `api/me` in `static`.
-- **Product data only through the gateway views**, never a database connection. Everything is synthetic, but treat it as client data anyway: don't paste rows into chat or commit them.
+- **The organisation's data only through the gateway views** the contract lists, never a database connection. Treat every row as real data: don't paste rows into chat or commit them.
 - **No secrets in code.** Declare names under `secrets:` and ask a human to set them.
 - **Read-only filesystem.** Write only to `/tmp` or `/data` (`storage.files: true`), or use `DATABASE_URL` (`storage.postgres: true`).
 - **Memory.** 256 MB by default. Only if the app needs more (it's killed for running out of memory, or the stack needs it, e.g. Next.js), set `resources: {memory: 384m}` or up to `512m`. Don't raise it by default.
-- **Email and Slack** only through Annex, never an SMTP server or a Slack token of your own. Declare `notify: {email: true, slack: ["#channel"]}` in `annex.yaml`, then use the template's helpers (`send_email`, `post_slack`; `sendEmail`, `postSlack` in node). Recipients are logins (`"cm"`) or company addresses; anything else is refused, and one refused recipient means nothing is sent. No attachments: save the file under `/data` and email a link to it in your app. The `notice` template (title, body, link) covers most messages. Errors say what to fix. The deploy warns if Slack isn't connected yet.
-- **Alerts.** The owner is emailed when the app is down, crash-loops, throws 5xx or a job fails. Keep `/healthz` honest and fast, and make jobs **exit non-zero on failure**. `annex_status` shows the health check, any open incident and each job's last run: check it after a deploy. `alerts: {to: [owner, cm, "#channel"]}` adds people.
+- **Email and Slack** only through Annex, never an SMTP server or a Slack token of your own. Declare `notify: {email: true, slack: ["#channel"]}` in `annex.yaml`, then use the template's helpers (`send_email`, `post_slack`; `sendEmail`, `postSlack` in node). Recipients are logins (`"ana"`) or company addresses; anything else is refused, and one refused recipient means nothing is sent. No attachments: save the file under `/data` and email a link to it in your app. The `notice` template (title, body, link) covers most messages. Errors say what to fix. The deploy warns if Slack isn't connected yet.
+- **Alerts.** The owner is emailed when the app is down, crash-loops, throws 5xx or a job fails. Keep `/healthz` honest and fast, and make jobs **exit non-zero on failure**. `annex_status` shows the health check, any open incident and each job's last run: check it after a deploy. `alerts: {to: [owner, ana, "#channel"]}` adds people.
 - **Usage** is measured by the platform (signed-in page requests; not health checks or static files), so there is nothing to add to the app. Owners see "users in the last 7 days" on their tile and in `annex usage`; logins are never shown.
 - **Webhooks** (Trello, Stripe, GitHub, Slack, shared-secret): declare `webhooks:` in `annex.yaml` with a `secret` listed under `secrets:`, and give the provider `$ANNEX_HOOKS_URL/<name>`. In the endpoint call `hook_event(headers)` first (401 on `HookError`), answer 2xx quickly and dedupe by `event_id`: delivery is at least once. Ask a human to set the signing secret (`annex secret set`); `annex hooks show` and `replay` are human only.
 - **Pin versions** of libraries, including CDN URLs.
@@ -70,5 +70,5 @@ Every app logs the same way; the templates already do it, so keep it. Use the lo
 ## The console
 If the user wants to *look* at an app without the CLI (status, releases, errors, logs, usage), point them at the console (`console.<domain>`, the Homepage's Console tile): their own apps, read-only. You still deploy, roll back and read logs with the tools above.
 
-## Homelab note (M0 prototype)
-The browser reaches Annex through an SSH tunnel on port 8443 and `/etc/hosts` entries. If the user can't open a new app's URL, they need to add its hostname to `/etc/hosts`, unless they set up the wildcard resolver (see `docs/setup.md` in the annex repo, §3).
+## Which Annex
+The tools act on the one Annex instance this machine was pointed at with `annex connect <ssh-host>`, a one-time step a person does when installing Annex. You never choose, change or run that. If a tool says Annex isn't pointed at an instance, or that the server doesn't answer over SSH, tell the user to run `annex connect <ssh-host>` with the alias their platform team gave them (or check that `ssh <ssh-host> true` works). If the user can't open an app's URL, their machine can't reach the server (VPN, network): they ask their platform team.

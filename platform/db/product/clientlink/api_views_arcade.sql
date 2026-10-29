@@ -10,6 +10,10 @@
 -- Applied by scripts/democlient.sh link, and by scripts/push.sh once the link exists. Idempotent.
 SET search_path = annex_api;
 
+-- The data set's description: `annex contract` prints it above this instance's views (D119), PostgREST in its OpenAPI
+-- description. An instance without a client database has no comment and no views.
+COMMENT ON SCHEMA annex_api IS 'Goat Arcade: a chain of pinball and retro arcades; the client''s own database, read through the gateway. The data covers the last 180 days and is synthetic. Join views in your code on venue_code, machine_id, model_id or nickname.';
+
 CREATE OR REPLACE VIEW annex_api.venues AS
 SELECT v.code AS venue_code, v.name AS venue_name, v.city, v.country, v.lat, v.lon, v.opened_on,
        v.hours AS opening_hours,
