@@ -4,7 +4,8 @@
 ANNEX_ENV (an environment variable, per command) picks the settings file: unset or
 `vm` reads .env (falls back to .env.example) into .build/vm/platform; `local` reads
 .env.local (falls back to .env.local.example) into .build/local/platform, the stack
-on this machine's Docker (D99). It derives hostnames and mode-specific
+on this machine's Docker (D99); any other name, e.g. `kaldi`, reads .env.<name> (no
+fallback) into .build/<name>/platform, another instance (D118). It derives hostnames and mode-specific
 settings, renders every *.tmpl under platform/config/ with {{VAR}} placeholders, and
 copies compose files, config, platform/db/, platform/vm/ and platform/ops/ alongside. The resulting .env in the
 bundle holds non-secret settings only; it is used by Compose on the VM and read
@@ -26,6 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PLATFORM = ROOT / "platform"   # the bundle's source: compose files, config/, db/, ops/, vm/
 ENVS = {"vm": ".env", "local": ".env.local"}  # ANNEX_ENV -> settings file (each falls back to <file>.example)
+ENV_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,23}$")  # another instance (D118): .env.<name>, which must exist
 TARGETS = ("ssh", "local")                     # ANNEX_TARGET: how scripts and the CLI reach the platform's Docker
 BIND_RE = re.compile(r"^(?:(\d{1,3}(?:\.\d{1,3}){3}):)?(\d{1,5})$")
 PLATFORM_SERVICES = ["home", "auth", "metabase", "logs", "gateway", "mail", "hooks", "console"]
@@ -51,13 +53,21 @@ def read_env(path: Path) -> dict[str, str]:
 
 def env_name(environ) -> str:
     name = environ.get("ANNEX_ENV") or "vm"
-    if name not in ENVS:
-        die(f"ANNEX_ENV={name} must be vm (the default: .env) or local (.env.local)")
+    if name not in ENVS and not ENV_NAME_RE.match(name):
+        die(f"ANNEX_ENV={name} must be vm (the default: .env), local (.env.local) or an instance name in lowercase "
+            "letters, digits and dashes (kaldi: .env.kaldi)")
     return name
 
 
 def env_file(name: str, root: Path = ROOT) -> Path:
-    """The settings file of an environment: .env or .env.local, else its committed .example."""
+    """The settings file of an environment: .env or .env.local, else its committed .example; .env.<name> for another
+    instance, which has no example to fall back on (an instance's settings are never a guess)."""
+    if name not in ENVS:
+        path = root / f".env.{name}"
+        if not path.exists():
+            die(f"ANNEX_ENV={name} needs {path.name} in the repo root: copy .env.example to it and set the instance's "
+                "values (docs/new-instance.md)")
+        return path
     path = root / ENVS[name]
     return path if path.exists() else root / (ENVS[name] + ".example")
 
@@ -105,11 +115,50 @@ def derive(env: dict[str, str], name: str = "vm", root: Path = ROOT) -> dict[str
         die(f"ANNEX_COOKIE_DOMAIN={cookie} must be {rest} or a parent of it")
 
     mode = env.get("ANNEX_TLS_MODE", "local")
-    if mode not in ("local", "upstream"):
-        die("ANNEX_TLS_MODE must be local or upstream")
+    if mode not in ("local", "upstream", "acme"):
+        die("ANNEX_TLS_MODE must be local, upstream or acme")
     upstream_ip = env.get("ANNEX_UPSTREAM_IP", "")
     if mode == "upstream" and not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", upstream_ip):
         die("ANNEX_TLS_MODE=upstream needs ANNEX_UPSTREAM_IP set to the upstream proxy's LAN IP")
+    # acme (D118): Traefik gets a Let's Encrypt wildcard certificate itself, by a DNS-01 challenge in Route53
+    acme_email = env.get("ANNEX_ACME_EMAIL", "")
+    if mode == "acme" and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", acme_email):
+        die("ANNEX_TLS_MODE=acme needs ANNEX_ACME_EMAIL, the address Let's Encrypt writes to about the certificate")
+    acme_staging = env.get("ANNEX_ACME_STAGING", "")
+    if acme_staging not in ("", "true", "false"):
+        die("ANNEX_ACME_STAGING must be true (Let's Encrypt's staging CA: untrusted certificates, no rate limits) or empty")
+    acme_ca = ("https://acme-staging-v02.api.letsencrypt.org/directory" if acme_staging == "true"
+               else "https://acme-v02.api.letsencrypt.org/directory")
+
+    # the demo client (D118): on, Goat Arcade's database and the three demo users come with the platform (D77, D112);
+    # off, an instance for real use: no Goat Arcade, and bootstrap makes one admin account from ANNEX_ADMIN_*
+    demo = env.get("ANNEX_DEMO") or "on"
+    if demo not in ("on", "off"):
+        die("ANNEX_DEMO must be on (Goat Arcade and the demo users, the default) or off (an instance for real use)")
+    admin = {k: env.get(f"ANNEX_ADMIN_{k}", "") for k in ("LOGIN", "NAME", "EMAIL")}
+    if demo == "off":
+        if not re.fullmatch(r"[a-z][a-z0-9._-]{1,31}", admin["LOGIN"]):
+            die("ANNEX_DEMO=off needs ANNEX_ADMIN_LOGIN, the first admin's login (lowercase, e.g. nejc): "
+                "bootstrap creates that account instead of the demo users")
+        if not admin["NAME"] or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", admin["EMAIL"]):
+            die("ANNEX_DEMO=off needs ANNEX_ADMIN_NAME (a display name) and ANNEX_ADMIN_EMAIL (where the first "
+                "admin's invitation and second-factor codes go)")
+        if any(c in admin["NAME"] for c in '"\\|'):
+            die('ANNEX_ADMIN_NAME may not contain ", \\ or |')
+
+    # mail (D118): off, Mailpit catches everything (the prototype); on, it also relays every message to the SMTP
+    # server in secrets/mailpit/relay.yaml, which a human writes (docs/new-instance.md)
+    relay = env.get("ANNEX_MAIL_RELAY") or "off"
+    if relay not in ("on", "off"):
+        die("ANNEX_MAIL_RELAY must be off (Mailpit catches all mail, the default) or on (Mailpit also relays it)")
+    # sign-in (D118): one factor (a password) or two (a password and TOTP or a passkey). Registering a second
+    # factor needs a one-time code by email, so two factors need mail that reaches people
+    factors = env.get("ANNEX_AUTH_FACTORS") or "one"
+    if factors not in ("one", "two"):
+        die("ANNEX_AUTH_FACTORS must be one (a password, the default) or two (a password and a second factor)")
+    if factors == "two" and relay != "on":
+        die("ANNEX_AUTH_FACTORS=two needs ANNEX_MAIL_RELAY=on: registering a second factor sends a code by email, "
+            "and Mailpit alone keeps it on the server")
 
     port = env.get("ANNEX_PUBLIC_PORT", "")
     if port and not port.isdigit():
@@ -134,7 +183,8 @@ def derive(env: dict[str, str], name: str = "vm", root: Path = ROOT) -> dict[str
     prefix, _, suffix = pattern.partition("{name}")
     out = {
         "COMPOSE_PROJECT_NAME": "annex",
-        "COMPOSE_FILE": "compose.yaml:compose.tls-local.yaml" if mode == "local" else "compose.yaml",
+        "COMPOSE_FILE": ":".join(["compose.yaml"] + ([f"compose.tls-{mode}.yaml"] if mode != "upstream" else [])
+                                 + (["compose.mail-relay.yaml"] if relay == "on" else [])),
         "ANNEX_ENV": name,
         "ANNEX_TARGET": target,
         "ANNEX_DATA_DIR": data_dir,
@@ -146,9 +196,23 @@ def derive(env: dict[str, str], name: str = "vm", root: Path = ROOT) -> dict[str
         "ANNEX_PORT_SUFFIX": port_suffix,
         "ANNEX_BIND_HTTP": bind_http,
         "ANNEX_BIND_HTTPS": bind_https,
-        "ANNEX_ENTRYPOINT": "websecure" if mode == "local" else "web",
+        "ANNEX_ENTRYPOINT": "web" if mode == "upstream" else "websecure",
+        "ANNEX_ACME_EMAIL": acme_email,
+        "ANNEX_ACME_CA": acme_ca,
+        "ANNEX_DEMO": demo,
+        "ANNEX_ADMIN_LOGIN": admin["LOGIN"],
+        "ANNEX_ADMIN_NAME": admin["NAME"],
+        "ANNEX_ADMIN_EMAIL": admin["EMAIL"],
+        "ANNEX_MAIL_RELAY": relay,
+        "ANNEX_AUTH_FACTORS": factors,
+        "ANNEX_AUTH_POLICY": factors + "_factor",
+        # the name on the sign-in page's authenticator entries
+        "ANNEX_TOTP_ISSUER": "Goat Arcade" if demo == "on" else "Annex",
+        "ANNEX_MAIL_TILE": ("Outgoing email: a copy of everything sent (relayed to the mail server). Admins only"
+                            if relay == "on" else "Outgoing email (prototype catcher: nothing leaves the server). Admins only"),
         "ANNEX_HOST_REGEX": "^" + re.escape(prefix) + "[a-z0-9-]+" + re.escape(suffix) + "$",
         "ANNEX_CERT_NAMES": f"*.{rest} {rest}",
+        "ANNEX_CERT_DOMAIN": rest,
         "TZ": env.get("TZ", "Europe/Ljubljana"),
         "ANNEX_EMAIL_DOMAINS": env.get("ANNEX_EMAIL_DOMAINS", "annex.example,goat-arcade.example"),
         "ANNEX_EMAIL_ALLOW": env.get("ANNEX_EMAIL_ALLOW", ""),
@@ -160,7 +224,7 @@ def derive(env: dict[str, str], name: str = "vm", root: Path = ROOT) -> dict[str
         "ANNEX_BUILD_MIN_FREE_GB": env.get("ANNEX_BUILD_MIN_FREE_GB", ""),
         "ANNEX_IMAGE_MAX_MB": env.get("ANNEX_IMAGE_MAX_MB", ""),
         # what annex-ops (inside the VM) requests to check the front door: no port suffix
-        "ANNEX_FRONTDOOR_URL": ("https" if mode == "local" else "http") + "://" + pattern.replace("{name}", "home") + "/",
+        "ANNEX_FRONTDOOR_URL": ("http" if mode == "upstream" else "https") + "://" + pattern.replace("{name}", "home") + "/",
     }
     for svc in PLATFORM_SERVICES:
         host = pattern.replace("{name}", svc)
@@ -208,8 +272,8 @@ def main() -> None:
     if OUT.exists():
         shutil.rmtree(OUT)
     OUT.mkdir(parents=True)
-    for name in ("compose.yaml", "compose.tls-local.yaml"):
-        shutil.copy2(PLATFORM / name, OUT / name)
+    for f in PLATFORM.glob("compose*.yaml"):
+        shutil.copy2(f, OUT / f.name)
     for d in ("config", "db", "vm"):
         shutil.copytree(PLATFORM / d, OUT / d)
     # the deploy runs on the VM (platform/vm/annex_deploy.py, D101) with the CLI's own manifest and log-convention modules
@@ -227,6 +291,11 @@ def main() -> None:
         other.unlink()
     if mode != "local":
         (tdir / "dynamic" / "tls.yml").unlink()
+    if values["ANNEX_DEMO"] == "off":
+        # no Goat Arcade branding (D107): Authelia's own logo, and no app names mapped to Goat Arcade's teams
+        for f in (OUT / "config" / "authelia" / "assets").iterdir():
+            f.unlink()
+        (OUT / "config" / "teams.json").write_text("{}\n")
 
     for tmpl in OUT.rglob("*.tmpl"):
         tmpl.with_suffix("").write_text(render_text(tmpl.read_text(), values, tmpl))

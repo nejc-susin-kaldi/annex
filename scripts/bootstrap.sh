@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One-time (idempotent) preparation of the VM, or of the local stack with ANNEX_ENV=local (D99): directory layout,
-# secrets and demo users generated there, and in local TLS mode the mkcert wildcard certificate.
+# secrets and the first users (the demo users, or one admin with ANNEX_DEMO=off, D118) generated there, and in local
+# TLS mode the mkcert wildcard certificate.
 # Re-running never replaces existing secrets.
 source "$(dirname "$0")/lib.sh"
 
@@ -20,7 +21,12 @@ fi
 vm "test -d $DATA && test -w $DATA" || { echo "$DATA missing or not writable on $WHERE" >&2; exit 1; }
 vm "mkdir -p $DATA/platform/vm"
 put "$ROOT/platform/vm/bootstrap-secrets.sh" "$DATA/platform/vm/"
-vm "ANNEX_DATA_DIR=$DATA bash $DATA/platform/vm/bootstrap-secrets.sh $(compose_image authelia/authelia)"
+# the first users: the demo users, or with ANNEX_DEMO=off the one admin from the settings (D118)
+first_users="ANNEX_DEMO=$(setting_local ANNEX_DEMO)"
+if [ "$(setting_local ANNEX_DEMO)" = off ]; then
+  for k in LOGIN NAME EMAIL; do first_users="$first_users ANNEX_ADMIN_$k=$(printf '%q' "$(setting_local ANNEX_ADMIN_$k)")"; done
+fi
+vm "ANNEX_DATA_DIR=$DATA $first_users bash $DATA/platform/vm/bootstrap-secrets.sh $(compose_image authelia/authelia)"
 
 if [ "$(setting_local ANNEX_TLS_MODE)" = local ]; then   # before the first push there is no deployed .env: the local render
   names=$(setting_local ANNEX_CERT_NAMES)

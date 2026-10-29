@@ -1,0 +1,66 @@
+# Static config, ANNEX_TLS_MODE=acme (D118): HTTPS on 443 with a Let's Encrypt wildcard certificate that Traefik
+# gets and renews itself, by a DNS-01 challenge in Route53. The AWS credentials are the EC2 instance's role (no keys
+# on disk); the certificate and the account key are kept in ${ANNEX_DATA_DIR}/state/acme/acme.json.
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+log:
+  level: INFO
+accessLog:
+  format: json
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        Remote-User: keep
+        X-Request-Id: keep   # the app's response header (and the client's request header), so one id links log lines
+ping:
+  entryPoint: ping
+entryPoints:
+  ping:
+    address: ":8082"
+  web:
+    address: ":80"
+    http:
+      # drop Remote_User / Remote.User aliases that WSGI-style backends read as Remote-User
+      aliasHeadersStrategy: delete
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: false
+  websecure:
+    address: ":443"
+    asDefault: true
+    http:
+      aliasHeadersStrategy: delete
+      # one wildcard certificate for every router: a router whose host it covers never asks for one of its own
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: "{{ANNEX_CERT_DOMAIN}}"
+            sans: ["*.{{ANNEX_CERT_DOMAIN}}"]
+      # every router: drop client-sent identity headers, then forward-auth
+      middlewares:
+        - strip-identity@file
+        - authelia@file
+providers:
+  docker:
+    endpoint: tcp://socket-ro:2375
+    exposedByDefault: false
+    # the default for platform routes (gateway, hooks). Each app's container says
+    # traefik.docker.network: annex-app-<name>, its own network, which Traefik joins at deploy (D88)
+    network: annex-edge
+    constraints: Label(`com.kaldi.annex`, `true`)
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "{{ANNEX_ACME_EMAIL}}"
+      storage: /acme/acme.json
+      # the production CA, or the staging one with ANNEX_ACME_STAGING=true (untrusted certificates, no rate limits)
+      caServer: "{{ANNEX_ACME_CA}}"
+      dnsChallenge:
+        provider: route53

@@ -60,9 +60,20 @@ class TargetSettings(Repo):
         self.assertEqual((t["ANNEX_ENV"], t["ANNEX_TARGET"], t["ANNEX_DOCKER_CONTEXT"]), ("local", "local", "desktop-linux"))
         self.assertEqual(t["ANNEX_DATA_DIR"], "/Users/someone/.annex/local")
 
+    def test_an_instance_reads_its_own_file(self):
+        # another instance (D118): .env.<name>, never .env or an example
+        self.write(".env", "ANNEX_SSH_HOST=homelab\n")
+        with self.assertRaises(AnnexError) as e:
+            target_settings({"ANNEX_ENV": "kaldi"}, self.repo)
+        self.assertIn(".env.kaldi", str(e.exception))
+        self.write(".env.kaldi", "ANNEX_SSH_HOST=annex-kaldi\n")
+        t = target_settings({"ANNEX_ENV": "kaldi"}, self.repo)
+        self.assertEqual((t["ANNEX_ENV"], t["ANNEX_TARGET"], t["ANNEX_SSH_HOST"]), ("kaldi", "ssh", "annex-kaldi"))
+
     def test_bad_values(self):
-        with self.assertRaises(AnnexError):
-            target_settings({"ANNEX_ENV": "prod"}, self.repo)
+        for bad in ("prod", "Prod", "../x"):
+            with self.subTest(bad=bad), self.assertRaises(AnnexError):
+                target_settings({"ANNEX_ENV": bad}, self.repo)
         self.write(".env", "ANNEX_TARGET=cloud\n")
         with self.assertRaises(AnnexError):
             target_settings({}, self.repo)

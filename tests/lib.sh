@@ -128,4 +128,11 @@ print(ids[0] if ids else "")' "$@")
   [ -n "$id" ] && as kaldi-admin "$(setting ANNEX_URL_MAIL)/api/v1/message/$id" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Text"])'
 }
 
+# The suites deploy annex-selftest, sign in as the demo users and read Goat Arcade's views: they are for the VM and the
+# local lane. An instance for real use (ANNEX_DEMO=off, D118) has none of that; tests/instance.sh checks it read-only.
+if [ "${ANNEX_READ_ONLY_CHECK:-}" != 1 ] && [ "$(setting ANNEX_DEMO)" = off ]; then
+  echo "This instance ($WHERE) runs with ANNEX_DEMO=off: the suites need the demo users and Goat Arcade and deploy a" >&2
+  echo "test app, so they don't run here. Check it with: ANNEX_ENV=$ANNEX_ENV tests/instance.sh" >&2
+  exit 2
+fi
 test_mode on

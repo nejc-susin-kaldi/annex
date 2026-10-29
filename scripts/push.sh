@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Render, sync the platform bundle to the VM (or the local stack: ANNEX_ENV=local, D99) and (re)start it with its Compose;
-# then the demo client's database (demo/client-db/, Goat Arcade) is brought up and linked if it isn't yet (D112).
+# then the demo client's database (demo/client-db/, Goat Arcade) is brought up and linked if it isn't yet (D112),
+# unless ANNEX_DEMO=off (D118).
 # Usage: scripts/push.sh [--extras] [--force]
 #   --extras  also starts Metabase and Dozzle
 #   --force   push although the VM's last pushed commit is not an ancestor of this checkout
@@ -28,6 +29,11 @@ networks_sync() {
 }
 
 render
+# the mail relay's settings are a human's (they hold the relay's password): never written by a script (D118)
+if [ "$(setting_local ANNEX_MAIL_RELAY)" = on ] && ! vm "test -s $DATA/secrets/mailpit/relay.yaml"; then
+  echo "push: ANNEX_MAIL_RELAY=on, but $DATA/secrets/mailpit/relay.yaml is missing on $WHERE: write it first (docs/new-instance.md, \"Mail\")" >&2
+  exit 1
+fi
 # the VM's stamp first: a checkout that doesn't contain what is deployed must not overwrite it
 vm_version=$(mktemp "$ROOT/.build/vm-version.XXXXXX")
 trap 'rm -f "$vm_version"' EXIT
@@ -67,7 +73,9 @@ log "Applying gateway schema and log hook (platform/db/product/annex_api.sql, ga
 vm "cd $DATA/platform && for f in annex_api.sql gateway.sql; do
       docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' product-db psql -q -v ON_ERROR_STOP=1 -U postgres -d product -f /docker-entrypoint-initdb.d/\$f
     done"
-if [ -d "$ROOT/demo/client-db" ]; then
+if [ "$(setting_local ANNEX_DEMO)" = off ]; then
+  :  # an instance for real use (D118): no demo client, so the gateway has no views
+elif [ -d "$ROOT/demo/client-db" ]; then
   # This instance's client is Goat Arcade (D77): its database comes up with the platform, so the suites can rely on
   # it (D112). Only now: its network, annex-clientlink, is the platform's and exists once the platform has started.
   # vm.sh ensure starts arcade-db if it isn't running (the first start seeds it: about a minute), links product-db

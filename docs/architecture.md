@@ -116,6 +116,8 @@ The deploy, the scripts and the CLI don't know which machine they are on: `Remot
 | Front door | Traefik on :80/:443 (the Mac's browser through the tunnel on :8443) | Traefik on `127.0.0.1:9080`/`:9443`, hostnames `*.annex-local.home.arpa` |
 | Images | amd64 | arm64 (D98) |
 
+A third kind of lane is another instance (D118): `ANNEX_ENV=kaldi` reads `.env.kaldi` and is the VM lane in every other respect. Kaldi's own instance on EC2 runs that way with `ANNEX_DEMO=off` (no Goat Arcade; the gateway and product-db run empty), `ANNEX_TLS_MODE=acme` (Traefik's own Let's Encrypt wildcard certificate, DNS-01 in Route53), `ANNEX_AUTH_FACTORS=two` and `ANNEX_MAIL_RELAY=on` (Mailpit, on `edge` as well, relays every message to a real SMTP server); `docs/new-instance.md` section 8.
+
 The lane is chosen per command and never a default. The local stack is a development tool: no backups worth keeping, no Slack, arm64 builds. Nothing proven only locally counts as proven for the VM.
 
 ## annex-ops threads

@@ -389,7 +389,8 @@ services:
       traefik.http.routers.console.rule: Host(`${ANNEX_HOST_CONSOLE}`)
       traefik.http.services.console.loadbalancer.server.port: "8000"
 
-  # Prototype mail server: catches everything, nothing leaves the VM. Admins only (Authelia rule).
+  # Mail server: catches everything, nothing leaves the VM, unless ANNEX_MAIL_RELAY=on adds compose.mail-relay.yaml
+  # (D118). Admins only (Authelia rule).
   mailpit:
     <<: *base
     image: axllent/mailpit:v1.31.6

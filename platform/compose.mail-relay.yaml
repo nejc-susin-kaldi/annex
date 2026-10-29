@@ -1,0 +1,13 @@
+# Added to COMPOSE_FILE when ANNEX_MAIL_RELAY=on (D118): Mailpit keeps catching every message (the admins' copy of
+# what was sent) and also relays each one to the SMTP server in ${ANNEX_DATA_DIR}/secrets/mailpit/relay.yaml, which a
+# human writes because it holds the relay's password (docs/new-instance.md, "Mail"). Nothing that sends mail changes:
+# ops and Authelia still hand it to mailpit:1025. annex-edge is the network with a route out.
+services:
+  mailpit:
+    environment:
+      MP_SMTP_RELAY_CONFIG: /relay/relay.yaml
+      MP_SMTP_RELAY_ALL: "true"
+    volumes:
+      # the directory, not the file: a replaced single-file bind mount goes stale (D7)
+      - ${ANNEX_DATA_DIR}/secrets/mailpit:/relay:ro
+    networks: [platform, edge]

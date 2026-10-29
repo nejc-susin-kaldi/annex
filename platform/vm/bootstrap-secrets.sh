@@ -3,6 +3,8 @@
 # generates platform secrets and demo users once, and (re)writes the per-service
 # env files from them. Never overwrites an existing secret.
 # Usage: bootstrap-secrets.sh <authelia-image>
+# With ANNEX_DEMO=off in the environment (an instance for real use, D118) the first run makes one admin account from
+# ANNEX_ADMIN_LOGIN, ANNEX_ADMIN_NAME and ANNEX_ADMIN_EMAIL instead of the three demo users.
 set -euo pipefail
 D=${ANNEX_DATA_DIR:-/srv/annex}
 AUTHELIA_IMAGE=${1:?usage: bootstrap-secrets.sh <authelia-image>}
@@ -10,13 +12,15 @@ S=$D/secrets
 umask 077
 
 mkdir -p "$S/authelia" "$S/apps" "$S/hooks" "$D/state/authelia" "$D/state/product-db" "$D/state/appdata-db" \
-         "$D/state/mailpit" "$D/state/directory" "$D/state/ops" "$D/apps" "$D/deploy" "$D/backups" "$D/dumps" "$D/certs" "$D/platform"
+         "$D/state/mailpit" "$D/state/directory" "$D/state/ops" "$D/state/acme" "$S/mailpit" "$D/apps" "$D/deploy" "$D/backups" "$D/dumps" "$D/certs" "$D/platform"
 
 # incoming webhooks (M1.5): one JSON file per app with its signing secrets, written by annex_vm.py provision and
 # owned by uid 10001 (the ops container). The directory is the mount: replacing files in it never goes stale (D7).
 chmod 755 "$S/hooks"
 # the backup archives now hold secrets/ (D87): only the annex user (and root, which writes them) may enter
 chmod 700 "$D/backups"
+# Let's Encrypt's account key and certificate (ANNEX_TLS_MODE=acme), and the mail relay's credentials (D118)
+chmod 700 "$D/state/acme" "$S/mailpit"
 
 rand() { openssl rand -hex "${1:-24}"; }
 
@@ -72,11 +76,16 @@ VARS
 chmod 755 "$D/state/ops"
 
 # Demo users, created on the first run only: login, display name, email, groups. More users: `annex users add`.
-USERS=(
-  "sam|Sam Novak|sam@annex.example|builders"
-  "maja|Maja Horvat|maja@goat-arcade.example|users"
-  "kaldi-admin|Kaldi Admin|admin@annex.example|admins,builders"
-)
+if [ "${ANNEX_DEMO:-on}" = off ]; then
+  : "${ANNEX_ADMIN_LOGIN:?ANNEX_DEMO=off needs ANNEX_ADMIN_LOGIN}" "${ANNEX_ADMIN_NAME:?}" "${ANNEX_ADMIN_EMAIL:?}"
+  USERS=("$ANNEX_ADMIN_LOGIN|$ANNEX_ADMIN_NAME|$ANNEX_ADMIN_EMAIL|admins,builders")
+else
+  USERS=(
+    "sam|Sam Novak|sam@annex.example|builders"
+    "maja|Maja Horvat|maja@goat-arcade.example|users"
+    "kaldi-admin|Kaldi Admin|admin@annex.example|admins,builders"
+  )
+fi
 wrote_users=
 # Authelia generates each password itself (--random, as annex_vm.py does), so no password appears on a command
 # line (D80). users.txt and users.yml are written together; if either is missing, both are made again.
@@ -101,7 +110,7 @@ if [ ! -s "$S/users.txt" ] || [ ! -s "$S/authelia/users.yml" ]; then
   done
   mv "$S/users.txt.tmp" "$S/users.txt"
   mv "$S/authelia/users.yml.tmp" "$S/authelia/users.yml"
-  echo "bootstrap: generated demo user passwords"
+  echo "bootstrap: generated the first users' passwords (scripts/show-users.sh)"
   wrote_users=1
   echo "bootstrap: wrote authelia/users.yml"
 fi

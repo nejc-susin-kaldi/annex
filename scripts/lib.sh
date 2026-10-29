@@ -2,13 +2,18 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # Which stack (D99): ANNEX_ENV unset or vm = the VM, settings in .env; local = this machine's Docker, settings in
-# .env.local. Per command (ANNEX_ENV=local scripts/push.sh), never a default. Exported, so ./annex and render.py
-# started from a script pick the same file.
+# .env.local; another name (kaldi) = another instance, settings in .env.kaldi, which must exist (D118). Per command
+# (ANNEX_ENV=local scripts/push.sh), never a default. Exported, so ./annex and render.py started from a script pick
+# the same file.
 export ANNEX_ENV=${ANNEX_ENV:-vm}
 case "$ANNEX_ENV" in
   vm) ENV_FILE=$ROOT/.env ;;
   local) ENV_FILE=$ROOT/.env.local ;;
-  *) echo "ANNEX_ENV=$ANNEX_ENV must be vm (the default) or local" >&2; exit 2 ;;
+  *)
+    [[ "$ANNEX_ENV" =~ ^[a-z][a-z0-9-]{0,23}$ ]] \
+      || { echo "ANNEX_ENV=$ANNEX_ENV must be vm (the default), local or an instance name in lowercase letters, digits and dashes" >&2; exit 2; }
+    ENV_FILE=$ROOT/.env.$ANNEX_ENV
+    [ -f "$ENV_FILE" ] || { echo "ANNEX_ENV=$ANNEX_ENV needs .env.$ANNEX_ENV in the repo root: copy .env.example to it and set the instance's values (docs/new-instance.md)" >&2; exit 2; } ;;
 esac
 [ -f "$ENV_FILE" ] || ENV_FILE=$ENV_FILE.example
 # the transport comes from the file only: a value left in the shell by another stack must not redirect this one

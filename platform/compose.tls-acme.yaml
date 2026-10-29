@@ -1,0 +1,16 @@
+# Added to COMPOSE_FILE when ANNEX_TLS_MODE=acme (D118): Traefik terminates HTTPS on ANNEX_BIND_HTTPS (443) with a
+# Let's Encrypt wildcard certificate it gets itself by a DNS-01 challenge in Route53 (config/traefik/traefik.yml).
+# Credentials: the EC2 instance's IAM role, read from the instance metadata service, which a container reaches only
+# with the metadata hop limit at 2 (docs/new-instance.md, "On EC2"). Traefik is on annex-edge, the network with a
+# route out, so it reaches Let's Encrypt and Route53.
+services:
+  traefik:
+    ports:
+      - "${ANNEX_BIND_HTTPS}:443"
+    environment:
+      # Route53 is global; the AWS SDK still wants a region to sign its requests
+      AWS_REGION: us-east-1
+    volumes:
+      # acme.json: the account key and the certificate (mode 600, written by Traefik), kept across recreates. Not backed
+      # up: a new instance asks for a new certificate
+      - ${ANNEX_DATA_DIR}/state/acme:/acme

@@ -24,7 +24,7 @@ log:
 ntp:
   disable_startup_check: true
 totp:
-  issuer: Goat Arcade
+  issuer: "{{ANNEX_TOTP_ISSUER}}"
 identity_validation:
   reset_password:
     # `annex users add` invites a user with the reset link, so it lives longer than Authelia's 5-minute default
@@ -49,13 +49,14 @@ access_control:
       policy: bypass
     - domain: "{{ANNEX_HOST_AUTH}}"
       policy: bypass
+    # ANNEX_AUTH_POLICY: one_factor (a password) or two_factor (and TOTP or a passkey; ANNEX_AUTH_FACTORS, D118)
     - domain: ["{{ANNEX_HOST_LOGS}}", "{{ANNEX_HOST_GATEWAY}}", "{{ANNEX_HOST_MAIL}}"]
-      policy: one_factor
+      policy: {{ANNEX_AUTH_POLICY}}
       subject: ["group:admins"]
     - domain: ["{{ANNEX_HOST_LOGS}}", "{{ANNEX_HOST_GATEWAY}}", "{{ANNEX_HOST_MAIL}}"]
       policy: deny
     - domain_regex: '{{ANNEX_HOST_REGEX}}'
-      policy: one_factor
+      policy: {{ANNEX_AUTH_POLICY}}
 session:
   name: annex_session
   inactivity: 8h
@@ -77,7 +78,8 @@ password_policy:
     min_length: 12
     max_length: 0
 notifier:
-  # reset and invitation emails go out like every other platform email: to Mailpit in the prototype
+  # reset, invitation and second-factor emails go out like every other platform email: to Mailpit, which relays
+  # them when ANNEX_MAIL_RELAY=on (D118)
   smtp:
     address: "smtp://mailpit:1025"
     sender: "Annex <{{ANNEX_EMAIL_FROM}}>"

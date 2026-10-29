@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import shlex
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from pathlib import Path
 
 REPO = Path(os.environ.get("ANNEX_REPO", Path(__file__).resolve().parents[4]))  # toolkit/cli/src/annex_cli -> the repo
 ENVS = {"vm": ".env", "local": ".env.local"}  # ANNEX_ENV -> settings file, as in scripts/lib.sh and render.py
+ENV_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,23}$")  # another instance (D118): .env.<name>, which must exist
 TARGET_KEYS = ("ANNEX_TARGET", "ANNEX_SSH_HOST", "ANNEX_DATA_DIR", "ANNEX_DOCKER_CONTEXT")
 FILE_ONLY = ("ANNEX_TARGET", "ANNEX_DOCKER_CONTEXT")
 
@@ -40,11 +42,18 @@ def target_settings(environ=None, repo: Path | None = None) -> dict[str, str]:
     environ = os.environ if environ is None else environ
     repo = REPO if repo is None else repo
     name = environ.get("ANNEX_ENV") or "vm"
-    if name not in ENVS:
-        raise AnnexError(f"ANNEX_ENV={name} must be vm (the default: .env) or local (.env.local)")
-    path = repo / ENVS[name]
-    if not path.exists():
-        path = repo / (ENVS[name] + ".example")
+    if name in ENVS:
+        path = repo / ENVS[name]
+        if not path.exists():
+            path = repo / (ENVS[name] + ".example")
+    elif ENV_NAME_RE.match(name):
+        path = repo / f".env.{name}"
+        if not path.exists():
+            raise AnnexError(f"ANNEX_ENV={name} needs .env.{name} in the repo root ({repo}): copy .env.example to it "
+                             "and set the instance's values (docs/new-instance.md)")
+    else:
+        raise AnnexError(f"ANNEX_ENV={name} must be vm (the default: .env), local (.env.local) or an instance name in "
+                         "lowercase letters, digits and dashes (kaldi: .env.kaldi)")
     conf = read_env_file(path) if path.exists() else {}
     out = {"ANNEX_ENV": name}
     for k in TARGET_KEYS:

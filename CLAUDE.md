@@ -5,6 +5,7 @@ The brief is `docs/brief.md` (historical). The current system on one page is `do
 ## Ground rules (from the brief)
 - **Synthetic data only.** Never use, copy or connect to real client data or systems, Cadro included.
 - **LAN only.** No port forwarding, tunnels to the internet or public DNS. SSH port forwards from the Mac for testing are fine.
+- **The one exception is Kaldi's own instance on EC2** (`ANNEX_ENV=kaldi`, D118): on the internet, with Kaldi's real data. Treat it as production: never run the suites, `reset-demo.sh`, `wipe-vm.sh` or anything that writes there without Nejc's go-ahead; `tests/instance.sh` is its read-only check.
 - **Pin every image version.** No `:latest`. Images must support amd64; the VM is x86_64.
 - **Where you may write:**
   - on the VM (`ssh annex`), only Docker and `/srv/annex`;
@@ -50,7 +51,7 @@ docs/       architecture, operations, setup, decisions, plans
 - **`docs/`**: `architecture.md` (the system on one page), `operations.md` (day to day), `setup.md` (the homelab's one-time steps), `new-instance.md` (another VM), `decisions.md`, `plans/`, `goat-arcade/` (the demo client's handoff), `demo.md`, `teardown.md`.
 
 ## Conventions
-- Settings live in `.env` (gitignored; copy `.env.example`). `scripts/render.py` derives everything else into `.build/<env>/platform/.env`, which is also the platform's `.env` on the VM and the CLI's source of truth. `ANNEX_ENV=local` (per command, never exported; `.env.local`, data in `~/.annex/local`, ports 9443/9080) runs every script and `./annex` against the platform on the Mac's Docker Desktop (D99, `docs/setup.md` §8).
+- Settings live in `.env` (gitignored; copy `.env.example`); another instance's in `.env.<name>`, used with `ANNEX_ENV=<name>` (D118). `scripts/render.py` derives everything else into `.build/<env>/platform/.env`, which is also the platform's `.env` on the VM and the CLI's source of truth. `ANNEX_ENV=local` (per command, never exported; `.env.local`, data in `~/.annex/local`, ports 9443/9080) runs every script and `./annex` against the platform on the Mac's Docker Desktop (D99, `docs/setup.md` §8).
 - Secrets are generated on the VM by `platform/vm/bootstrap-secrets.sh` and live only in `/srv/annex/secrets`. Never commit them or write them into the repo.
 - Everything Annex creates carries the label `com.kaldi.annex=true`. Compose projects are `annex` and `annex-app-<name>`. Networks are named `annex-<name>`.
 - Every platform container has a memory limit and a healthcheck. Keep the platform under about 2.5 GiB of RAM.

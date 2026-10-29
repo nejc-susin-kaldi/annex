@@ -1,4 +1,5 @@
-"""scripts/render.py: which settings file an environment reads, where it renders, and the local vs VM derivation (D99)."""
+"""scripts/render.py: which settings file an environment reads, where it renders, and the local vs VM derivation (D99);
+another instance's lane and its settings (D118)."""
 import importlib.util
 import os
 import tempfile
@@ -25,8 +26,20 @@ class Selection(unittest.TestCase):
         self.assertEqual(render.env_name({}), "vm")
         self.assertEqual(render.env_name({"ANNEX_ENV": ""}), "vm")
         self.assertEqual(render.env_name({"ANNEX_ENV": "local"}), "local")
-        with self.assertRaises(SystemExit):
-            render.env_name({"ANNEX_ENV": "prod"})
+        self.assertEqual(render.env_name({"ANNEX_ENV": "kaldi"}), "kaldi")
+        for bad in ("Kaldi", "../x", "1st", "a b"):
+            with self.assertRaises(SystemExit):
+                render.env_name({"ANNEX_ENV": bad})
+
+    def test_an_instance_reads_its_own_file_and_never_an_example(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".env.example").write_text("X=1\n")
+            with self.assertRaises(SystemExit):
+                render.env_file("kaldi", root)
+            (root / ".env.kaldi").write_text("X=2\n")
+            self.assertEqual(render.env_file("kaldi", root), root / ".env.kaldi")
+            self.assertEqual(render.out_dir("kaldi", root), root / ".build" / "kaldi" / "platform")
 
     def test_env_file_falls_back_to_the_example(self):
         with tempfile.TemporaryDirectory() as d:
@@ -99,3 +112,43 @@ class LocalDerivation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# an instance for real use on EC2 (D118): the settings docs/new-instance.md gives for it
+KALDI = {**VM, "ANNEX_HOST_PATTERN": "{name}.annex.kaldi.si", "ANNEX_TLS_MODE": "acme",
+         "ANNEX_ACME_EMAIL": "ops@kaldi.si", "ANNEX_DEMO": "off", "ANNEX_ADMIN_LOGIN": "nejc",
+         "ANNEX_ADMIN_NAME": "Nejc Sušin", "ANNEX_ADMIN_EMAIL": "nejc@kaldi.si", "ANNEX_MAIL_RELAY": "on",
+         "ANNEX_AUTH_FACTORS": "two"}
+
+
+class InstanceSettings(unittest.TestCase):
+    def test_defaults_are_the_prototype(self):
+        v = derive(VM)
+        self.assertEqual((v["ANNEX_DEMO"], v["ANNEX_MAIL_RELAY"], v["ANNEX_AUTH_POLICY"], v["ANNEX_TOTP_ISSUER"]),
+                         ("on", "off", "one_factor", "Goat Arcade"))
+        self.assertEqual(v["COMPOSE_FILE"], "compose.yaml:compose.tls-local.yaml")
+        self.assertEqual(derive({**VM, "ANNEX_TLS_MODE": "upstream", "ANNEX_UPSTREAM_IP": "192.168.1.2"})["COMPOSE_FILE"],
+                         "compose.yaml")
+
+    def test_kaldi(self):
+        v = derive(KALDI, "kaldi")
+        self.assertEqual(v["COMPOSE_FILE"], "compose.yaml:compose.tls-acme.yaml:compose.mail-relay.yaml")
+        self.assertEqual((v["ANNEX_CERT_DOMAIN"], v["ANNEX_URL_HOME"], v["ANNEX_FRONTDOOR_URL"]),
+                         ("annex.kaldi.si", "https://home.annex.kaldi.si", "https://home.annex.kaldi.si/"))
+        self.assertEqual(v["ANNEX_ACME_CA"], "https://acme-v02.api.letsencrypt.org/directory")
+        self.assertEqual((v["ANNEX_AUTH_POLICY"], v["ANNEX_TOTP_ISSUER"], v["ANNEX_ADMIN_LOGIN"]),
+                         ("two_factor", "Annex", "nejc"))
+        self.assertIn("staging", derive({**KALDI, "ANNEX_ACME_STAGING": "true"})["ANNEX_ACME_CA"])
+
+    def test_refusals(self):
+        for change in ({"ANNEX_ACME_EMAIL": ""}, {"ANNEX_ACME_STAGING": "yes"}, {"ANNEX_DEMO": "no"},
+                       {"ANNEX_ADMIN_LOGIN": ""}, {"ANNEX_ADMIN_LOGIN": "Nejc"}, {"ANNEX_ADMIN_EMAIL": "nejc"},
+                       {"ANNEX_ADMIN_NAME": 'a "b"'}, {"ANNEX_MAIL_RELAY": "yes"}, {"ANNEX_AUTH_FACTORS": "2"},
+                       # two factors need mail that leaves the server: the second factor is registered by an emailed code
+                       {"ANNEX_MAIL_RELAY": "off"}, {"ANNEX_TLS_MODE": "letsencrypt"}):
+            with self.subTest(change=change), self.assertRaises(SystemExit):
+                derive({**KALDI, **change})
+
+    def test_demo_on_needs_no_admin(self):
+        v = derive({**VM, "ANNEX_DEMO": "on"})
+        self.assertEqual(v["ANNEX_ADMIN_LOGIN"], "")
